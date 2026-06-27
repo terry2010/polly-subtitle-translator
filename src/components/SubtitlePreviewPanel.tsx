@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
-import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2 } from "lucide-react";
+import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -10,6 +10,7 @@ import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
 import { AutoTextarea } from "./AutoTextarea";
 import { save } from "@tauri-apps/plugin-dialog";
+import { api } from "../lib/api";
 import type { SubtitleEntry } from "../lib/ipc-types";
 
 type PreviewMode = "original" | "bilingual" | "translated";
@@ -212,6 +213,23 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
     closeContextMenu();
   }, [store, closeContextMenu]);
 
+  // 从该字幕开始时刻播放视频：精确 seek 到 start_ms / 1000 秒并播放
+  const handlePlayFromHere = useCallback(async (entryIndex: number) => {
+    if (!file) return;
+    const entry = file.entries.find((e) => e.index === entryIndex);
+    if (!entry) return;
+    closeContextMenu();
+    try {
+      const startSec = entry.start_ms / 1000;
+      // 先 seek 再 play，确保从精确时刻开始播放
+      await api.playerSeek(startSec);
+      await api.playerPlay();
+    } catch (e) {
+      console.error("跳转播放失败:", e);
+      toast.error(t("subtitle.playFromHereFailed", "跳转播放失败"));
+    }
+  }, [file, closeContextMenu, t]);
+
   // 点击外部关闭右键菜单
   useEffect(() => {
     if (!contextMenu) return;
@@ -402,9 +420,19 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
               >
                 {/* 时间码行 */}
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    #{entry.index} · {formatTimecode(entry.start_ms)} → {formatTimecode(entry.end_ms)}
-                  </span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-mono text-xs text-muted-foreground truncate">
+                      #{entry.index} · {formatTimecode(entry.start_ms)} → {formatTimecode(entry.end_ms)}
+                    </span>
+                    {/* 从该字幕开始时刻播放 */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handlePlayFromHere(entry.index); }}
+                      className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-primary hover:text-primary-foreground"
+                      title={t("subtitle.playFromHereHint", "从该字幕开始时刻播放视频")}
+                    >
+                      <Play className="h-3 w-3 translate-x-[0.5px]" />
+                    </button>
+                  </div>
                   {isEditing ? (
                     /* 编辑态：完成、取消、删除按钮 */
                     <div className="flex gap-1 flex-shrink-0">
@@ -513,6 +541,15 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
+          <button
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent"
+            onClick={() => handlePlayFromHere(contextMenu.entryIndex)}
+            title={t("subtitle.playFromHereHint", "从该字幕开始时刻播放视频")}
+          >
+            <Play className="h-3.5 w-3.5" />
+            {t("subtitle.playFromHere", "从此处播放")}
+          </button>
+          <div className="my-1 h-px bg-border" />
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={() => handleTranslateOne(contextMenu.entryIndex)}
