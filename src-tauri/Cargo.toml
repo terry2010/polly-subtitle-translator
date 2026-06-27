@@ -1,0 +1,60 @@
+[package]
+name = "zimufan"
+version = "1.0.0"
+description = "AI Subtitle Translation & Editor"
+authors = ["terry"]
+edition = "2021"
+rust-version = "1.89"
+
+[lib]
+name = "zimufan_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-os = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+keyring = "3"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "blocking"], default-features = false }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+chardetng = "0.1"
+encoding_rs = "0.8"
+ass-core = "=0.1.1"
+ass-editor = { version = "=0.1.1", features = ["full"] }
+parking_lot = "0.12"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+hex = "0.4"
+dirs = "5"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+md-5 = "0.10"
+sevenz-rust = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+libloading = "0.8"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+] }
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
