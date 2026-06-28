@@ -39,6 +39,56 @@ pub struct SubtitleFile {
 
 // === 双语字幕检测模块 ===
 
+/// 剥离 ass 样式标记 {\...}，返回纯文本内容
+/// 用于双语检测时避免样式名中的文字（如"60字体 美剧 中文"）干扰语言分类
+fn strip_ass_tags(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_brace = false; // ASS override block {...}
+    let mut in_html = false;  // HTML tag <...>（部分字幕组用 <font> 区分双语）
+    for c in s.chars() {
+        if c == '{' {
+            in_brace = true;
+        } else if c == '}' {
+            in_brace = false;
+        } else if c == '<' {
+            in_html = true;
+        } else if c == '>' {
+            in_html = false;
+        } else if !in_brace && !in_html {
+            result.push(c);
+        }
+    }
+    result
+}
+
+/// 判断 text 是否为 ass 矢量绘图指令（含 \p1 标记开启绘图模式）
+/// 绘图模式下的内容是路径命令（m/l/c 等），不是字幕文本，应跳过
+fn is_ass_drawing(text: &str) -> bool {
+    text.contains("\\p1")
+}
+
+/// 判断 ass 条目是否为非字幕内容（LOGO/水印/特效等），应跳过
+/// 规则：
+/// 1. 含 \p1 绘图指令
+/// 2. 样式名含 LOGO/logo/水印/特效 等关键字
+/// 3. 样式名为"金流光"等明显非字幕样式（含"光"字且非 Default）
+fn is_non_subtitle_ass_entry(text: &str, style: &str) -> bool {
+    // 绘图指令
+    if is_ass_drawing(text) {
+        return true;
+    }
+    let style_lower = style.to_lowercase();
+    // 样式名含 LOGO/logo/水印/特效/watermark 等关键字
+    if style_lower.contains("logo") || style.contains("水印") || style.contains("特效") || style_lower.contains("watermark") {
+        return true;
+    }
+    // "金流光"等特效样式（含"光"字且非 Default）
+    if style.contains("光") && !style.eq_ignore_ascii_case("default") {
+        return true;
+    }
+    false
+}
+
 /// 语言类别（按 Unicode 范围粗分）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LangClass {
@@ -83,10 +133,12 @@ fn classify_char(c: char) -> LangClass {
     }
 }
 
-/// 检测一行文本的主导语言（忽略数字、标点、空白）
+/// 检测一行文本的主导语言（忽略数字、标点、空白、ass 样式标记）
 fn detect_line_lang(line: &str) -> LangClass {
+    // 剥离 ass 样式标记 {\...}，避免样式名中的文字干扰语言分类
+    let stripped = strip_ass_tags(line);
     let mut counts: std::collections::HashMap<LangClass, usize> = std::collections::HashMap::new();
-    for c in line.chars() {
+    for c in stripped.chars() {
         if c.is_alphabetic() {
             let cls = classify_char(c);
             if cls != LangClass::Other {
@@ -159,14 +211,33 @@ pub fn detect_bilingual(file: &SubtitleFile) -> BilingualDetectResult {
     let mut matched_count = 0usize;
     let mut lang_a_class = LangClass::Other;
     let mut lang_b_class = LangClass::Other;
+    // 统计"可能为双语的条目数"：多行且含至少两种不同语言的条目
+    // 纯单语言的多行条目（如纯英文多行）不可能是双语，不应计入阈值分母
+    let mut bilingual_candidate_count = 0usize;
 
     for entry in &file.entries {
-        let lines: Vec<&str> = entry.text.lines().collect();
+        // 跳过 ass 矢量绘图指令（如 LOGO 绘制），不是字幕文本
+        if is_ass_drawing(&entry.text) {
+            continue;
+        }
+        // ass 用 \N 表示硬换行，转为 \n 后再按行分割做语言检测
+        let normalized = entry.text.replace("\\N", "\n").replace("\\n", "\n");
+        let lines: Vec<&str> = normalized.lines().collect();
         if lines.len() < 2 {
             continue;
         }
         // 对每行检测语言
         let line_langs: Vec<LangClass> = lines.iter().map(|l| detect_line_lang(l)).collect();
+
+        // 统计该条目中出现的不同语言类别（非 Other）
+        let distinct_langs: std::collections::HashSet<LangClass> = line_langs.iter()
+            .filter(|&&cl| cl != LangClass::Other)
+            .copied()
+            .collect();
+        // 只有多行且含至少两种不同语言的条目才可能是双语
+        if distinct_langs.len() >= 2 {
+            bilingual_candidate_count += 1;
+        }
 
         // 找到语言切换点：前面都是一种语言，后面是另一种语言
         // 策略：找到第一个"非Other"的语言作为语言A的起点，
@@ -207,7 +278,11 @@ pub fn detect_bilingual(file: &SubtitleFile) -> BilingualDetectResult {
         }
     }
 
-    let threshold = (total * 3) / 5; // 60% 的条目匹配才算双语
+    // 阈值基于"可能为双语的条目数"而非所有条目数
+    // 原因：导出的 ASS 双语文件中，没有翻译的条目会以 Secondary 样式单独导出为纯英文条目，
+    // 这些单语言条目（即使多行）不应拉低双语检测的匹配率
+    let threshold_base = if bilingual_candidate_count > 0 { bilingual_candidate_count } else { total };
+    let threshold = (threshold_base * 3) / 5; // 60% 的候选条目匹配才算双语
 
     if matched_count >= threshold && matched_count >= 3 {
         BilingualDetectResult {
@@ -254,47 +329,89 @@ fn lang_class_name(c: LangClass) -> String {
 }
 
 /// 拆分双语字幕：按语言分块，前半部分（语言A）填入 text，后半部分（语言B）填入 translated
+/// 算法：在剥离标签后的纯文本中找到语言切换的字符位置，再映射回原文切分。
+/// 这样即使 \N 换行落在标签内部（如 <font>中文\N中文</font><font>English</font>），
+/// 也能在正确的语言边界处切分。
 pub fn split_bilingual(file: &mut SubtitleFile, _split_mode: SplitMode) {
     for entry in &mut file.entries {
-        let lines: Vec<String> = entry.text.lines().map(|l| l.to_string()).collect();
-        if lines.len() < 2 {
+        if is_ass_drawing(&entry.text) {
             continue;
         }
-        let line_langs: Vec<LangClass> = lines.iter().map(|l| detect_line_lang(l)).collect();
+        // \N → \n 统一换行
+        let normalized = entry.text.replace("\\N", "\n").replace("\\n", "\n");
 
-        // 找第一个非Other语言
+        // 剥离标签，同时建立 clean_text 字符索引 → 原文字符索引 的映射
+        let (clean_text, clean_to_orig): (String, Vec<usize>) = {
+            let mut clean = String::with_capacity(normalized.len());
+            let mut mapping = Vec::with_capacity(normalized.len());
+            let mut in_brace = false;
+            let mut in_html = false;
+            for (i, c) in normalized.char_indices() {
+                if c == '{' {
+                    in_brace = true;
+                } else if c == '}' {
+                    in_brace = false;
+                } else if c == '<' {
+                    in_html = true;
+                } else if c == '>' {
+                    in_html = false;
+                } else if !in_brace && !in_html {
+                    clean.push(c);
+                    mapping.push(i);
+                }
+            }
+            (clean, mapping)
+        };
+
+        // 在 clean_text 中找语言切换点
+        // 策略：找第一个非 Other 语言作为 first_lang，
+        // 然后找第一个与 first_lang 不同的非 Other 语言字符作为切换点
         let mut first_lang = LangClass::Other;
-        for &cl in &line_langs {
-            if cl != LangClass::Other {
-                first_lang = cl;
-                break;
-            }
-        }
-        if first_lang == LangClass::Other {
-            continue;
-        }
+        let mut first_lang_end = 0usize; // clean_text 中 first_lang 连续段的结束位置
 
-        // 找切换点：第一个与 first_lang 不同且非Other 的语言
-        let mut split_point: Option<usize> = None;
-        for (i, &cl) in line_langs.iter().enumerate() {
-            if cl != LangClass::Other && is_different_lang(cl, first_lang) {
-                split_point = Some(i);
-                break;
-            }
-        }
-
-        if let Some(sp) = split_point {
-            let a_lines = lines[..sp].join("\n");
-            let b_lines = lines[sp..].join("\n");
-            if !a_lines.is_empty() && !b_lines.is_empty() {
-                entry.text = a_lines;
-                entry.translated = b_lines;
+        for (i, c) in clean_text.chars().enumerate() {
+            if c.is_alphabetic() {
+                let cls = classify_char(c);
+                if cls != LangClass::Other {
+                    if first_lang == LangClass::Other {
+                        first_lang = cls;
+                    }
+                    if cls == first_lang || !is_different_lang(cls, first_lang) {
+                        first_lang_end = i + 1;
+                    } else if first_lang_end > 0 {
+                        // 找到切换点：在原文中找到对应的切分位置
+                        let orig_pos = clean_to_orig.get(i).copied().unwrap_or(normalized.len());
+                        let orig_split = find_tag_start_before(&normalized, orig_pos);
+                        let a = &normalized[..orig_split];
+                        let b = &normalized[orig_split..];
+                        if !a.is_empty() && !b.is_empty() {
+                            entry.text = a.to_string();
+                            entry.translated = b.to_string();
+                        }
+                        break;
+                    }
+                }
             }
         }
     }
 }
 
 // === 双语检测模块 END ===
+
+/// 从 orig_pos 往回扫描，找到最近的标签开始符 { 或 < 的位置
+/// 切分点选在标签开始处，这样标签及其内容完整归到后半部分
+fn find_tag_start_before(text: &str, orig_pos: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut pos = orig_pos;
+    while pos > 0 {
+        let b = bytes[pos - 1];
+        if b == b'<' || b == b'{' {
+            return pos;
+        }
+        pos -= 1;
+    }
+    orig_pos
+}
 
 /// SRT 时间码解析：00:00:01,234 -> 1234 ms
 fn parse_srt_timecode(s: &str) -> Result<i64, AppError> {
@@ -638,6 +755,11 @@ pub fn parse_ass(content: &str) -> Result<SubtitleFile, AppError> {
                 // Text 是第 10 个字段起（index 9），合并剩余部分
                 let text = fields[9..].join(",");
 
+                // 跳过 ass 非字幕条目（绘图指令/LOGO/水印/特效等）
+                if is_non_subtitle_ass_entry(&text, &style) {
+                    continue;
+                }
+
                 entries.push(SubtitleEntry {
                     index: entries.len(),
                     start_ms,
@@ -721,6 +843,11 @@ fn parse_ass_fallback(content: &str) -> Result<SubtitleFile, AppError> {
                 let end_ms = parse_ass_timecode(fields[2].trim());
                 let style = fields[3].trim().to_string();
                 let text = fields[9..].join(",");
+
+                // 跳过 ass 非字幕条目（绘图指令/LOGO/水印/特效等）
+                if is_non_subtitle_ass_entry(&text, &style) {
+                    continue;
+                }
 
                 entries.push(SubtitleEntry {
                     index: entries.len(),
@@ -888,6 +1015,360 @@ use std::path::Path;
 
 // === SECTION 5 END ===
 
+// === 导出弹层相关（export-dialog-plan.md §2/§4） ===
+
+/// 导出模式
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportMode {
+    Monolingual,
+    Bilingual,
+}
+
+/// 导出选项（前端 ExportDialog 组装后通过 IPC 传入）
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExportOptions {
+    pub format: SubtitleFormat,
+    pub mode: ExportMode,
+    /// 单语模式：输出哪种语言（"source" | "translated"）
+    pub monolingual_lang: Option<String>,
+    /// 双语模式：true=译文在上，false=原文在上
+    pub bilingual_translated_first: Option<bool>,
+    /// ASS 双语样式（仅 format=ass 且 mode=bilingual 时生效）
+    pub ass_style: Option<AssBilingualStyle>,
+    /// 视频实际宽度（像素），用于 ASS PlayResX，缺省 1280
+    pub video_width: Option<u32>,
+    /// 视频实际高度（像素），用于 ASS PlayResY，缺省 720
+    pub video_height: Option<u32>,
+}
+
+/// ASS 双语样式配置
+#[derive(Debug, Clone, Deserialize)]
+pub struct AssBilingualStyle {
+    pub primary_font_size: u32,
+    pub secondary_font_size: u32,
+    /// ASS BGR 格式 &HBBGGRR&
+    pub primary_color: String,
+    pub secondary_color: String,
+    pub primary_bold: bool,
+    pub primary_italic: bool,
+    pub primary_underline: bool,
+    pub secondary_bold: bool,
+    pub secondary_italic: bool,
+    pub secondary_underline: bool,
+    /// 描边宽度
+    pub outline: u32,
+    /// 描边颜色，ASS BGR 格式 &HBBGGRR&
+    pub outline_color: String,
+    /// 阴影深度
+    pub shadow: u32,
+    /// 阴影颜色，ASS BGR 格式 &HBBGGRR&
+    pub shadow_color: String,
+}
+
+impl Default for AssBilingualStyle {
+    fn default() -> Self {
+        Self {
+            primary_font_size: 48,
+            secondary_font_size: 30,
+            primary_color: "&HFFFFFF&".into(),
+            secondary_color: "&HCCCCCC&".into(),
+            primary_bold: false,
+            primary_italic: false,
+            primary_underline: false,
+            secondary_bold: false,
+            secondary_italic: false,
+            secondary_underline: false,
+            outline: 2,
+            outline_color: "&H000000&".into(),
+            shadow: 1,
+            shadow_color: "&H000000&".into(),
+        }
+    }
+}
+
+/// 导出入口：按选项渲染并返回字幕文本
+pub fn export_subtitle(file: &SubtitleFile, options: &ExportOptions) -> String {
+    match options.format {
+        SubtitleFormat::Srt => render_srt_with_options(file, options),
+        SubtitleFormat::Vtt => render_vtt_with_options(file, options),
+        SubtitleFormat::Ass | SubtitleFormat::Ssa => render_ass_with_options(file, options),
+    }
+}
+
+/// 导出入口：按选项渲染并写入文件
+/// SRT 加 UTF-8 BOM（兼容部分老播放器识别中文 SRT）；ASS/VTT 不加 BOM
+pub fn export_subtitle_file(
+    file: &SubtitleFile,
+    path: &str,
+    options: &ExportOptions,
+) -> Result<(), AppError> {
+    let content = export_subtitle(file, options);
+    let bytes: Vec<u8> = if matches!(options.format, SubtitleFormat::Srt) {
+        let mut v = vec![0xEF, 0xBB, 0xBF];
+        v.extend_from_slice(content.as_bytes());
+        v
+    } else {
+        content.into_bytes()
+    };
+    std::fs::write(path, bytes).map_err(|e| match e.kind() {
+        std::io::ErrorKind::PermissionDenied => AppError::PermissionDenied {
+            path: path.to_string(),
+        },
+        _ => AppError::StorageWriteFailed {
+            path: path.to_string(),
+        },
+    })?;
+    tracing::info!("字幕已导出: {} ({:?})", path, options.format);
+    Ok(())
+}
+
+/// 按导出模式拼装单条字幕文本（SRT/VTT 共用）
+fn build_entry_text(entry: &SubtitleEntry, options: &ExportOptions) -> String {
+    match options.mode {
+        ExportMode::Monolingual => {
+            let lang = options.monolingual_lang.as_deref().unwrap_or("translated");
+            if lang == "source" {
+                entry.text.clone()
+            } else {
+                entry.translated.clone()
+            }
+        }
+        ExportMode::Bilingual => {
+            let first = options.bilingual_translated_first.unwrap_or(true);
+            let (top, bottom) = if first {
+                (&entry.translated, &entry.text)
+            } else {
+                (&entry.text, &entry.translated)
+            };
+            // 如果其中一方为空，只输出非空的一方（避免产生空行）
+            if top.is_empty() {
+                bottom.clone()
+            } else if bottom.is_empty() {
+                top.clone()
+            } else {
+                format!("{}\n{}", top, bottom)
+            }
+        }
+    }
+}
+
+/// SRT 渲染（带导出选项）
+fn render_srt_with_options(file: &SubtitleFile, options: &ExportOptions) -> String {
+    let mut output = String::new();
+    for (i, entry) in file.entries.iter().enumerate() {
+        output.push_str(&format!("{}\n", i + 1));
+        output.push_str(&format!(
+            "{} --> {}\n",
+            format_srt_timecode(entry.start_ms),
+            format_srt_timecode(entry.end_ms)
+        ));
+        output.push_str(&build_entry_text(entry, options));
+        output.push_str("\n\n");
+    }
+    output
+}
+
+/// VTT 渲染（带导出选项）
+fn render_vtt_with_options(file: &SubtitleFile, options: &ExportOptions) -> String {
+    let mut output = String::from("WEBVTT\n\n");
+    for (i, entry) in file.entries.iter().enumerate() {
+        output.push_str(&format!("{}\n", i + 1));
+        output.push_str(&format!(
+            "{} --> {}\n",
+            format_vtt_timecode(entry.start_ms),
+            format_vtt_timecode(entry.end_ms)
+        ));
+        output.push_str(&build_entry_text(entry, options));
+        output.push_str("\n\n");
+    }
+    output
+}
+
+// === SECTION 6 END ===
+
+/// ASS 渲染（带导出选项）—— 不复用 raw_header，生成新头部注入用户样式
+fn render_ass_with_options(file: &SubtitleFile, options: &ExportOptions) -> String {
+    let style = options.ass_style.clone().unwrap_or_default();
+    let mut s = String::new();
+
+    // [Script Info]
+    // PlayResX/PlayResY 跟随视频实际分辨率，避免播放器按 1280 排版导致提前换行
+    let play_res_x = options.video_width.unwrap_or(1280);
+    let play_res_y = options.video_height.unwrap_or(720);
+    s.push_str("[Script Info]\n");
+    s.push_str("Title: AI-SubTrans Export\n");
+    s.push_str("ScriptType: v4.00+\n");
+    s.push_str(&format!("PlayResX: {}\n", play_res_x));
+    s.push_str(&format!("PlayResY: {}\n", play_res_y));
+    s.push_str("WrapStyle: 0\n\n");
+
+    // [V4+ Styles]
+    // 单语：定义 Default 样式
+    // 双语：定义 Primary（第一行）+ Secondary（第二行）+ Default（兜底）
+    s.push_str("[V4+ Styles]\n");
+    s.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, ");
+    s.push_str("OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ");
+    s.push_str("ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, ");
+    s.push_str("Alignment, MarginL, MarginR, MarginV, Encoding\n");
+
+    match options.mode {
+        ExportMode::Monolingual => {
+            s.push_str(&format_style_line(
+                "Default", 48, "&HFFFFFF&", false, false, false, 2, 1,
+                "&H000000&", "&H000000&",
+            ));
+        }
+        ExportMode::Bilingual => {
+            s.push_str(&format_style_line(
+                "Primary",
+                style.primary_font_size,
+                &style.primary_color,
+                style.primary_bold,
+                style.primary_italic,
+                style.primary_underline,
+                style.outline,
+                style.shadow,
+                &style.outline_color,
+                &style.shadow_color,
+            ));
+            s.push_str(&format_style_line(
+                "Secondary",
+                style.secondary_font_size,
+                &style.secondary_color,
+                style.secondary_bold,
+                style.secondary_italic,
+                style.secondary_underline,
+                style.outline,
+                style.shadow,
+                &style.outline_color,
+                &style.shadow_color,
+            ));
+            // Default 兜底样式（部分播放器/工具要求 Default 存在），用 Primary 参数
+            s.push_str(&format_style_line(
+                "Default",
+                style.primary_font_size,
+                &style.primary_color,
+                style.primary_bold,
+                style.primary_italic,
+                style.primary_underline,
+                style.outline,
+                style.shadow,
+                &style.outline_color,
+                &style.shadow_color,
+            ));
+        }
+    }
+    s.push('\n');
+
+    // [Events]
+    s.push_str("[Events]\n");
+    s.push_str("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+
+    for entry in &file.entries {
+        match options.mode {
+            ExportMode::Monolingual => {
+                let text = if options.monolingual_lang.as_deref().unwrap_or("translated") == "source" {
+                    &entry.text
+                } else {
+                    &entry.translated
+                };
+                s.push_str(&format!(
+                    "Dialogue: 0,{},{},Default,,0,0,0,,{}\n",
+                    format_ass_timecode(entry.start_ms),
+                    format_ass_timecode(entry.end_ms),
+                    normalize_ass_newline(text)
+                ));
+            }
+            ExportMode::Bilingual => {
+                // 单条 Dialogue + \N 换行，第一行套 Primary，第二行套 Secondary
+                let (first, second) = if options.bilingual_translated_first.unwrap_or(true) {
+                    (&entry.translated, &entry.text)
+                } else {
+                    (&entry.text, &entry.translated)
+                };
+                // 如果其中一方为空，只输出非空的一方（用 Default 样式，避免空行）
+                let text = if first.is_empty() && second.is_empty() {
+                    String::new()
+                } else if first.is_empty() {
+                    // 只有 second（原文），用 Secondary 样式
+                    format!("{{\\rSecondary}}{}", normalize_ass_newline(second))
+                } else if second.is_empty() {
+                    // 只有 first（译文），用 Primary 样式
+                    format!("{{\\rPrimary}}{}", normalize_ass_newline(first))
+                } else {
+                    // 双语：\N 放在 override block 外部，避免重新加载时语言检测失败
+                    format!(
+                        "{{\\rPrimary}}{}\\N{{\\rSecondary}}{}",
+                        normalize_ass_newline(first),
+                        normalize_ass_newline(second)
+                    )
+                };
+                let style_name = if first.is_empty() && !second.is_empty() {
+                    "Secondary"
+                } else {
+                    "Primary"
+                };
+                s.push_str(&format!(
+                    "Dialogue: 0,{},{},{},,0,0,0,,{}\n",
+                    format_ass_timecode(entry.start_ms),
+                    format_ass_timecode(entry.end_ms),
+                    style_name,
+                    text
+                ));
+            }
+        }
+    }
+    s
+}
+
+/// ASS Style 行字段顺序（23 个）：
+/// Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour,
+/// Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle,
+/// Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+///
+/// 必须写齐 3 个颜色占位（SecondaryColour/OutlineColour/BackColour），否则从 Bold 起字段错位。
+/// Bold/Italic/Underline 用 -1（真）/ 0（假），符合 ASS 标准（部分播放器只认 -1）。
+/// outline_color → OutlineColour（描边颜色），shadow_color → BackColour（阴影颜色）
+fn format_style_line(
+    name: &str,
+    size: u32,
+    color: &str,
+    bold: bool,
+    italic: bool,
+    underline: bool,
+    outline: u32,
+    shadow: u32,
+    outline_color: &str,
+    shadow_color: &str,
+) -> String {
+    fn b(v: bool) -> i32 {
+        if v { -1 } else { 0 }
+    }
+    format!(
+        "Style: {},{},{},{},&H000000&,{},{},{},{},{},0,100,100,0,0,1,{},{},2,10,10,40,1\n",
+        name,
+        "Arial",
+        size,
+        color,
+        outline_color,
+        shadow_color,
+        b(bold),
+        b(italic),
+        b(underline),
+        outline,
+        shadow
+    )
+}
+
+/// 把硬换行（\r\n / \n / \r）统一转为 ASS 的 \N。
+/// 不转义 { }——entry.text 中的 ASS 覆盖标记（如 {\b1}）必须原样保留让播放器渲染。
+fn normalize_ass_newline(s: &str) -> String {
+    s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\\N")
+}
+
+// === SECTION 7 END ===
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1047,5 +1528,188 @@ mod tests {
         let rendered = render_srt(&file);
         assert!(rendered.contains("你好"));
         assert!(!rendered.contains("Hello"));
+    }
+
+    #[test]
+    fn test_parse_ass_skip_drawing() {
+        // 含 \p1 矢量绘图指令的条目应被跳过
+        let content = "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.05,0:00:20.00,Default,,0,0,0,,{\\pos(960,50)\\p1}m 9.0 9.0 l 10.0 9.0\nDialogue: 0,0:00:04.09,0:00:05.71,Default,,0,0,0,,{\\r中文}杰瑞{\\r英文}\\NJerry\n";
+        let file = parse_ass(content).unwrap();
+        // 绘图条目被跳过，只剩 1 条字幕
+        assert_eq!(file.entries.len(), 1);
+        assert_eq!(file.entries[0].text, "{\\r中文}杰瑞{\\r英文}\\NJerry");
+    }
+
+    #[test]
+    fn test_parse_ass_skip_logo_watermark() {
+        // LOGO/水印/特效样式条目应被跳过
+        let content = "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:00.05,0:00:20.00,金流光,,0,0,0,,{\\an8\\pos(960,50)}微博@敛光存帧\n\
+Dialogue: 0,0:10:00.05,0:10:20.00,顶中上浮LOGO_1080,,0,0,0,,{\\an8\\pos(960,50)}微博@敛光存帧\n\
+Dialogue: 0,0:00:04.09,0:00:05.71,Default,,0,0,0,,{\\r中文}杰瑞{\\r英文}\\NJerry\n";
+        let file = parse_ass(content).unwrap();
+        // LOGO/水印条目被跳过，只剩 1 条字幕
+        assert_eq!(file.entries.len(), 1, "应跳过 LOGO/水印，实际条目数: {}", file.entries.len());
+        assert_eq!(file.entries[0].text, "{\\r中文}杰瑞{\\r英文}\\NJerry");
+    }
+
+    #[test]
+    fn test_detect_bilingual_ass_with_n_separator() {
+        // ass 双语字幕：\N 分隔中英文，带 ass 样式标记
+        let content = "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:04.09,0:00:05.71,Default,,0,0,0,,{\\r60字体 美剧 中文}杰瑞，这也太恶心了吧。{\\r60字体 美剧 英文}\\NJerry, this is disgusting.\n\
+Dialogue: 0,0:00:05.80,0:00:07.22,Default,,0,0,0,,{\\r60字体 美剧 中文}怎么这么快就脏成这样了？{\\r60字体 美剧 英文}\\NHow did it get so dirty already?\n\
+Dialogue: 0,0:00:07.30,0:00:09.51,Default,,0,0,0,,{\\r60字体 美剧 中文}因为你那破泳池机器人根本没用。{\\r60字体 美剧 英文}\\NBecause your crappy pool bot doesn't work.\n";
+        let file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 3);
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语：matched={}, total={}", result.matched_count, result.total_count);
+        assert_eq!(result.lang_a, "cjk");
+        assert_eq!(result.lang_b, "latin");
+    }
+
+    #[test]
+    fn test_split_bilingual_ass_with_n_separator() {
+        let content = "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:04.09,0:00:05.71,Default,,0,0,0,,{\\r中文}杰瑞，这也太恶心了吧。{\\r英文}\\NJerry, this is disgusting.\n";
+        let mut file = parse_ass(content).unwrap();
+        split_bilingual(&mut file, SplitMode::EvenFirst);
+        // 拆分后 text 应含中文行，translated 应含英文行
+        assert!(file.entries[0].text.contains("杰瑞"), "text 应含中文：{}", file.entries[0].text);
+        assert!(file.entries[0].translated.contains("Jerry"), "translated 应含英文：{}", file.entries[0].translated);
+    }
+
+    #[test]
+    fn test_detect_bilingual_ass_export_format() {
+        // 模拟本软件导出的 ASS 双语字幕格式（修复后）：
+        // {\rPrimary}译文\N{\rSecondary}原文  —— \N 在 override block 外部
+        let content = "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:04.09,0:00:05.71,Primary,,0,0,0,,{\\rPrimary}杰瑞，这也太恶心了吧。\\N{\\rSecondary}Jerry, this is disgusting.\n\
+Dialogue: 0,0:00:05.80,0:00:07.22,Primary,,0,0,0,,{\\rPrimary}怎么这么快就脏成这样了？\\N{\\rSecondary}How did it get so dirty already?\n\
+Dialogue: 0,0:00:07.30,0:00:09.51,Primary,,0,0,0,,{\\rPrimary}因为你那破泳池机器人根本没用。\\N{\\rSecondary}Because your crappy pool bot doesn't work.\n";
+        let file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 3);
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语：matched={}, total={}", result.matched_count, result.total_count);
+    }
+
+    #[test]
+    fn test_detect_bilingual_ass_export_format_latin_first() {
+        // 译文在上（Latin），原文在下（CJK）
+        let content = "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:04.09,0:00:05.71,Primary,,0,0,0,,{\\rPrimary}Jerry, this is disgusting.\\N{\\rSecondary}杰瑞，这也太恶心了吧。\n\
+Dialogue: 0,0:00:05.80,0:00:07.22,Primary,,0,0,0,,{\\rPrimary}How did it get so dirty already?\\N{\\rSecondary}怎么这么快就脏成这样了？\n\
+Dialogue: 0,0:00:07.30,0:00:09.51,Primary,,0,0,0,,{\\rPrimary}Because your crappy pool bot doesn't work.\\N{\\rSecondary}因为你那破泳池机器人根本没用。\n";
+        let file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 3);
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语（Latin在上）：matched={}, total={}", result.matched_count, result.total_count);
+    }
+
+    #[test]
+    fn test_detect_bilingual_ass_with_html_font_tags() {
+        // 真实案例：字幕组用 HTML <font> 标签区分双语
+        // <font size="24">中文</font><font size="18" color="#cccccc">English</font>
+        // strip_ass_tags 必须同时剥离 HTML 标签，否则 font/size/color 等拉丁字母会污染语言检测
+        let content = "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:02.96,0:00:05.04,Default,,0,0,0,,<font size=\"24\">杰瑞\\N啊，我好紧张！</font><font size=\"18\" color=\"#cccccc\">Jerry:\\NUhh, I'm so nervous!</font>\n\
+Dialogue: 0,0:00:05.13,0:00:06.79,Default,,0,0,0,,<font size=\"24\">好久没人了\\N甚至取笑我</font><font size=\"18\" color=\"#cccccc\">It's been so long, no one\\Neven makes fun of me</font>\n\
+Dialogue: 0,0:00:06.92,0:00:08.38,Default,,0,0,0,,<font size=\"24\">因为失业\\N不再。</font><font size=\"18\" color=\"#cccccc\">for being unemployed\\Nanymore.</font>\n\
+Dialogue: 0,0:00:08.46,0:00:10.84,Default,,0,0,0,,<font size=\"24\">噢，我们可以取笑你\\N如果你愿意，亲爱的。</font><font size=\"18\" color=\"#cccccc\">Aw. We can make fun of you\\Nif you want, sweetie.</font>\n\
+Dialogue: 0,0:00:10.96,0:00:12.93,Default,,0,0,0,,<font size=\"24\">你也可以\\N拿一个。</font><font size=\"18\" color=\"#cccccc\">You could also\\Ntake one of these.</font>\n";
+        let file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 5);
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语（HTML font标签）：matched={}, total={}", result.matched_count, result.total_count);
+    }
+
+    #[test]
+    fn test_split_bilingual_ass_with_html_font_tags() {
+        let content = "[Script Info]\nTitle: Test\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:02.96,0:00:05.04,Default,,0,0,0,,<font size=\"24\">杰瑞\\N啊，我好紧张！</font><font size=\"18\" color=\"#cccccc\">Jerry:\\NUhh, I'm so nervous!</font>\n\
+Dialogue: 0,0:00:05.13,0:00:06.79,Default,,0,0,0,,<font size=\"24\">好久没人了\\N甚至取笑我</font><font size=\"18\" color=\"#cccccc\">It's been so long, no one\\Neven makes fun of me</font>\n\
+Dialogue: 0,0:00:06.92,0:00:08.38,Default,,0,0,0,,<font size=\"24\">因为失业\\N不再。</font><font size=\"18\" color=\"#cccccc\">for being unemployed\\Nanymore.</font>\n";
+        let mut file = parse_ass(content).unwrap();
+        split_bilingual(&mut file, SplitMode::EvenFirst);
+        // 拆分后 text 应含中文，translated 应含英文
+        assert!(file.entries[0].text.contains("杰瑞"), "text 应含中文：{}", file.entries[0].text);
+        assert!(file.entries[0].translated.contains("Jerry"), "translated 应含英文：{}", file.entries[0].translated);
+    }
+
+    #[test]
+    fn test_detect_and_split_already_exported_broken_file() {
+        // 真实案例：本软件之前（有 bug 时）导出的 ASS 双语文件
+        // 因为检测失败，translated 为空，全部内容堆在 text 里，导出后格式错乱
+        // 修复后重新加载此文件应能检测出双语并正确拆分
+        let content = "[Script Info]\nTitle: AI-SubTrans Export\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Primary,Arial,24,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Secondary,Arial,18,&HCCCCCC&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Default,Arial,24,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:02.96,0:00:05.04,Primary,,0,0,0,,{\\rPrimary}\\N{\\rSecondary}<font size=\"24\"></font><font size=\"24\">杰瑞\\N啊，我好紧张！</font><font size=\"18\" color=\"#cccccc\">Jerry:\\NUhh, I'm so nervous!</font>\n\
+Dialogue: 0,0:00:05.13,0:00:06.79,Primary,,0,0,0,,{\\rPrimary}\\N{\\rSecondary}<font size=\"24\"></font><font size=\"24\">好久没人了\\N甚至取笑我</font><font size=\"18\" color=\"#cccccc\">It's been so long, no one\\Neven makes fun of me</font>\n\
+Dialogue: 0,0:00:06.92,0:00:08.38,Primary,,0,0,0,,{\\rPrimary}\\N{\\rSecondary}<font size=\"24\"></font><font size=\"24\">因为失业\\N不再。</font><font size=\"18\" color=\"#cccccc\">for being unemployed\\Nanymore.</font>\n\
+Dialogue: 0,0:00:08.46,0:00:10.84,Primary,,0,0,0,,{\\rPrimary}\\N{\\rSecondary}<font size=\"24\"></font><font size=\"24\">噢，我们可以取笑你\\N如果你愿意，亲爱的。</font><font size=\"18\" color=\"#cccccc\">Aw. We can make fun of you\\Nif you want, sweetie.</font>\n\
+Dialogue: 0,0:00:10.96,0:00:12.93,Primary,,0,0,0,,{\\rPrimary}\\N{\\rSecondary}<font size=\"24\"></font><font size=\"24\">你也可以\\N拿一个。</font><font size=\"18\" color=\"#cccccc\">You could also\\Ntake one of these.</font>\n";
+        let mut file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 5, "应解析出5条字幕");
+
+        // 1. 检测双语
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语：matched={}, total={}", result.matched_count, result.total_count);
+
+        // 2. 拆分
+        split_bilingual(&mut file, SplitMode::EvenFirst);
+        assert!(file.entries[0].text.contains("杰瑞"), "text 应含中文：{}", file.entries[0].text);
+        assert!(file.entries[0].translated.contains("Jerry"), "translated 应含英文：{}", file.entries[0].translated);
+        assert!(!file.entries[0].text.contains("Jerry"), "text 不应含英文：{}", file.entries[0].text);
+        assert!(!file.entries[0].translated.contains("杰瑞"), "translated 不应含中文：{}", file.entries[0].translated);
+    }
+
+    #[test]
+    fn test_detect_bilingual_real_export_multiline() {
+        // 真实案例：本软件导出的 ASS 双语字幕，中文和英文各自含 \N 多行换行
+        // 格式：{\rPrimary}中文1\N中文2\N{\rSecondary}英文1\N英文2
+        // 重新导入后无法识别为双语
+        let content = "[Script Info]\nTitle: AI-SubTrans Export\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Primary,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Secondary,Arial,30,&HCCCCCC&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Default,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:02.96,0:00:05.04,Primary,,0,0,0,,{\\rPrimary}杰瑞\\N啊，我好紧张！\\N{\\rSecondary}Jerry:\\NUhh, I'm so nervous!\n\
+Dialogue: 0,0:00:05.13,0:00:06.79,Primary,,0,0,0,,{\\rPrimary}好久没人了\\N甚至取笑我\\N{\\rSecondary}It's been so long, no one\\Neven makes fun of me\n\
+Dialogue: 0,0:00:06.92,0:00:08.38,Primary,,0,0,0,,{\\rPrimary}因为失业\\N不再。\\N{\\rSecondary}for being unemployed\\Nanymore.\n\
+Dialogue: 0,0:00:08.46,0:00:10.84,Primary,,0,0,0,,{\\rPrimary}噢，我们可以取笑你\\N如果你愿意，亲爱的。\\N{\\rSecondary}Aw. We can make fun of you\\Nif you want, sweetie.\n\
+Dialogue: 0,0:00:10.96,0:00:12.93,Primary,,0,0,0,,{\\rPrimary}你也可以\\N拿一个。\\N{\\rSecondary}You could also\\Ntake one of these.\n";
+        let file = parse_ass(content).unwrap();
+        eprintln!("entries count: {}", file.entries.len());
+        for (i, e) in file.entries.iter().enumerate() {
+            eprintln!("  entry[{}] text={:?}", i, e.text);
+        }
+        let result = detect_bilingual(&file);
+        eprintln!("detect result: is_bilingual={}, matched={}, total={}", result.is_bilingual, result.matched_count, result.total_count);
+        assert!(result.is_bilingual, "应检测出双语：matched={}, total={}", result.matched_count, result.total_count);
+    }
+
+    #[test]
+    fn test_detect_bilingual_real_export_with_secondary_only_entries() {
+        // 真实案例：本软件导出的 ASS 双语字幕，混合了：
+        // 1. Primary 样式的双语条目（中英文用 \N 分隔）
+        // 2. Secondary 样式的纯英文条目（无 \N 或有 \N 但只有英文）
+        // 纯英文条目不应影响双语检测
+        // 真实文件：181 条 Primary 双语 + 379 条 Secondary 纯英文 = 560 条
+        // 旧逻辑：threshold = 560*3/5 = 336，matched 最多 181 < 336 → 检测失败
+        // 新逻辑：threshold 基于 multiline_count，181 条双语全部是多行，matched=181 >= threshold
+        let content = "[Script Info]\nTitle: AI-SubTrans Export\nScriptType: v4.00+\nPlayResX: 1280\nPlayResY: 720\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Primary,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Secondary,Arial,30,&HCCCCCC&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Default,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:02.96,0:00:05.04,Primary,,0,0,0,,{\\rPrimary}杰瑞\\N啊，我好紧张！\\N{\\rSecondary}Jerry:\\NUhh, I'm so nervous!\n\
+Dialogue: 0,0:00:05.13,0:00:06.79,Primary,,0,0,0,,{\\rPrimary}好久没人了\\N甚至取笑我\\N{\\rSecondary}It's been so long, no one\\Neven makes fun of me\n\
+Dialogue: 0,0:00:06.92,0:00:08.38,Primary,,0,0,0,,{\\rPrimary}因为失业\\N不再。\\N{\\rSecondary}for being unemployed\\Nanymore.\n\
+Dialogue: 0,0:00:08.46,0:00:10.84,Primary,,0,0,0,,{\\rPrimary}噢，我们可以取笑你\\N如果你愿意，亲爱的。\\N{\\rSecondary}Aw. We can make fun of you\\Nif you want, sweetie.\n\
+Dialogue: 0,0:00:10.96,0:00:12.93,Primary,,0,0,0,,{\\rPrimary}你也可以\\N拿一个。\\N{\\rSecondary}You could also\\Ntake one of these.\n\
+Dialogue: 0,0:03:47.85,0:03:49.18,Secondary,,0,0,0,,{\\rSecondary}What was <i>that </i>like?\n\
+Dialogue: 0,0:04:25.05,0:04:26.97,Secondary,,0,0,0,,{\\rSecondary}<i>Drink.</i>\n\
+Dialogue: 0,0:05:57.31,0:05:58.85,Secondary,,0,0,0,,{\\rSecondary}<i>in cruelty-free Mup technology,</i>\n\
+Dialogue: 0,0:06:01.36,0:06:03.94,Secondary,,0,0,0,,{\\rSecondary}<i>with our drag-and-drop display.</i>\n\
+Dialogue: 0,0:21:36.62,0:21:38.88,Secondary,,0,0,0,,{\\rSecondary}So it's all hands\\Non deck this week.\n";
+        let file = parse_ass(content).unwrap();
+        eprintln!("entries count: {}", file.entries.len());
+        let result = detect_bilingual(&file);
+        eprintln!("detect result: is_bilingual={}, matched={}, total={}", result.is_bilingual, result.matched_count, result.total_count);
+        // 5 条双语多行 + 5 条纯英文（3 条单行 + 2 条多行）= 10 条
+        // multiline_count = 5(双语) + 2(纯英文多行) = 7
+        // threshold = 7*3/5 = 4, matched = 5 >= 4 → 检测成功
+        assert!(result.is_bilingual, "应检测出双语：matched={}, total={}", result.matched_count, result.total_count);
     }
 }

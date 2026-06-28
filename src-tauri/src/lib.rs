@@ -64,6 +64,15 @@ pub fn init_logging(app_data_dir: &std::path::Path) -> tracing_appender::non_blo
 /// Tauri 应用入口
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 在主线程初始化 OLE，永不卸载。
+    // mpv 内部可能调用 OleUninitialize/CoUninitialize，如果 OLE 引用计数降到 0，
+    // Tauri 主窗口的拖放系统会失效。这里额外持有一个引用，确保 OLE 永不卸载。
+    #[cfg(windows)]
+    unsafe {
+        let _ = windows::Win32::System::Ole::OleInitialize(None);
+        tracing::info!("OLE 已在应用启动时初始化（永久引用）");
+    }
+
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -71,6 +80,31 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(drop) = event {
+                use tauri::Emitter;
+                match drop {
+                    tauri::DragDropEvent::Enter { paths, .. } => {
+                        tracing::info!("DragDropEvent::Enter, paths={:?}", paths);
+                        let _ = window.emit("tauri://file-drop-hover", paths);
+                    }
+                    tauri::DragDropEvent::Drop { paths, .. } => {
+                        tracing::info!("DragDropEvent::Drop, paths={:?}", paths);
+                        let paths: Vec<String> = paths.iter()
+                            .filter_map(|p| p.to_str().map(|s| s.to_string()))
+                            .collect();
+                        let _ = window.emit("app://file-drop", paths);
+                    }
+                    tauri::DragDropEvent::Leave => {
+                        tracing::info!("DragDropEvent::Leave");
+                        let _ = window.emit("tauri://file-drop-cancelled", ());
+                    }
+                    _ => {
+                        tracing::info!("DragDropEvent::other: {:?}", drop);
+                    }
+                }
+            }
+        })
         .setup(|app| {
             let app_data_dir = app
                 .path()
@@ -89,6 +123,9 @@ pub fn run() {
 
             // 初始化翻译取消令牌
             app.manage(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)) as crate::ipc::CancelToken);
+
+            // 初始化 ffmpeg 的 app_data_dir（供 find_ffmpeg 查找下载的 ffmpeg）
+            crate::ffmpeg::init_app_data_dir(app_data_dir.clone());
 
             tracing::info!("AI-SubTrans 启动完成，数据目录: {:?}", app_data_dir);
 

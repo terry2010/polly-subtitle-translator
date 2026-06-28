@@ -139,7 +139,6 @@ pub struct GeneralSettings {
     pub theme: String,            // light / dark / system
     pub default_source_lang: String,
     pub default_target_lang: String,
-    pub ffmpeg_path: Option<String>, // None = 内置
     pub log_level: String,        // trace / debug / info / warn / error
 }
 
@@ -150,7 +149,6 @@ impl Default for GeneralSettings {
             theme: "system".to_string(),
             default_source_lang: "en".to_string(),
             default_target_lang: "zh".to_string(),
-            ffmpeg_path: None,
             log_level: "info".to_string(),
         }
     }
@@ -195,7 +193,6 @@ mod tests {
         assert_eq!(s.language, "zh");
         assert_eq!(s.default_source_lang, "en");
         assert_eq!(s.default_target_lang, "zh");
-        assert!(s.ffmpeg_path.is_none());
     }
 
     #[test]

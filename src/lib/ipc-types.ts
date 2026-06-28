@@ -73,6 +73,13 @@ export interface ProbeResult {
 // === 字幕相关 ===
 export type SubtitleFormat = "srt" | "vtt" | "ass" | "ssa";
 
+// === 字幕流编辑 ===
+export interface SubtitleStreamEdit {
+  original_index: number;   // 原始视频中的绝对流索引
+  title: string | null;     // 新标题（null=保留原标题）
+  language: string | null;  // 新语言代码（null=保留原语言）
+}
+
 export interface SubtitleEntry {
   index: number;
   start_ms: number;
@@ -166,9 +173,7 @@ export type Severity = "recoverable" | "restart" | "reinstall";
 
 export interface IpcError {
   code: string;
-  i18n_key: string;
   args?: Record<string, unknown>;
-  message: string;
   severity: Severity;
 }
 
@@ -183,3 +188,65 @@ export interface IpcResultErr {
 }
 
 export type IpcResponse<T> = IpcResultOk<T> | IpcResultErr;
+
+// === 导出弹层（export-dialog-plan.md §2） ===
+
+export interface ExportOptions {
+  format: "srt" | "ass" | "vtt";
+  mode: "monolingual" | "bilingual";
+  /** 单语模式：输出哪种语言 */
+  monolingual_lang?: "source" | "translated";
+  /** 双语模式：true=译文在上，false=原文在上 */
+  bilingual_translated_first?: boolean;
+  /** ASS 双语样式（仅 format=ass 且 mode=bilingual 时生效） */
+  ass_style?: AssBilingualStyle;
+  /** 视频实际宽度（像素），用于 ASS PlayResX，缺省 1280 */
+  video_width?: number;
+  /** 视频实际高度（像素），用于 ASS PlayResY，缺省 720 */
+  video_height?: number;
+}
+
+export interface AssBilingualStyle {
+  /** 第一行（上）字号，默认 24 */
+  primary_font_size: number;
+  /** 第二行（下）字号，默认 18 */
+  secondary_font_size: number;
+  /** 第一行颜色，ASS BGR 格式 &HBBGGRR&，默认 &HFFFFFF&（白色） */
+  primary_color: string;
+  /** 第二行颜色，默认 &HCCCCCC&（浅灰） */
+  secondary_color: string;
+  /** 第一行特效 */
+  primary_bold: boolean;
+  primary_italic: boolean;
+  primary_underline: boolean;
+  /** 第二行特效 */
+  secondary_bold: boolean;
+  secondary_italic: boolean;
+  secondary_underline: boolean;
+  /** 描边宽度，默认 2 */
+  outline: number;
+  /** 描边颜色，ASS BGR 格式 &HBBGGRR&，默认 &H000000&（黑色） */
+  outline_color: string;
+  /** 阴影深度，默认 1 */
+  shadow: number;
+  /** 阴影颜色，ASS BGR 格式 &HBBGGRR&，默认 &H000000&（黑色） */
+  shadow_color: string;
+}
+
+/** TS 端默认值常量，与 Rust 端 `impl Default for AssBilingualStyle` 对齐 */
+export const DEFAULT_ASS_STYLE: AssBilingualStyle = {
+  primary_font_size: 48,
+  secondary_font_size: 30,
+  primary_color: "&HFFFFFF&",
+  secondary_color: "&HCCCCCC&",
+  primary_bold: false,
+  primary_italic: false,
+  primary_underline: false,
+  secondary_bold: false,
+  secondary_italic: false,
+  secondary_underline: false,
+  outline: 2,
+  outline_color: "&H000000&",
+  shadow: 1,
+  shadow_color: "&H000000&",
+};

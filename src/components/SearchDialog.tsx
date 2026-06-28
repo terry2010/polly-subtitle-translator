@@ -5,9 +5,10 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { ScrollArea } from "./ui/scroll-area";
-import { api } from "../lib/api";
+import { api, formatIpcError } from "../lib/api";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { SubtitleSearchResult } from "../lib/ipc-types";
+import { withPlayerHidden } from "../lib/utils";
 
 interface SearchDialogProps {
   open: boolean;
@@ -40,7 +41,7 @@ export function SearchDialog({ open, onOpenChange, videoName }: SearchDialogProp
         setError(t("search.noResults"));
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(formatIpcError(e as any));
     } finally {
       setSearching(false);
     }
@@ -54,15 +55,15 @@ export function SearchDialog({ open, onOpenChange, videoName }: SearchDialogProp
         setError(t("search.notConfigured"));
         return;
       }
-      const outputPath = await save({
+      const outputPath = await withPlayerHidden(() => save({
         defaultPath: `${result.file_name}`,
         filters: [{ name: "Subtitle", extensions: ["srt"] }],
-      });
+      }));
       if (outputPath) {
         await api.downloadSubtitleOnline(result.subtitle_id, apiKey, outputPath);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(formatIpcError(e as any));
     } finally {
       setDownloadingId(null);
     }

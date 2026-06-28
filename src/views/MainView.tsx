@@ -1,8 +1,10 @@
 import { useCallback, useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { Settings as SettingsIcon, FolderOpen, Film, FileText, Loader2, Search, Merge, Download, ArrowLeft, Square, X, Upload } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload } from "lucide-react";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { Button } from "../components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -11,10 +13,13 @@ import { Progress } from "../components/ui/progress";
 import { useVideoStore } from "../stores/videoStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
-import { api } from "../lib/api";
+import { api, formatIpcError } from "../lib/api";
+import { withPlayerHidden } from "../lib/utils";
 import { SubtitlePreviewPanel } from "../components/SubtitlePreviewPanel";
 import { SearchDialog } from "../components/SearchDialog";
 import { HdrNotice } from "../components/HdrNotice";
+import { SubtitleStreamEditorDialog } from "../components/SubtitleStreamEditorDialog";
+import { FfmpegDownloadDialog } from "../components/FfmpegDownloadDialog";
 
 export default function MainView() {
   const { t } = useTranslation();
@@ -23,45 +28,93 @@ export default function MainView() {
   const subtitleStore = useSubtitleStore();
   const translateStore = useTranslateStore();
   const [extracting, setExtracting] = useState(false);
+  const [extractProgress, setExtractProgress] = useState(0);
+  const [ffmpegDialogOpen, setFfmpegDialogOpen] = useState(false);
+  const ffmpegDownloadedRef = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [merging, setMerging] = useState(false);
-  const [autoMerge, setAutoMerge] = useState(false);
+  const [streamEditorOpen, setStreamEditorOpen] = useState(false);
   const [extractedFiles, setExtractedFiles] = useState<{ name: string; path: string; status: string }[]>([]);
+  // 提取失败的字幕流 index 集合（用于在列表中标记不可用的流）
+  const [failedStreams, setFailedStreams] = useState<Set<number>>(new Set());
   // 导入的外部字幕列表
   const [importedSubtitles, setImportedSubtitles] = useState<{ name: string; path: string }[]>([]);
   // 字幕流提取缓存：streamIndex -> SubtitleFile
   const extractCacheRef = useRef<Map<number, any>>(new Map());
+  // 自动提取已执行的 stream index（避免重复提取）
+  const autoExtractedRef = useRef<number | null>(null);
+  // 从纯字幕模式切到视频模式时，跳过一次自动提取，保留当前编辑的字幕
+  const skipAutoExtractRef = useRef(false);
+  // 提取取消标志：关闭视频时设为 true，正在进行的提取完成后丢弃结果
+  const extractCancelledRef = useRef(false);
   // 各翻译引擎是否已配置凭据
   const [providerConfigured, setProviderConfigured] = useState<Record<string, boolean>>({});
   // 当前选中的导入字幕路径（用于高亮）
   const [selectedImportedPath, setSelectedImportedPath] = useState<string | null>(null);
 
+  // 原生文件对话框弹出前隐藏 libmpv 子窗口，避免悬浮窗口遮挡对话框；
+  // 对话框关闭后恢复显示。withPlayerHidden 抽到 utils 层供所有组件复用。
+
   const handleOpenVideo = useCallback(async () => {
-    const selected = await open({
+    // 先检测 ffmpeg 是否已安装（打开视频需要 ffprobe 探测）
+    if (!ffmpegDownloadedRef.current) {
+      try {
+        const status = await api.getFfmpegStatus();
+        if (!status.installed) {
+          setFfmpegDialogOpen(true);
+          return;
+        }
+        ffmpegDownloadedRef.current = true;
+      } catch (e) {
+        console.error("[handleOpenVideo] 检测 ffmpeg 状态失败:", e);
+      }
+    }
+    // 启动时播放器未初始化，无需 withPlayerHidden
+    const hasPlayer = !!useVideoStore.getState().probeResult;
+    const doOpen = () => open({
       multiple: false,
       filters: [{ name: "Video", extensions: ["mkv", "mp4", "avi", "mov", "wmv", "flv", "ts", "m2ts"] }],
     });
+    const selected = hasPlayer
+      ? await withPlayerHidden(doOpen)
+      : await doOpen();
     if (typeof selected === "string") {
+      // 纯字幕模式切换到视频模式：跳过自动提取，保留当前编辑的字幕
+      const cur = useSubtitleStore.getState().file;
+      if (cur?.source_path) {
+        skipAutoExtractRef.current = true;
+      }
       await openVideo(selected);
+      if (cur?.source_path) {
+        const name = cur.source_path.split(/[\\/]/).pop() ?? cur.source_path;
+        setImportedSubtitles((prev) =>
+          prev.some((s) => s.path === cur.source_path) ? prev : [...prev, { name, path: cur.source_path! }]
+        );
+        setSelectedImportedPath(cur.source_path);
+        selectSubtitleStream(null);
+      }
     }
-  }, [openVideo]);
+  }, [openVideo, withPlayerHidden, selectSubtitleStream]);
 
   const handleOpenSubtitle = useCallback(async () => {
-    const selected = await open({
+    const hasPlayer = !!useVideoStore.getState().probeResult;
+    const doOpen = () => open({
       multiple: false,
       filters: [{ name: "Subtitle", extensions: ["srt", "ass", "ssa", "vtt"] }],
     });
+    const selected = hasPlayer ? await withPlayerHidden(doOpen) : await doOpen();
     if (typeof selected === "string") {
       await subtitleStore.loadSubtitle(selected);
     }
-  }, [subtitleStore]);
+  }, [subtitleStore, withPlayerHidden]);
 
   // 导入外部字幕（添加到导入列表并立刻加载第一个）
   const handleImportSubtitle = useCallback(async () => {
-    const selected = await open({
+    const hasPlayer = !!useVideoStore.getState().probeResult;
+    const doOpen = () => open({
       multiple: true,
       filters: [{ name: "Subtitle", extensions: ["srt", "ass", "ssa", "vtt"] }],
     });
+    const selected = hasPlayer ? await withPlayerHidden(doOpen) : await doOpen();
     if (selected && Array.isArray(selected)) {
       for (const path of selected) {
         const name = path.split(/[\\/]/).pop() ?? path;
@@ -73,11 +126,20 @@ export default function MainView() {
       setSelectedImportedPath(firstPath);
       selectSubtitleStream(null);
     }
-  }, [subtitleStore, selectSubtitleStream]);
+  }, [subtitleStore, selectSubtitleStream, withPlayerHidden]);
 
-  // 清除提取缓存
-  const clearExtractCache = useCallback(() => {
+  // 关闭视频：清除所有视频相关状态（提取缓存、自动提取 ref、导入字幕列表）
+  const handleCloseVideo = useCallback(() => {
+    // 取消正在进行的提取，杀死 ffmpeg 进程，避免堆积导致 IPC 线程池耗尽
+    extractCancelledRef.current = true;
+    api.cancelExtractSubtitle().catch(() => {});
     extractCacheRef.current.clear();
+    autoExtractedRef.current = null;
+    setImportedSubtitles([]);
+    setSelectedImportedPath(null);
+    setFailedStreams(new Set());
+    // 重置提取状态，避免异步提取未完成时卡在"正在提取字幕中..."
+    setExtracting(false);
   }, []);
 
   // 加载导入的字幕到编辑区
@@ -95,6 +157,8 @@ export default function MainView() {
 
   const handleExtractSubtitle = useCallback(async () => {
     if (!probeResult || !selectedSubtitleStream) return;
+    // 重置取消标志（新的提取开始）
+    extractCancelledRef.current = false;
     // 检查缓存
     const cached = extractCacheRef.current.get(selectedSubtitleStream.index);
     if (cached) {
@@ -116,14 +180,28 @@ export default function MainView() {
       return;
     }
     setExtracting(true);
+    setExtractProgress(0);
     try {
       const baseName = probeResult.video_path.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "");
       const lang = selectedSubtitleStream.language ?? "sub";
       // 写到系统临时目录，避免 Vite 监听项目目录变化触发页面刷新
       const tempDir = await import("@tauri-apps/api/path").then(m => m.tempDir());
       const outputPath = `${tempDir}${baseName}.${lang}.srt`;
-      await api.extractSubtitle(probeResult.video_path, selectedSubtitleStream.index, outputPath);
+      // 传入视频时长（秒）用于计算提取进度百分比
+      const durationSec = probeResult.format?.duration ?? undefined;
+      await api.extractSubtitle(probeResult.video_path, selectedSubtitleStream.index, outputPath, undefined, durationSec);
+      // 异步提取期间用户可能已关闭视频或切换了字幕流，检查取消标志
+      if (extractCancelledRef.current) {
+        console.warn("提取完成但已被取消，丢弃结果");
+        return;
+      }
       await subtitleStore.loadSubtitle(outputPath);
+      // 提取成功，清除该流的失败标记
+      setFailedStreams((prev) => {
+        const next = new Set(prev);
+        next.delete(selectedSubtitleStream.index);
+        return next;
+      });
       setExtractedFiles((prev) => [
         ...prev,
         { name: `${baseName}.${lang}.srt`, path: outputPath, status: "已提取" },
@@ -155,26 +233,55 @@ export default function MainView() {
       }
     } catch (e: any) {
       console.error("提取字幕失败:", e);
-      const msg = e?.message ?? e?.code ?? String(e);
+      const msg = formatIpcError(e);
       setExtractedFiles((prev) => [
         ...prev,
-        { name: "提取失败", path: "", status: msg },
+        { name: t("ffmpeg.extractFailedShort"), path: "", status: msg },
       ]);
+      // 标记该流提取失败
+      if (selectedSubtitleStream) {
+        setFailedStreams((prev) => new Set(prev).add(selectedSubtitleStream.index));
+      }
+      toast.error(msg);
     } finally {
       setExtracting(false);
     }
   }, [probeResult, selectedSubtitleStream, subtitleStore]);
 
   // 自动提取字幕：当 selectedSubtitleStream 首次被设置时自动提取
-  const autoExtractedRef = useRef<number | null>(null);
   const handleExtractRef = useRef(handleExtractSubtitle);
   handleExtractRef.current = handleExtractSubtitle;
+  // 监听字幕提取进度事件
+  useEffect(() => {
+    const unlisten = listen<{ progress: number }>("extract_progress", (event) => {
+      setExtractProgress(event.payload.progress);
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, []);
+
   useEffect(() => {
     if (!probeResult || !selectedSubtitleStream) return;
     if (autoExtractedRef.current === selectedSubtitleStream.index) return;
     autoExtractedRef.current = selectedSubtitleStream.index;
+    if (skipAutoExtractRef.current) {
+      skipAutoExtractRef.current = false;
+      return;
+    }
     handleExtractRef.current();
   }, [probeResult, selectedSubtitleStream]);
+
+  // Ctrl+S 全局快捷键：分发 "export-subtitle" 事件，由 SubtitlePreviewPanel 监听并打开 ExportDialog
+  // WebView2 中 Ctrl+S 可能触发浏览器保存对话框，需 preventDefault 拦截
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s" && !e.shiftKey) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("export-subtitle"));
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // 查询各翻译引擎是否已配置凭据
   useEffect(() => {
@@ -198,32 +305,6 @@ export default function MainView() {
   }, []);
 
   // === SECTION 1 END ===
-
-  const handleMergeSubtitle = useCallback(async () => {
-    if (!probeResult || !subtitleStore.file) return;
-    setMerging(true);
-    try {
-      const baseName = probeResult.video_path.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "");
-      const tempDir = await import("@tauri-apps/api/path").then(m => m.tempDir());
-      const tempSub = `${tempDir}${baseName}.zh.srt`;
-      await subtitleStore.saveSubtitle(tempSub);
-      const outputPath = `${tempDir}${baseName}.merged.mkv`;
-      await api.mergeSubtitle(probeResult.video_path, tempSub, outputPath, "zh");
-      setExtractedFiles((prev) => [
-        ...prev,
-        { name: `${baseName}.merged.mkv`, path: outputPath, status: "已合并" },
-      ]);
-    } catch (e: any) {
-      console.error("合并字幕失败:", e);
-      const msg = e?.message ?? e?.code ?? String(e);
-      setExtractedFiles((prev) => [
-        ...prev,
-        { name: "合并失败", path: "", status: msg },
-      ]);
-    } finally {
-      setMerging(false);
-    }
-  }, [probeResult, subtitleStore]);
 
   const handlePlayVideo = useCallback(async () => {
     if (!probeResult) return;
@@ -258,26 +339,8 @@ export default function MainView() {
         return tr && !e.translated ? { ...e, translated: tr.translated } : e;
       });
       subtitleStore.setFile({ ...subtitleStore.file, entries });
-
-      // 自动合并
-      if (autoMerge && probeResult) {
-        try {
-          const baseName = probeResult.video_path.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "");
-          const tempDir = await import("@tauri-apps/api/path").then(m => m.tempDir());
-          const tempSub = `${tempDir}${baseName}.zh.srt`;
-          await subtitleStore.saveSubtitle(tempSub);
-          const outputPath = `${tempDir}${baseName}.merged.mkv`;
-          await api.mergeSubtitle(probeResult.video_path, tempSub, outputPath, "zh");
-          setExtractedFiles((prev) => [
-            ...prev,
-            { name: `${baseName}.merged.mkv`, path: outputPath, status: "已翻译合并" },
-          ]);
-        } catch (e: any) {
-          console.error("自动合并失败:", e);
-        }
-      }
     }
-  }, [subtitleStore, translateStore, autoMerge, probeResult]);
+  }, [subtitleStore, translateStore]);
 
   const formatDuration = (s: number | null) => {
     if (!s) return "--";
@@ -302,13 +365,6 @@ export default function MainView() {
   if (!probeResult && !loading && !error && !subtitleStore.file) {
     return (
       <div className="flex h-screen flex-col">
-        <header className="flex items-center justify-between border-b px-4 py-2">
-          <h1 className="text-lg font-semibold">{t("app.title")}</h1>
-          <Button variant="ghost" size="sm" onClick={() => navigate("/settings")}>
-            <SettingsIcon className="mr-1 h-4 w-4" />
-            {t("menu.settings")}
-          </Button>
-        </header>
         <div className="flex flex-1 flex-col items-center justify-center gap-6">
           <div className="flex gap-4">
             <Button size="lg" onClick={handleOpenVideo} className="h-20 w-44 flex-col gap-2">
@@ -320,49 +376,34 @@ export default function MainView() {
               {t("menu.openSubtitle")}
             </Button>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {t("app.dragHint", "或将文件拖入此窗口")} · mkv mp4 avi mov / srt ass vtt
+          <p className="text-sm text-muted-foreground text-center whitespace-nowrap">
+            {t("app.dragHint")} · mkv mp4 avi mov / srt ass vtt
           </p>
+          <div className="flex gap-4 w-[368px]">
+            <div className="w-44" />
+            <div className="w-44 flex justify-end">
+              <Button variant="ghost" size="sm" onClick={() => navigate("/settings")}>
+                <SettingsIcon className="mr-1 h-4 w-4" />
+                {t("menu.settings")}
+              </Button>
+            </div>
+          </div>
         </div>
         <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+        <FfmpegDownloadDialog
+          open={ffmpegDialogOpen}
+          onDownloaded={() => {
+            setFfmpegDialogOpen(false);
+            ffmpegDownloadedRef.current = true;
+          }}
+          onCancel={() => setFfmpegDialogOpen(false)}
+        />
       </div>
     );
   }
 
   return (
     <div className="flex h-screen flex-col">
-      {/* 顶栏 */}
-      <header className="flex items-center justify-between border-b px-4 py-2">
-        <div className="flex items-center gap-3">
-          {subtitleStore.file && !probeResult && (
-            <Button variant="ghost" size="sm" onClick={() => { subtitleStore.setFile(null); }}>
-              <ArrowLeft className="mr-1 h-4 w-4" />
-              {t("common.back")}
-            </Button>
-          )}
-          <h1 className="text-lg font-semibold truncate max-w-md">
-            {videoFileName || (subtitleStore.file?.source_path?.split(/[\\/]/).pop() ?? t("app.title"))}
-          </h1>
-        </div>
-        <div className="flex gap-1">
-          <Button variant="ghost" size="sm" onClick={handleOpenVideo}>
-            <FolderOpen className="mr-1 h-4 w-4" />
-            {t("menu.openVideo")}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={handleOpenSubtitle}>
-            <FileText className="mr-1 h-4 w-4" />
-            {t("menu.openSubtitle")}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setSearchOpen(true)}>
-            <Search className="mr-1 h-4 w-4" />
-            {t("search.title")}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => navigate("/settings")}>
-            <SettingsIcon className="h-4 w-4" />
-          </Button>
-        </div>
-      </header>
-
       {/* 主体两栏布局 */}
       <main className="flex flex-1 overflow-hidden">
         {/* 左栏：播放预览 + 字幕对比预览 */}
@@ -395,14 +436,22 @@ export default function MainView() {
                 </div>
                 {/* 内嵌字幕列表 */}
                 <div className="w-56 border-l bg-muted/20 flex flex-col max-h-[40vh] overflow-hidden">
-                  <div className="px-3 py-1.5 border-b text-xs font-medium flex-shrink-0">
-                    {t("video.subtitleStreams", "内嵌字幕")} ({probeResult.subtitle_streams.length})
+                  <div className="px-3 py-1.5 border-b text-xs font-medium flex-shrink-0 flex items-center justify-between">
+                    <span>{t("video.subtitleStreams")} ({probeResult.subtitle_streams.length})</span>
+                    <button
+                      className="text-xs text-primary hover:underline"
+                      onClick={() => setStreamEditorOpen(true)}
+                    >
+                      {t("subtitle.streamEditor")}
+                    </button>
                   </div>
                   <div className="overflow-auto p-1.5 space-y-1 flex-1">
                     {probeResult.subtitle_streams.length === 0 && (
-                      <p className="text-xs text-muted-foreground px-1 py-2">{t("video.noSubtitle", "无内嵌字幕")}</p>
+                      <p className="text-xs text-muted-foreground px-1 py-2">{t("video.noSubtitle")}</p>
                     )}
-                    {probeResult.subtitle_streams.map((stream) => (
+                    {probeResult.subtitle_streams.map((stream) => {
+                      const failed = failedStreams.has(stream.index);
+                      return (
                       <button
                         key={stream.index}
                         onClick={() => { selectSubtitleStream(stream); setSelectedImportedPath(null); }}
@@ -410,7 +459,7 @@ export default function MainView() {
                           selectedSubtitleStream?.index === stream.index
                             ? "bg-primary text-primary-foreground"
                             : "hover:bg-accent"
-                        }`}
+                        } ${failed ? "opacity-50" : ""}`}
                         disabled={stream.is_graphic}
                       >
                         <span className={`w-2 h-2 rounded-full ${selectedSubtitleStream?.index === stream.index ? "bg-primary-foreground" : "bg-muted-foreground/40"}`} />
@@ -419,14 +468,16 @@ export default function MainView() {
                         {stream.disposition_forced && <span className="opacity-60">forced</span>}
                         {stream.disposition_hearing_impaired && <span className="opacity-60">SDH</span>}
                         {stream.is_graphic && <span className="opacity-60">(graphic)</span>}
+                        {failed && <span className="opacity-60 text-destructive">✗</span>}
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                   {/* 导入的外部字幕列表 */}
                   {importedSubtitles.length > 0 && (
                     <div className="border-t flex-shrink-0">
                       <div className="px-3 py-1 border-b text-xs font-medium bg-muted/30">
-                        {t("subtitle.imported", "导入字幕")} ({importedSubtitles.length})
+                        {t("subtitle.imported")} ({importedSubtitles.length})
                       </div>
                       <div className="p-1 space-y-0.5 max-h-24 overflow-auto">
                         {importedSubtitles.map((sub) => (
@@ -451,29 +502,6 @@ export default function MainView() {
                       </div>
                     </div>
                   )}
-                  {/* 操作按钮栏：两行 */}
-                  <div className="border-t flex flex-col gap-0.5 p-1 flex-shrink-0">
-                    <div className="flex gap-0.5">
-                      <Button size="sm" variant="ghost" className="h-6 flex-1 px-1 text-xs" onClick={() => { clearVideo(); subtitleStore.setFile(null); clearExtractCache(); }}>
-                        <X className="h-3 w-3 mr-0.5" />
-                        {t("video.closeVideo", "关闭视频")}
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-6 flex-1 px-1 text-xs" onClick={() => navigate("/settings")}>
-                        <SettingsIcon className="h-3 w-3 mr-0.5" />
-                        {t("menu.systemSettings", "系统设置")}
-                      </Button>
-                    </div>
-                    <div className="flex gap-0.5">
-                      <Button size="sm" variant="ghost" className="h-6 flex-1 px-1 text-xs" onClick={handleImportSubtitle}>
-                        <Upload className="h-3 w-3 mr-0.5" />
-                        {t("menu.importSubtitle", "导入字幕")}
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-6 flex-1 px-1 text-xs" onClick={() => setSearchOpen(true)}>
-                        <Search className="h-3 w-3 mr-0.5" />
-                        {t("search.title", "搜索")}
-                      </Button>
-                    </div>
-                  </div>
                 </div>
               </div>
               {/* HDR 提示 */}
@@ -485,7 +513,7 @@ export default function MainView() {
 
           {/* 字幕对比预览区 */}
           <div className="flex-1 min-h-0 overflow-hidden">
-            <SubtitlePreviewPanel extracting={extracting} currentPlayTime={currentPlayTime} />
+            <SubtitlePreviewPanel extracting={extracting} extractProgress={extractProgress} currentPlayTime={currentPlayTime} />
           </div>
         </div>
 
@@ -501,11 +529,42 @@ export default function MainView() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-1 text-xs text-muted-foreground">
-                <div>{t("video.duration", "时长")}: {formatDuration(probeResult.format.duration)} · {formatSize(probeResult.format.size)}</div>
+                <div>{t("video.duration")}: {formatDuration(probeResult.format.duration)} · {formatSize(probeResult.format.size)}</div>
                 {probeResult.video_stream && (
                   <div>{probeResult.video_stream.width}x{probeResult.video_stream.height} {probeResult.video_stream.codec_name}</div>
                 )}
-                <div>{t("video.audioStreams", "音轨")}: {probeResult.audio_streams.map(s => s.language ?? "??").join(", ")}</div>
+                <div>{t("video.audioStreams")}: {probeResult.audio_streams.map(s => s.language ?? "??").join(", ")}</div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 快捷操作卡（视频模式）：关闭视频 / 系统设置 / 导入字幕 / 搜索 */}
+          {probeResult && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t("video.quickOps")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1.5">
+                <div className="flex gap-1">
+                  <Button size="sm" variant="destructive" className="h-7 flex-1 px-1 text-xs" onClick={() => { clearVideo(); subtitleStore.setFile(null); handleCloseVideo(); }}>
+                    <X className="h-3.5 w-3.5 mr-0.5" />
+                    {t("video.closeVideo")}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => navigate("/settings")}>
+                    <SettingsIcon className="h-3.5 w-3.5 mr-0.5" />
+                    {t("menu.systemSettings")}
+                  </Button>
+                </div>
+                <div className="flex gap-1">
+                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={handleImportSubtitle}>
+                    <Upload className="h-3.5 w-3.5 mr-0.5" />
+                    {t("menu.importSubtitle")}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => setSearchOpen(true)}>
+                    <Search className="h-3.5 w-3.5 mr-0.5" />
+                    {t("search.title")}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -520,8 +579,39 @@ export default function MainView() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-xs text-muted-foreground">
-                <div>{t("subtitle.format", "格式")}: {subtitleStore.file.format}</div>
-                <div>{t("subtitle.count", "条目数")}: {subtitleStore.file.entries.length}</div>
+                <div>{t("subtitle.format")}: {subtitleStore.file.format}</div>
+                <div>{t("subtitle.count")}: {subtitleStore.file.entries.length}</div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 快捷操作卡（纯字幕模式）：关闭字幕 / 系统设置 / 打开视频 / 字幕搜索 */}
+          {subtitleStore.file && !probeResult && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">{t("video.quickOps")}</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-1.5">
+                <div className="flex gap-1">
+                  <Button size="sm" variant="destructive" className="h-7 flex-1 px-1 text-xs" onClick={() => { subtitleStore.setFile(null); }}>
+                    <X className="h-3.5 w-3.5 mr-0.5" />
+                    {t("subtitle.closeSubtitle")}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => navigate("/settings")}>
+                    <SettingsIcon className="h-3.5 w-3.5 mr-0.5" />
+                    {t("menu.systemSettings")}
+                  </Button>
+                </div>
+                <div className="flex gap-1">
+                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={handleOpenVideo}>
+                    <Film className="h-3.5 w-3.5 mr-0.5" />
+                    {t("menu.openVideo")}
+                  </Button>
+                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => setSearchOpen(true)}>
+                    <Search className="h-3.5 w-3.5 mr-0.5" />
+                    {t("search.title")}
+                  </Button>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -529,12 +619,12 @@ export default function MainView() {
           {/* 字幕操作区 */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">{t("video.subtitleOps", "字幕操作")}</CardTitle>
+              <CardTitle className="text-sm">{t("video.subtitleOps")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {/* 翻译目标语言：label 和下拉框同一行 */}
               <div className="flex items-center gap-2">
-                <label className="text-xs text-muted-foreground flex-shrink-0">{t("translate.targetLang", "目标")}</label>
+                <label className="text-xs text-muted-foreground flex-shrink-0">{t("translate.targetLang")}</label>
                 <Select
                   value={translateStore.targetLang}
                   onValueChange={translateStore.setTargetLang}
@@ -553,7 +643,7 @@ export default function MainView() {
 
               {/* 翻译引擎 + API 下拉框 */}
               <div className="flex items-center gap-2">
-                <label className="text-xs text-muted-foreground flex-shrink-0">{t("translate.engine", "翻译引擎")}</label>
+                <label className="text-xs text-muted-foreground flex-shrink-0">{t("translate.engine")}</label>
                 <Select
                   value={translateStore.provider}
                   onValueChange={translateStore.setProvider}
@@ -564,13 +654,13 @@ export default function MainView() {
                   <SelectContent>
                     <SelectItem value="baidu">
                       <span className="flex items-center justify-between w-full">
-                        <span>百度</span>
+                        <span>{t("settings.baidu")}</span>
                         {!providerConfigured["baidu"] && (
                           <span
                             className="text-amber-600 ml-2 text-xs cursor-pointer hover:underline"
                             onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); navigate("/settings?provider=baidu"); }}
                           >
-                            待配置
+                            {t("common.notConfigured")}
                           </span>
                         )}
                       </span>
@@ -583,7 +673,7 @@ export default function MainView() {
                             className="text-amber-600 ml-2 text-xs cursor-pointer hover:underline"
                             onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); navigate("/settings?provider=bing"); }}
                           >
-                            待配置
+                            {t("common.notConfigured")}
                           </span>
                         )}
                       </span>
@@ -596,7 +686,7 @@ export default function MainView() {
                             className="text-amber-600 ml-2 text-xs cursor-pointer hover:underline"
                             onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); navigate("/settings?provider=google"); }}
                           >
-                            待配置
+                            {t("common.notConfigured")}
                           </span>
                         )}
                       </span>
@@ -614,7 +704,7 @@ export default function MainView() {
                   onClick={() => translateStore.cancelTranslate()}
                 >
                   <Square className="mr-1 h-4 w-4" />
-                  {t("translate.stop", "停止翻译")}
+                  {t("translate.stop")}
                 </Button>
               ) : (
                 <Button
@@ -623,34 +713,7 @@ export default function MainView() {
                   onClick={handleTranslateAndMerge}
                   disabled={!subtitleStore.file}
                 >
-                  {t("translate.translate", "翻译字幕")}
-                </Button>
-              )}
-
-              {/* 自动合并 checkbox */}
-              {probeResult && (
-                <label className="flex items-center gap-2 text-xs">
-                  <input
-                    type="checkbox"
-                    checked={autoMerge}
-                    onChange={(e) => setAutoMerge(e.target.checked)}
-                    className="rounded"
-                  />
-                  {t("video.autoMerge", "翻译完成后自动合并字幕到视频")}
-                </label>
-              )}
-
-              {/* 手动合并按钮 */}
-              {probeResult && subtitleStore.file && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="w-full"
-                  onClick={handleMergeSubtitle}
-                  disabled={merging}
-                >
-                  {merging ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Merge className="mr-1 h-4 w-4" />}
-                  {t("video.merge", "合并字幕到视频")}
+                  {t("translate.translate")}
                 </Button>
               )}
 
@@ -658,7 +721,7 @@ export default function MainView() {
               {translateStore.translating && (
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">
-                    <span>{t("translate.progress", "翻译中")}</span>
+                    <span>{t("translate.progress")}</span>
                     <span>{translateStore.progress} / {translateStore.total}</span>
                   </div>
                   <Progress value={(translateStore.progress / translateStore.total) * 100} />
@@ -676,7 +739,7 @@ export default function MainView() {
           {extractedFiles.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm">{t("video.results", "处理结果")}</CardTitle>
+                <CardTitle className="text-sm">{t("video.results")}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-1 max-h-32 overflow-auto">
                 {extractedFiles.map((f, i) => (
@@ -696,7 +759,7 @@ export default function MainView() {
 
       {/* 状态栏 */}
       <footer className="flex items-center justify-between border-t px-4 py-1 text-xs text-muted-foreground">
-        <span>{translateStore.translating ? t("translate.progress") : t("common.ready", "就绪")}</span>
+        <span>{translateStore.translating ? t("translate.progress") : t("common.ready")}</span>
         <span>v1.0.0</span>
       </footer>
 
@@ -705,6 +768,27 @@ export default function MainView() {
         open={searchOpen}
         onOpenChange={setSearchOpen}
         videoName={probeResult?.video_path?.split(/[\\/]/).pop()?.replace(/\.[^.]+$/, "")}
+      />
+
+      {/* 字幕流编辑弹层 */}
+      {probeResult && (
+        <SubtitleStreamEditorDialog
+          open={streamEditorOpen}
+          onOpenChange={setStreamEditorOpen}
+          videoPath={probeResult.video_path}
+          streams={probeResult.subtitle_streams}
+          onSaved={() => { openVideo(probeResult.video_path); }}
+        />
+      )}
+
+      {/* FFmpeg 下载弹窗 */}
+      <FfmpegDownloadDialog
+        open={ffmpegDialogOpen}
+        onDownloaded={() => {
+          setFfmpegDialogOpen(false);
+          ffmpegDownloadedRef.current = true;
+        }}
+        onCancel={() => setFfmpegDialogOpen(false)}
       />
     </div>
   );

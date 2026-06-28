@@ -14,7 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset"] }
+tauri = { version = "2", features = ["protocol-asset", "devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-shell = "2"
@@ -46,6 +46,7 @@ anyhow = "1"
 async-trait = "0.1"
 md-5 = "0.10"
 sevenz-rust = "0.6"
+zip = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
@@ -54,6 +55,9 @@ windows = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Ole",
+    "Win32_Globalization",
 ] }
 
 [features]

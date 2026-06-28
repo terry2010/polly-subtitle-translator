@@ -1,14 +1,17 @@
 import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Check, Loader2, Download, FolderOpen, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Search, Film, Wrench, Info } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Search, Film, Wrench, Info } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { useThemeStore } from "../stores/themeStore";
-import { api } from "../lib/api";
-import { open } from "@tauri-apps/plugin-dialog";
+import { useDevModeStore } from "../stores/devModeStore";
+import { useLibmpvStore } from "../stores/libmpvStore";
+import { useFfmpegStore } from "../stores/ffmpegStore";
+import { api, formatIpcError } from "../lib/api";
 
 type SettingsTab = "general" | "translate" | "search" | "player" | "advanced" | "about";
 
@@ -32,17 +35,17 @@ export default function SettingsView() {
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex items-center gap-2 border-b px-4 py-3">
-        <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
-          <ArrowLeft className="mr-1 h-4 w-4" />
-          {t("common.back")}
-        </Button>
-        <h1 className="text-lg font-semibold">{t("settings.title")}</h1>
-      </header>
-
       <div className="flex flex-1 overflow-hidden">
         {/* 左侧导航 */}
         <nav className="w-48 border-r bg-muted/30 p-2 space-y-1">
+          {/* 返回项：固定在导航顶部 */}
+          <button
+            onClick={() => navigate("/")}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent text-muted-foreground hover:text-foreground border-b mb-1 pb-2"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            <span>{t("common.back")}</span>
+          </button>
           {navItems.map((item) => (
             <button
               key={item.key}
@@ -151,14 +154,53 @@ function DefaultLangSettings() {
   const { t } = useTranslation();
   const [sourceLang, setSourceLang] = useState("en");
   const [targetLang, setTargetLang] = useState("zh");
+  const [followSystem, setFollowSystem] = useState(true);
+  const [systemLang, setSystemLang] = useState("zh");
 
   useEffect(() => {
+    // 探测系统语言
+    api.getSystemLang().then((lang) => {
+      setSystemLang(lang);
+      api.getConfig("default_target_lang_follow_system").then((v) => {
+        const follow = v === null ? true : v === "true";
+        setFollowSystem(follow);
+        if (follow) {
+          setTargetLang(lang);
+          api.setConfig("default_target_lang", lang);
+        } else {
+          api.getConfig("default_target_lang").then((saved) => {
+            if (saved) setTargetLang(saved);
+          });
+        }
+      });
+    }).catch(() => {
+      api.getConfig("default_target_lang").then((v) => v && setTargetLang(v));
+    });
     api.getConfig("default_source_lang").then((v) => v && setSourceLang(v));
-    api.getConfig("default_target_lang").then((v) => v && setTargetLang(v));
   }, []);
 
   const saveSource = (v: string) => { setSourceLang(v); api.setConfig("default_source_lang", v); };
-  const saveTarget = (v: string) => { setTargetLang(v); api.setConfig("default_target_lang", v); };
+  const saveTarget = (v: string) => {
+    setTargetLang(v);
+    api.setConfig("default_target_lang", v);
+    if (followSystem) {
+      setFollowSystem(false);
+      api.setConfig("default_target_lang_follow_system", "false");
+    }
+  };
+  const toggleFollowSystem = (follow: boolean) => {
+    setFollowSystem(follow);
+    api.setConfig("default_target_lang_follow_system", String(follow));
+    if (follow) {
+      setTargetLang(systemLang);
+      api.setConfig("default_target_lang", systemLang);
+    }
+  };
+
+  const langName = (code: string) => {
+    const map: Record<string, string> = { zh: "中文", en: "English", ja: "日本語", ko: "한국어", fr: "Français", de: "Deutsch", es: "Español", ru: "Русский" };
+    return map[code] ?? code;
+  };
 
   return (
     <>
@@ -175,16 +217,33 @@ function DefaultLangSettings() {
         </Select>
       </div>
       <div className="flex items-center justify-between">
-        <label className="text-sm">{t("settings.defaultTargetLang")}</label>
-        <Select value={targetLang} onValueChange={saveTarget}>
-          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value="zh">中文</SelectItem>
-            <SelectItem value="en">English</SelectItem>
-            <SelectItem value="ja">日本語</SelectItem>
-            <SelectItem value="ko">한국어</SelectItem>
-          </SelectContent>
-        </Select>
+        <div>
+          <label className="text-sm">{t("settings.defaultTargetLang")}</label>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.followSystem", "跟随系统语言")}（{langName(systemLang)}）
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={followSystem}
+            onChange={(e) => toggleFollowSystem(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300"
+          />
+          <Select value={targetLang} onValueChange={saveTarget} disabled={followSystem}>
+            <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="zh">中文</SelectItem>
+              <SelectItem value="en">English</SelectItem>
+              <SelectItem value="ja">日本語</SelectItem>
+              <SelectItem value="ko">한국어</SelectItem>
+              <SelectItem value="fr">Français</SelectItem>
+              <SelectItem value="de">Deutsch</SelectItem>
+              <SelectItem value="es">Español</SelectItem>
+              <SelectItem value="ru">Русский</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
     </>
   );
@@ -193,22 +252,19 @@ function DefaultLangSettings() {
 // === SECTION 2 END ===
 
 // === 翻译 API 设置 ===
-const PROVIDER_LINKS: Record<string, { name: string; url: string; appIdLabel?: string; appIdPlaceholder?: string; hasRegion?: boolean }> = {
+const PROVIDER_LINKS: Record<string, { url: string; appIdLabel?: string; appIdPlaceholder?: string; hasRegion?: boolean }> = {
   baidu: {
-    name: "百度翻译",
     url: "https://fanyi-api.baidu.com/",
     appIdLabel: "App ID",
     appIdPlaceholder: "百度翻译 App ID",
   },
   bing: {
-    name: "Azure 翻译",
     url: "https://learn.microsoft.com/azure/cognitive-services/translator/",
     appIdLabel: "API Key",
     appIdPlaceholder: "Azure Translator API Key",
     hasRegion: true,
   },
   google: {
-    name: "Google 翻译",
     url: "https://cloud.google.com/translate/docs/",
     appIdLabel: "API Key",
     appIdPlaceholder: "Google Cloud Translation API Key",
@@ -289,7 +345,7 @@ function TranslateApiSettings() {
       setTestResult("ok");
     } catch (e: any) {
       setTestResult("fail");
-      const msg = e?.message ?? e?.code ?? (typeof e === "string" ? e : JSON.stringify(e));
+      const msg = formatIpcError(e);
       setTestError(msg);
     } finally {
       setTesting(false);
@@ -332,7 +388,7 @@ function TranslateApiSettings() {
             rel="noreferrer"
             className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
           >
-            {t("settings.getApiKey", "获取")} {providerInfo.name} API Key
+            {t("settings.getApiKeyPrefix")} {t(`settings.${provider}`)} API Key
             <ExternalLink className="h-3 w-3" />
           </a>
 
@@ -465,36 +521,157 @@ function SearchSettings() {
 }
 
 // === 播放器设置 ===
+
+/// 格式化剩余时间
+function formatEta(secs: number): string {
+  if (secs <= 0) return "--";
+  if (secs < 60) return `${Math.ceil(secs)}秒`;
+  const m = Math.floor(secs / 60);
+  const s = Math.ceil(secs % 60);
+  return `${m}分${s}秒`;
+}
+
 function PlayerSettings() {
   const { t } = useTranslation();
-  const [status, setStatus] = useState<{ downloaded: boolean; path: string | null } | null>(null);
-  const [downloading, setDownloading] = useState(false);
+  const devMode = useDevModeStore((s) => s.devMode);
 
-  const refreshStatus = useCallback(() => {
-    api.getLibmpvStatus().then(setStatus).catch(() => setStatus({ downloaded: false, path: null }));
-  }, []);
+  // === libmpv ===
+  const mpvStatus = useLibmpvStore((s) => s.status);
+  const mpvDownloading = useLibmpvStore((s) => s.downloading);
+  const mpvProgress = useLibmpvStore((s) => s.downloadProgress);
+  const mpvStage = useLibmpvStore((s) => s.downloadStage);
+  const mpvMessage = useLibmpvStore((s) => s.downloadMessage);
+  const mpvError = useLibmpvStore((s) => s.downloadError);
+  const mpvSpeed = useLibmpvStore((s) => s.downloadSpeedMbps);
+  const mpvEta = useLibmpvStore((s) => s.downloadEtaSecs);
+  const mpvStartDownload = useLibmpvStore((s) => s.startDownload);
+  const mpvRefreshStatus = useLibmpvStore((s) => s.refreshStatus);
+  const [mpvDeleting, setMpvDeleting] = useState(false);
 
-  useEffect(() => { refreshStatus(); }, [refreshStatus]);
+  // === FFmpeg ===
+  const ffStatus = useFfmpegStore((s) => s.status);
+  const ffDownloading = useFfmpegStore((s) => s.downloading);
+  const ffProgress = useFfmpegStore((s) => s.downloadProgress);
+  const ffStage = useFfmpegStore((s) => s.downloadStage);
+  const ffMessage = useFfmpegStore((s) => s.downloadMessage);
+  const ffError = useFfmpegStore((s) => s.downloadError);
+  const ffSpeed = useFfmpegStore((s) => s.downloadSpeedMbps);
+  const ffEta = useFfmpegStore((s) => s.downloadEtaSecs);
+  const ffStartDownload = useFfmpegStore((s) => s.startDownload);
+  const ffRefreshStatus = useFfmpegStore((s) => s.refreshStatus);
+  const [ffDeleting, setFfDeleting] = useState(false);
 
-  const handleDownload = useCallback(async () => {
-    setDownloading(true);
+  const mpvStageLabel = mpvStage === "fetching" ? t("player.libmpvStageFetching")
+    : mpvStage === "downloading" ? t("player.libmpvStageDownloading")
+    : mpvStage === "extracting" ? t("player.libmpvStageExtracting")
+    : mpvStage === "done" ? t("player.libmpvStageDone")
+    : mpvStage === "failed" ? t("player.libmpvStageFailed", "下载失败")
+    : t("player.libmpvStagePreparing");
+
+  const ffStageLabel = ffStage === "downloading" ? t("subtitle.ffmpegRequired.downloading")
+    : ffStage === "extracting" ? t("subtitle.ffmpegRequired.extracting")
+    : ffStage === "done" ? t("subtitle.ffmpegRequired.done")
+    : ffStage === "failed" ? t("subtitle.ffmpegRequired.failed")
+    : t("player.libmpvStagePreparing");
+
+  const handleMpvDelete = useCallback(async () => {
+    setMpvDeleting(true);
     try {
-      await api.downloadLibmpv();
-      refreshStatus();
-    } catch (e) {
-      console.error("下载失败:", e);
+      await api.deleteLibmpv();
+      await mpvRefreshStatus();
+      toast.success(t("settings.libmpvDeleted"));
+    } catch (e: any) {
+      toast.error(formatIpcError(e));
     } finally {
-      setDownloading(false);
+      setMpvDeleting(false);
     }
-  }, [refreshStatus]);
+  }, [mpvRefreshStatus, t]);
+
+  const handleFfDelete = useCallback(async () => {
+    setFfDeleting(true);
+    try {
+      await api.deleteFfmpeg();
+      await ffRefreshStatus();
+      toast.success(t("settings.ffmpegDeleted", "FFmpeg 已删除"));
+    } catch (e: any) {
+      toast.error(formatIpcError(e));
+    } finally {
+      setFfDeleting(false);
+    }
+  }, [ffRefreshStatus, t]);
 
   return (
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("settings.player")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.playerDesc", "管理内置 libmpv 播放组件")}</p>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.playerDesc")}</p>
       </div>
 
+      {/* FFmpeg 卡片 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">FFmpeg</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">{t("settings.ffmpegStatus", "安装状态")}</p>
+              <p className="text-xs text-muted-foreground">
+                {ffStatus?.installed ? t("settings.ffmpegInstalled", "已安装") : t("settings.ffmpegNotInstalled", "未安装")}
+              </p>
+              {ffStatus?.path && <p className="text-xs text-muted-foreground font-mono mt-1">{ffStatus.path}</p>}
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => ffStartDownload()} disabled={ffDownloading || ffStatus?.installed}>
+                {ffDownloading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Download className="mr-1 h-4 w-4" />}
+                {t("settings.libmpvDownload")}
+              </Button>
+              {devMode && ffStatus?.installed && (
+                <Button size="sm" variant="destructive" onClick={handleFfDelete} disabled={ffDeleting}>
+                  {ffDeleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}
+                  {t("settings.libmpvDelete")}
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* 下载进度区域 */}
+          {ffDownloading && (
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{ffStageLabel}...</span>
+                <span className="font-mono tabular-nums text-muted-foreground">
+                  {ffProgress >= 0 ? `${ffProgress}%` : ""}
+                </span>
+              </div>
+              {ffProgress >= 0 ? (
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${ffProgress}%` }} />
+                </div>
+              ) : (
+                <div className="h-2 bg-muted rounded-full overflow-hidden relative">
+                  <div className="h-full bg-primary rounded-full absolute" style={{ width: "40%", left: "-40%", animation: "indeterminate 1.5s infinite linear" }} />
+                </div>
+              )}
+              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                <span className="truncate">{ffMessage}</span>
+                {ffStage === "downloading" && ffSpeed > 0 && (
+                  <span className="shrink-0">{ffSpeed.toFixed(1)} MB/s · {formatEta(ffEta)}</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 下载失败错误提示 */}
+          {!ffDownloading && ffError && (
+            <div className="border-t pt-3">
+              <p className="text-xs text-red-500 line-clamp-3">{ffError}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* libmpv 卡片 */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">libmpv</CardTitle>
@@ -502,17 +679,59 @@ function PlayerSettings() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium">{t("settings.libmpvStatus", "下载状态")}</p>
+              <p className="text-sm font-medium">{t("settings.libmpvStatus")}</p>
               <p className="text-xs text-muted-foreground">
-                {status?.downloaded ? t("settings.libmpvDownloaded") : t("settings.libmpvNotDownloaded")}
+                {mpvStatus?.downloaded ? t("settings.libmpvDownloaded") : t("settings.libmpvNotDownloaded")}
               </p>
-              {status?.path && <p className="text-xs text-muted-foreground font-mono mt-1">{status.path}</p>}
+              {mpvStatus?.path && <p className="text-xs text-muted-foreground font-mono mt-1">{mpvStatus.path}</p>}
             </div>
-            <Button size="sm" onClick={handleDownload} disabled={downloading || status?.downloaded}>
-              {downloading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Download className="mr-1 h-4 w-4" />}
-              {t("settings.libmpvDownload")}
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => mpvStartDownload()} disabled={mpvDownloading || mpvStatus?.downloaded}>
+                {mpvDownloading ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Download className="mr-1 h-4 w-4" />}
+                {t("settings.libmpvDownload")}
+              </Button>
+              {devMode && mpvStatus?.downloaded && (
+                <Button size="sm" variant="destructive" onClick={handleMpvDelete} disabled={mpvDeleting}>
+                  {mpvDeleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}
+                  {t("settings.libmpvDelete")}
+                </Button>
+              )}
+            </div>
           </div>
+
+          {/* 下载进度区域 */}
+          {mpvDownloading && (
+            <div className="space-y-2 border-t pt-3">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">{mpvStageLabel}...</span>
+                <span className="font-mono tabular-nums text-muted-foreground">
+                  {mpvProgress >= 0 ? `${mpvProgress}%` : ""}
+                </span>
+              </div>
+              {mpvProgress >= 0 ? (
+                <div className="h-2 bg-muted rounded-full overflow-hidden">
+                  <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${mpvProgress}%` }} />
+                </div>
+              ) : (
+                <div className="h-2 bg-muted rounded-full overflow-hidden relative">
+                  <div className="h-full bg-primary rounded-full absolute" style={{ width: "40%", left: "-40%", animation: "indeterminate 1.5s infinite linear" }} />
+                </div>
+              )}
+              <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+                <span className="truncate">{mpvMessage}</span>
+                {mpvStage === "downloading" && mpvSpeed > 0 && (
+                  <span className="shrink-0">{mpvSpeed.toFixed(1)} MB/s · {formatEta(mpvEta)}</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 下载失败错误提示 */}
+          {!mpvDownloading && mpvError && (
+            <div className="border-t pt-3">
+              <p className="text-xs text-red-500 line-clamp-3">{mpvError}</p>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
@@ -522,23 +741,7 @@ function PlayerSettings() {
 // === 高级设置 ===
 function AdvancedSettings() {
   const { t } = useTranslation();
-  const [ffmpegPath, setFfmpegPath] = useState("");
   const [cacheCleared, setCacheCleared] = useState(false);
-
-  useEffect(() => {
-    api.getConfig("ffmpeg_path").then((v) => v && setFfmpegPath(v));
-  }, []);
-
-  const handleBrowse = useCallback(async () => {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "Executable", extensions: ["exe"] }],
-    });
-    if (typeof selected === "string") {
-      setFfmpegPath(selected);
-      await api.setConfig("ffmpeg_path", selected);
-    }
-  }, []);
 
   const handleClearCache = useCallback(async () => {
     await api.clearTranslateCache();
@@ -550,37 +753,20 @@ function AdvancedSettings() {
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("settings.advanced")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.advancedDesc", "FFmpeg 路径、缓存清理、右键菜单注册")}</p>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.advancedDesc", "缓存清理、右键菜单注册")}</p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">FFmpeg</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div>
-            <label className="text-sm font-medium">{t("settings.ffmpegPath")}</label>
-            <p className="text-xs text-muted-foreground mb-1">{t("settings.ffmpegPathDesc", "自定义 FFmpeg 可执行文件路径，留空使用内置")}</p>
-            <div className="flex gap-2">
-              <Input value={ffmpegPath} onChange={(e) => setFfmpegPath(e.target.value)} placeholder={t("settings.ffmpegBuiltin")} />
-              <Button size="sm" variant="secondary" onClick={handleBrowse}>
-                <FolderOpen className="mr-1 h-4 w-4" />
-                {t("settings.browse")}
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <ProxySettings />
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("settings.clearCache", "翻译缓存")}</CardTitle>
+          <CardTitle className="text-base">{t("settings.translateCacheTitle")}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm font-medium">{t("settings.clearCache")}</p>
-              <p className="text-xs text-muted-foreground">{t("settings.cacheSize", "清除已缓存的翻译结果")}</p>
+              <p className="text-xs text-muted-foreground">{t("settings.clearCacheDesc")}</p>
             </div>
             <Button size="sm" variant="destructive" onClick={handleClearCache}>
               <Trash2 className="mr-1 h-4 w-4" />
@@ -600,6 +786,110 @@ function AdvancedSettings() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// === 代理设置 ===
+function ProxySettings() {
+  const { t } = useTranslation();
+  const [mode, setMode] = useState("none");
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [hasPassword, setHasPassword] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.getProxy().then((cfg) => {
+      setMode(cfg.mode);
+      setHost(cfg.host);
+      setPort(cfg.port);
+      setUsername(cfg.username);
+      setHasPassword(cfg.hasPassword);
+    }).catch(() => {});
+  }, []);
+
+  const save = useCallback(async (newMode: string, newHost: string, newPort: string, newUser: string, newPass: string) => {
+    setSaving(true);
+    try {
+      // 密码字段为占位符时不覆盖已有密码
+      const passToSend = newPass === "••••••••" ? undefined : newPass;
+      await api.setProxy(newMode, newHost, newPort, newUser || undefined, passToSend);
+      if (passToSend === undefined) {
+        // 保留 hasPassword 状态
+      } else {
+        setHasPassword(!!passToSend);
+      }
+      toast.success(t("settings.proxySaved"));
+    } catch {
+      toast.error(t("settings.proxySaveFailed"));
+    } finally {
+      setSaving(false);
+    }
+  }, [t]);
+
+  const showProxyFields = mode !== "none";
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">{t("settings.proxy", "网络代理")}</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">{t("settings.proxyMode", "代理模式")}</p>
+            <p className="text-xs text-muted-foreground">{t("settings.proxyModeDesc", "用于 Google 翻译等需翻墙服务")}</p>
+          </div>
+          <Select value={mode} onValueChange={(v) => {
+            setMode(v);
+            save(v, host, port, username, password);
+          }}>
+            <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">{t("settings.proxyNone", "无")}</SelectItem>
+              <SelectItem value="http">HTTP</SelectItem>
+              <SelectItem value="socks5">SOCKS5</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {showProxyFields && (
+          <div className="border-t pt-3 space-y-3">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2">
+                <label className="text-xs text-muted-foreground">{t("settings.proxyHost", "主机")}</label>
+                <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="127.0.0.1" />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">{t("settings.proxyPort", "端口")}</label>
+                <Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="7890" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-muted-foreground">{t("settings.proxyUser", "用户名（可选）")}</label>
+                <Input value={username} onChange={(e) => setUsername(e.target.value)} />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground">{t("settings.proxyPass", "密码（可选）")}</label>
+                <Input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={hasPassword ? "••••••••" : ""}
+                />
+              </div>
+            </div>
+            <Button size="sm" disabled={saving} onClick={() => save(mode, host, port, username, password)}>
+              {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              {t("common.save", "保存")}
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -676,11 +966,31 @@ function ContextMenuSettings() {
 // === 关于 ===
 function AboutSettings() {
   const { t } = useTranslation();
+  const devMode = useDevModeStore((s) => s.devMode);
+  const toggleDevMode = useDevModeStore((s) => s.toggle);
+  const [clickCount, setClickCount] = useState(0);
+
+  const handleVersionClick = useCallback(() => {
+    const next = clickCount + 1;
+    if (next >= 7) {
+      void toggleDevMode();
+      setClickCount(0);
+    } else {
+      setClickCount(next);
+      const remaining = 7 - next;
+      if (remaining <= 3 && remaining > 0) {
+        toast.info(devMode
+          ? t("settings.devModeDisableHint", { count: remaining })
+          : t("settings.devModeEnableHint", { count: remaining }));
+      }
+    }
+  }, [clickCount, devMode, toggleDevMode, t]);
+
   return (
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("settings.about")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.aboutDesc", "关于此应用")}</p>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.aboutDesc")}</p>
       </div>
 
       <Card>
@@ -689,12 +999,22 @@ function AboutSettings() {
             <Languages className="h-8 w-8 text-primary" />
           </div>
           <h3 className="text-lg font-semibold">AI-SubTrans</h3>
-          <p className="text-sm text-muted-foreground">v1.0.0 (zimufan)</p>
-          <p className="text-sm text-muted-foreground">{t("settings.aboutTagline", "AI 字幕翻译与编辑工具")}</p>
+          <p
+            className="text-sm text-muted-foreground select-none"
+            onClick={handleVersionClick}
+          >
+            v1.0.0 (zimufan)
+          </p>
+          <p className="text-sm text-muted-foreground">{t("settings.aboutTagline")}</p>
           <div className="border-t pt-3 text-xs text-muted-foreground space-y-1">
             <p>Powered by Tauri + React + ass-rs</p>
             <p>FFmpeg · libmpv · OpenSubtitles</p>
           </div>
+          {devMode && (
+            <p className="text-xs text-amber-600 font-medium pt-2 border-t">
+              {t("settings.devModeEnabled")}
+            </p>
+          )}
         </CardContent>
       </Card>
     </div>

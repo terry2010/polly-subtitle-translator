@@ -9,6 +9,7 @@ import { ScrollArea } from "./ui/scroll-area";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { SubtitleEntry } from "../lib/ipc-types";
+import { withPlayerHidden } from "../lib/utils";
 
 function formatTimecode(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -38,13 +39,13 @@ export function SubtitleListPanel() {
 
   const handleSave = useCallback(async () => {
     if (!file) return;
-    const outputPath = await save({
+    const outputPath = await withPlayerHidden(() => save({
       filters: [
         { name: "SRT", extensions: ["srt"] },
         { name: "ASS", extensions: ["ass"] },
         { name: "VTT", extensions: ["vtt"] },
       ],
-    });
+    }));
     if (outputPath) {
       await store.saveSubtitle(outputPath);
     }

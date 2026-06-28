@@ -1,7 +1,7 @@
 // 视频状态 store
 import { create } from "zustand";
 import type { ProbeResult, SubtitleStream } from "../lib/ipc-types";
-import { api } from "../lib/api";
+import { api, formatIpcError } from "../lib/api";
 
 interface VideoState {
   probeResult: ProbeResult | null;
@@ -31,7 +31,7 @@ export const useVideoStore = create<VideoState>((set) => ({
       const firstSub = engSdh ?? eng ?? subs[0] ?? null;
       set({ selectedSubtitleStream: firstSub });
     } catch (e: any) {
-      const msg = e?.message ?? e?.code ?? String(e);
+      const msg = formatIpcError(e);
       set({ loading: false, error: msg });
     }
   },

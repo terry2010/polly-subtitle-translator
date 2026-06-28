@@ -6,7 +6,7 @@ use crate::db::{Database, HistoryRecord, RecentFile};
 use crate::error::{ipc_result, AppError, IpcError, IpcResult};
 use crate::ffmpeg;
 use crate::subtitle;
-use crate::translate::{self, TranslateProvider, ProviderCredentials};
+use crate::translate::{self, TranslateProvider, ProviderCredentials, ProxyConfig};
 use tauri::{Emitter, Manager, State};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
@@ -23,10 +23,13 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
     Box::new(tauri::generate_handler![
         probe_video,
         extract_subtitle,
+        cancel_extract_subtitle,
         parse_subtitle_file,
         detect_bilingual,
         split_bilingual_subtitle,
         save_subtitle_file_cmd,
+        export_subtitle_cmd,
+        edit_subtitle_streams_cmd,
         get_recent_files,
         add_recent_file,
         get_history,
@@ -44,6 +47,7 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         get_credential,
         delete_credential,
         merge_subtitle,
+        check_merge_space,
         search_subtitles_online,
         download_subtitle_online,
         register_video_menu,
@@ -54,6 +58,10 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         is_subtitle_menu_registered,
         get_libmpv_status_cmd,
         download_libmpv_cmd,
+        delete_libmpv_cmd,
+        get_ffmpeg_status_cmd,
+        download_ffmpeg_cmd,
+        delete_ffmpeg_cmd,
         open_in_system_player_cmd,
         player_init,
         player_load_cmd,
@@ -62,11 +70,16 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         player_seek_cmd,
         player_set_volume_cmd,
         player_set_speed_cmd,
+        player_set_audio_track_cmd,
         player_get_position_cmd,
         player_resize_cmd,
         player_show_cmd,
         player_hide_cmd,
         player_destroy_cmd,
+        set_proxy,
+        get_proxy,
+        get_system_lang,
+        toggle_devtools,
     ])
 }
 
@@ -104,22 +117,38 @@ pub async fn probe_video(
             Ok(IpcResult::from(Ok(probe)))
         }
         Ok(Err(e)) => Ok(IpcResult::from(Err(e))),
-        Err(e) => Ok(IpcResult::from(Err(AppError::FfmpegExecutionFailed { detail: format!("探测任务失败: {}", e) }))),
+        Err(e) => Ok(IpcResult::from(Err(AppError::FfmpegProbeTaskFailed { detail: e.to_string() }))),
     }
 }
 
-/// extract_subtitle：提取字幕流
+/// extract_subtitle：提取字幕流（带进度推送）
 #[tauri::command]
 pub async fn extract_subtitle(
     video_path: String,
     stream_index: i32,
     output_path: String,
     ffmpeg_path: Option<String>,
+    duration_sec: Option<f64>,
+    app: tauri::AppHandle,
     db: State<'_, Database>,
 ) -> Result<IpcResult<()>, ()> {
+    use tauri::Emitter;
     let output_path_clone = output_path.clone();
+    let app_handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        ffmpeg::extract_subtitle_stream(&video_path, stream_index, &output_path, ffmpeg_path.as_deref())
+        let on_progress: Box<dyn Fn(f64)> = Box::new(move |pct: f64| {
+            let _ = app_handle.emit("extract_progress", serde_json::json!({
+                "progress": (pct * 10.0).round() / 10.0, // 保留 1 位小数
+            }));
+        });
+        ffmpeg::extract_subtitle_stream(
+            &video_path,
+            stream_index,
+            &output_path,
+            ffmpeg_path.as_deref(),
+            duration_sec,
+            Some(&on_progress),
+        )
     }).await;
     match result {
         Ok(Ok(())) => {
@@ -137,8 +166,15 @@ pub async fn extract_subtitle(
             Ok(IpcResult::from(Ok(())))
         }
         Ok(Err(e)) => Ok(IpcResult::from(Err(e))),
-        Err(e) => Ok(IpcResult::from(Err(AppError::FfmpegExecutionFailed { detail: format!("提取任务失败: {}", e) }))),
+        Err(e) => Ok(IpcResult::from(Err(AppError::FfmpegExtractTaskFailed { detail: e.to_string() }))),
     }
+}
+
+/// cancel_extract_subtitle：取消正在进行的字幕提取
+#[tauri::command]
+pub fn cancel_extract_subtitle() -> Result<(), ()> {
+    ffmpeg::cancel_extraction();
+    Ok(())
 }
 
 /// parse_subtitle_file：解析字幕文件
@@ -170,6 +206,16 @@ pub fn save_subtitle_file_cmd(
     output_path: String,
 ) -> IpcResult<()> {
     ipc_result(subtitle::save_subtitle_file(&file, &output_path))
+}
+
+/// export_subtitle_cmd：按导出选项渲染并保存字幕（export-dialog-plan.md §4.5）
+#[tauri::command]
+pub fn export_subtitle_cmd(
+    file: subtitle::SubtitleFile,
+    output_path: String,
+    options: subtitle::ExportOptions,
+) -> IpcResult<()> {
+    ipc_result(subtitle::export_subtitle_file(&file, &output_path, &options))
 }
 
 /// get_recent_files：获取最近文件列表
@@ -327,9 +373,7 @@ pub async fn translate_subtitle(
     cancel_token.store(false, Ordering::Relaxed);
 
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
-        AppError::Unknown {
-            detail: format!("未知翻译引擎: {}", provider),
-        }
+        AppError::TranslateUnknownProvider { provider: provider.clone() }
     }).map_err(to_ipc_err)?;
 
     // 从 config 表读取凭据配置
@@ -360,12 +404,7 @@ pub async fn translate_subtitle(
 
     // 验证凭据存在
     if app_id.is_none() && secret.is_none() {
-        return Err(IpcError::new(
-            "translate.authFailed",
-            "error.translate.authFailed",
-            "未配置翻译 API 凭据，请先在设置中配置",
-            crate::error::Severity::Recoverable,
-        ));
+        return Err(AppError::TranslateCredentialsNotConfigured.to_ipc_error());
     }
 
     let credentials = ProviderCredentials {
@@ -374,7 +413,7 @@ pub async fn translate_subtitle(
         region,
     };
 
-    let prov_instance = translate::create_provider(&prov, &credentials).map_err(to_ipc_err)?;
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &ProxyConfig::load_from_db(&db)).map_err(to_ipc_err)?;
     let scheduler = translate::TranslateScheduler::with_cancel_token(
         &db,
         prov_instance,
@@ -451,13 +490,7 @@ pub async fn get_cached_translations(
     db: State<'_, Database>,
 ) -> Result<Vec<translate::TranslateEntry>, IpcError> {
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
-        crate::error::IpcError {
-            code: "invalid_provider".to_string(),
-            i18n_key: "error.invalidProvider".to_string(),
-            args: None,
-            message: format!("不支持的翻译引擎: {}", provider),
-            severity: crate::error::Severity::Recoverable,
-        }
+        AppError::TranslateUnknownProvider { provider: provider.clone() }.to_ipc_error()
     })?;
 
     // 获取凭据（缓存查询不需要凭据，但需要 provider_name）
@@ -484,9 +517,7 @@ pub async fn test_translate_connection(
     region: Option<String>,
 ) -> Result<(), IpcError> {
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
-        AppError::Unknown {
-            detail: format!("未知翻译引擎: {}", provider),
-        }
+        AppError::TranslateUnknownProvider { provider: provider.clone() }
     }).map_err(to_ipc_err)?;
 
     let credentials = ProviderCredentials {
@@ -527,35 +558,66 @@ pub fn delete_credential(provider: String, key: String) -> IpcResult<()> {
 }
 
 /// merge_subtitle：合并字幕到视频
+/// output_path = None: 直接修改原视频（临时文件+替换）
+/// output_path = Some: 输出到指定路径
+/// async + spawn_blocking：ffmpeg 处理大视频耗时，避免阻塞 Tauri 命令线程导致 UI 卡死
 #[tauri::command]
-pub fn merge_subtitle(
+pub async fn merge_subtitle(
     video_path: String,
     subtitle_path: String,
-    output_path: String,
+    output_path: Option<String>,
     language: Option<String>,
+    title: Option<String>,
     ffmpeg_path: Option<String>,
     db: State<'_, Database>,
-) -> IpcResult<()> {
-    ipc_result((|| {
+) -> Result<(), IpcError> {
+    let vp = video_path.clone();
+    let sp = subtitle_path.clone();
+    let op = output_path.clone();
+    let lang = language.clone();
+    let ttl = title.clone();
+    let fp = ffmpeg_path.clone();
+    tokio::task::spawn_blocking(move || {
         ffmpeg::merge_subtitle_to_video(
-            &video_path,
-            &subtitle_path,
-            &output_path,
-            language.as_deref(),
-            ffmpeg_path.as_deref(),
-        )?;
-        let _ = db.add_history(&HistoryRecord {
-            video_path: Some(video_path),
-            subtitle_path: Some(subtitle_path),
-            source_lang: None,
-            target_lang: None,
-            provider: None,
-            action: "merge".to_string(),
-            status: "success".to_string(),
-            detail: Some(output_path),
-        });
-        Ok(())
-    })())
+            &vp,
+            &sp,
+            op.as_deref(),
+            lang.as_deref(),
+            ttl.as_deref(),
+            fp.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| AppError::FfmpegMergeTaskFailed { detail: e.to_string() }.to_ipc_error())?
+    .map_err(|e| e.to_ipc_error())?;
+
+    let _ = db.add_history(&HistoryRecord {
+        video_path: Some(video_path),
+        subtitle_path: Some(subtitle_path),
+        source_lang: None,
+        target_lang: None,
+        provider: None,
+        action: "merge".to_string(),
+        status: "success".to_string(),
+        detail: output_path,
+    });
+    Ok(())
+}
+
+/// check_merge_space：检测原视频所在磁盘剩余空间是否足够合并
+/// 返回 { video_size, free_space, enough }
+#[tauri::command]
+pub fn check_merge_space(video_path: String) -> Result<serde_json::Value, IpcError> {
+    let video_size = ffmpeg::get_file_size(&video_path).map_err(|e| e.to_ipc_error())?;
+    let free_space = ffmpeg::get_disk_free_space(&video_path).map_err(|e| e.to_ipc_error())?;
+    // 需要额外空间 ≈ 视频大小（临时文件和原文件同时存在），留 1GB 余量
+    let need = video_size.saturating_add(1024 * 1024 * 1024);
+    let enough = free_space >= need;
+    Ok(serde_json::json!({
+        "video_size": video_size,
+        "free_space": free_space,
+        "enough": enough,
+    }))
 }
 
 // === SECTION 3 END ===
@@ -623,9 +685,7 @@ pub fn get_libmpv_status_cmd(
 ) -> IpcResult<crate::player::LibmpvStatus> {
     ipc_result((|| {
         let app_data_dir = app.path().app_data_dir().map_err(|e| {
-            AppError::Unknown {
-                detail: format!("获取数据目录失败: {}", e),
-            }
+            AppError::GetDataDirFailed { detail: e.to_string() }
         })?;
         Ok(crate::player::get_libmpv_status(&app_data_dir))
     })())
@@ -646,10 +706,55 @@ pub async fn download_libmpv_cmd(
     match result {
         Ok(Ok(())) => Ok(IpcResult::from(Ok(()))),
         Ok(Err(e)) => Ok(IpcResult::from(Err(e))),
-        Err(e) => Ok(IpcResult::from(Err(AppError::PlayerLibmpvDownloadFailed {
-            detail: format!("下载任务失败: {}", e),
+        Err(e) => Ok(IpcResult::from(Err(AppError::DownloadTaskFailed {
+            detail: e.to_string(),
         }))),
     }
+}
+
+/// delete_libmpv_cmd：删除已下载的 libmpv 组件
+#[tauri::command]
+pub fn delete_libmpv_cmd(
+    app: tauri::AppHandle,
+) -> IpcResult<()> {
+    ipc_result((|| {
+        let app_data_dir = app.path().app_data_dir().map_err(|e| {
+            AppError::GetDataDirFailed { detail: e.to_string() }
+        })?;
+        crate::player::delete_libmpv(&app_data_dir)
+    })())
+}
+
+/// get_ffmpeg_status_cmd：获取 ffmpeg 安装状态
+#[tauri::command]
+pub fn get_ffmpeg_status_cmd() -> IpcResult<crate::ffmpeg::FfmpegStatus> {
+    ipc_result(Ok(crate::ffmpeg::get_ffmpeg_status()))
+}
+
+/// download_ffmpeg_cmd：下载 ffmpeg 完整版（异步，emit 进度事件）
+#[tauri::command]
+pub async fn download_ffmpeg_cmd(
+    app: tauri::AppHandle,
+    proxy: Option<String>,
+) -> Result<IpcResult<()>, ()> {
+    let app_handle = app.clone();
+    let proxy_clone = proxy.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::ffmpeg::download_ffmpeg(proxy_clone.as_deref(), &app_handle)
+    }).await;
+    match result {
+        Ok(Ok(())) => Ok(IpcResult::from(Ok(()))),
+        Ok(Err(e)) => Ok(IpcResult::from(Err(e))),
+        Err(e) => Ok(IpcResult::from(Err(AppError::DownloadTaskFailed {
+            detail: e.to_string(),
+        }))),
+    }
+}
+
+/// delete_ffmpeg_cmd：删除已下载的 ffmpeg
+#[tauri::command]
+pub fn delete_ffmpeg_cmd() -> IpcResult<()> {
+    ipc_result(crate::ffmpeg::delete_ffmpeg())
 }
 
 /// open_in_system_player_cmd：用系统播放器打开视频
@@ -716,6 +821,7 @@ pub fn player_load_cmd(file_path: String) -> Result<(), ()> {
 /// player_play_cmd：播放
 #[tauri::command]
 pub fn player_play_cmd() -> Result<(), ()> {
+    tracing::info!("播放器: 开始播放");
     let guard = PLAYER.lock().unwrap();
     if let Some(ref player) = *guard {
         player.play().map_err(|_| ())
@@ -725,6 +831,7 @@ pub fn player_play_cmd() -> Result<(), ()> {
 /// player_pause_cmd：暂停
 #[tauri::command]
 pub fn player_pause_cmd() -> Result<(), ()> {
+    tracing::info!("播放器: 暂停播放");
     let guard = PLAYER.lock().unwrap();
     if let Some(ref player) = *guard {
         player.pause().map_err(|_| ())
@@ -734,6 +841,7 @@ pub fn player_pause_cmd() -> Result<(), ()> {
 /// player_seek_cmd：跳转到指定时间（秒）
 #[tauri::command]
 pub fn player_seek_cmd(time_sec: f64) -> Result<(), ()> {
+    tracing::info!("播放器: 跳转到 {:.1}s", time_sec);
     let guard = PLAYER.lock().unwrap();
     if let Some(ref player) = *guard {
         player.seek(time_sec).map_err(|_| ())
@@ -755,6 +863,15 @@ pub fn player_set_speed_cmd(speed: f64) -> Result<(), ()> {
     let guard = PLAYER.lock().unwrap();
     if let Some(ref player) = *guard {
         player.set_speed(speed).map_err(|_| ())
+    } else { Err(()) }
+}
+
+/// player_set_audio_track_cmd：切换音频轨道（mpv aid，1-based）
+#[tauri::command]
+pub fn player_set_audio_track_cmd(audio_id: i32) -> Result<(), ()> {
+    let guard = PLAYER.lock().unwrap();
+    if let Some(ref player) = *guard {
+        player.set_audio_track(audio_id).map_err(|_| ())
     } else { Err(()) }
 }
 
@@ -801,9 +918,142 @@ pub fn player_hide_cmd() -> Result<(), ()> {
 /// player_destroy_cmd：销毁播放器
 #[tauri::command]
 pub fn player_destroy_cmd() -> Result<(), ()> {
+    tracing::info!("player_destroy_cmd 开始");
     let mut guard = PLAYER.lock().unwrap();
+    if guard.is_none() {
+        tracing::info!("player_destroy_cmd: 播放器未初始化，跳过");
+        return Ok(());
+    }
     *guard = None; // Drop 会调用 destroy
+    tracing::info!("player_destroy_cmd 完成");
     Ok(())
 }
 
 // === SECTION 5 END ===
+
+// === SECTION 6: 字幕流编辑 ===
+
+/// edit_subtitle_streams_cmd：编辑视频内嵌字幕流（重排序、删除、改名）
+/// output_path = None: 直接修改原视频（临时文件+替换）
+/// output_path = Some: 输出到指定路径，不修改原文件
+/// async + spawn_blocking：ffmpeg 处理大视频耗时，避免阻塞 Tauri 命令线程导致 UI 卡死
+#[tauri::command]
+pub async fn edit_subtitle_streams_cmd(
+    video_path: String,
+    streams: Vec<ffmpeg::SubtitleStreamEdit>,
+    output_path: Option<String>,
+    ffmpeg_path: Option<String>,
+) -> Result<(), IpcError> {
+    tokio::task::spawn_blocking(move || {
+        ffmpeg::edit_subtitle_streams(
+            &video_path,
+            &streams,
+            output_path.as_deref(),
+            ffmpeg_path.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| AppError::FfmpegExecutionFailed { detail: e.to_string() }.to_ipc_error())?
+    .map_err(|e| e.to_ipc_error())
+}
+
+// === SECTION 6 END ===
+
+/// set_proxy：保存代理配置到 config 表
+#[tauri::command]
+pub fn set_proxy(
+    mode: String,
+    host: String,
+    port: String,
+    username: Option<String>,
+    password: Option<String>,
+    db: State<'_, Database>,
+) -> IpcResult<()> {
+    let _ = db.set_config("proxy_mode", &mode);
+    let _ = db.set_config("proxy_host", &host);
+    let _ = db.set_config("proxy_port", &port);
+    let _ = db.set_config("proxy_user", &username.clone().unwrap_or_default());
+    // 密码走 keyring，非敏感的 host/port/user 走 config 表
+    if let Some(pw) = password {
+        if !pw.is_empty() && pw != "••••••••" {
+            let _ = config::CredentialStore::save("proxy", "pass", &pw);
+        }
+    }
+    tracing::info!("代理配置已保存: mode={}, host={}, port={}", mode, host, port);
+    ipc_result(Ok(()))
+}
+
+/// get_proxy：读取代理配置
+#[tauri::command]
+pub fn get_proxy(db: State<'_, Database>) -> IpcResult<serde_json::Value> {
+    let mode = db.get_config("proxy_mode").ok().flatten().unwrap_or_else(|| "none".to_string());
+    let host = db.get_config("proxy_host").ok().flatten().unwrap_or_default();
+    let port = db.get_config("proxy_port").ok().flatten().unwrap_or_default();
+    let user = db.get_config("proxy_user").ok().flatten().unwrap_or_default();
+    let has_password = config::CredentialStore::load("proxy", "pass").is_ok();
+    ipc_result(Ok(serde_json::json!({
+        "mode": mode,
+        "host": host,
+        "port": port,
+        "username": user,
+        "hasPassword": has_password,
+    })))
+}
+
+/// get_system_lang：探测系统语言，返回归一化后的 ISO 639-1 码
+/// Windows: GetUserDefaultLocaleName
+/// macOS:   NSLocale.currentLocaleIdentifier
+#[tauri::command]
+pub fn get_system_lang() -> IpcResult<String> {
+    let lang = detect_system_lang();
+    tracing::info!("系统语言探测: {}", lang);
+    ipc_result(Ok(lang))
+}
+
+/// 探测系统语言并归一化为 ISO 639-1 码
+fn detect_system_lang() -> String {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Globalization::GetUserDefaultLocaleName;
+        unsafe {
+            let mut buf = [0u16; 85]; // LOCALE_NAME_MAX_LENGTH
+            let len = GetUserDefaultLocaleName(&mut buf);
+            if len > 0 {
+                let locale = String::from_utf16_lossy(&buf[..len as usize]);
+                return normalize_locale(&locale);
+            }
+        }
+        "zh".to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        "zh".to_string()
+    }
+}
+
+/// 将 locale 标识符归一化为 ISO 639-1 两字母码
+/// zh-CN/zh-Hans → zh, zh-TW/zh-Hant → zh, en-US → en, ja-JP → ja, ko-KR → ko
+fn normalize_locale(locale: &str) -> String {
+    let lower = locale.to_lowercase();
+    let lang = lower.split('-').next().unwrap_or("zh");
+    // 归一化映射：仅取主语言码（一期不区分简繁）
+    match lang {
+        "zh" | "en" | "ja" | "ko" | "fr" | "de" | "es" | "ru" | "it" | "pt" | "th" | "vi" | "ar" => lang.to_string(),
+        _ => "zh".to_string(), // fallback 中文
+    }
+}
+
+/// toggle_devtools：打开/关闭 WebView2 DevTools（开发者模式用）
+#[tauri::command]
+pub fn toggle_devtools(app: tauri::AppHandle, open: bool) {
+    use tauri::Manager;
+    if let Some(window) = app.get_webview_window("main") {
+        if open {
+            window.open_devtools();
+            tracing::info!("DevTools 已打开");
+        } else {
+            window.close_devtools();
+            tracing::info!("DevTools 已关闭");
+        }
+    }
+}

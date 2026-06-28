@@ -2,6 +2,7 @@
 // 统一处理 invoke 调用 + 错误解析
 
 import { invoke } from "@tauri-apps/api/core";
+import i18n from "./i18n";
 import type {
   ProbeResult,
   SubtitleFile,
@@ -17,6 +18,8 @@ import type {
   IpcError,
   BilingualDetectResult,
   SplitMode,
+  ExportOptions,
+  SubtitleStreamEdit,
 } from "./ipc-types";
 
 /// 调用 IPC 命令并解析 IpcResult 包装
@@ -30,7 +33,7 @@ async function callIpc<T>(cmd: string, args?: Record<string, unknown>): Promise<
       if (result.ok) {
         return result.value as T;
       } else {
-        throw (result as any)?.error ?? { code: "unknown", message: "IPC 返回异常" };
+        throw (result as any)?.error ?? { code: "common.unknown", severity: "recoverable" };
       }
     }
     // async 命令直接返回值（无包装）
@@ -51,7 +54,7 @@ async function callIpcNullable<T>(cmd: string, args?: Record<string, unknown>): 
       if (result.ok) {
         return (result.value ?? null) as T | null;
       } else {
-        throw (result as any)?.error ?? { code: "unknown", message: "IPC 返回异常" };
+        throw (result as any)?.error ?? { code: "common.unknown", severity: "recoverable" };
       }
     }
     return (result ?? null) as T | null;
@@ -60,9 +63,12 @@ async function callIpcNullable<T>(cmd: string, args?: Record<string, unknown>): 
   }
 }
 
-/// 将 IpcError 转为可读消息
+/// 将 IpcError 转为可读消息（用 i18n 翻译错误码）
 export function formatIpcError(error: IpcError): string {
-  return error.message || error.code;
+  const key = `error.${error.code}`;
+  const translated = i18n.t(key, error.args ?? {});
+  // 如果 i18n 没有找到 key，t() 返回 key 本身；此时 fallback 到 code
+  return translated === key ? error.code : translated;
 }
 
 // === FFmpeg 命令 ===
@@ -70,11 +76,27 @@ export const api = {
   probeVideo: (videoPath: string, ffmpegPath?: string) =>
     callIpc<ProbeResult>("probe_video", { videoPath, ffmpegPath: ffmpegPath ?? null }),
 
-  extractSubtitle: (videoPath: string, streamIndex: number, outputPath: string, ffmpegPath?: string) =>
-    callIpc<void>("extract_subtitle", { videoPath, streamIndex, outputPath, ffmpegPath: ffmpegPath ?? null }),
+  extractSubtitle: (videoPath: string, streamIndex: number, outputPath: string, ffmpegPath?: string, durationSec?: number) =>
+    callIpc<void>("extract_subtitle", { videoPath, streamIndex, outputPath, ffmpegPath: ffmpegPath ?? null, durationSec: durationSec ?? null }),
 
-  mergeSubtitle: (videoPath: string, subtitlePath: string, outputPath: string, language?: string, ffmpegPath?: string) =>
-    callIpc<void>("merge_subtitle", { videoPath, subtitlePath, outputPath, language: language ?? null, ffmpegPath: ffmpegPath ?? null }),
+  cancelExtractSubtitle: () =>
+    callIpc<void>("cancel_extract_subtitle", {}),
+
+  // === FFmpeg 按需下载 ===
+  getFfmpegStatus: () =>
+    callIpc<{ installed: boolean; source: string | null; path: string | null }>("get_ffmpeg_status_cmd"),
+
+  downloadFfmpeg: (proxy?: string) =>
+    callIpc<void>("download_ffmpeg_cmd", { proxy: proxy ?? null }),
+
+  deleteFfmpeg: () =>
+    callIpc<void>("delete_ffmpeg_cmd"),
+
+  mergeSubtitle: (videoPath: string, subtitlePath: string, outputPath: string | null, language?: string, title?: string, ffmpegPath?: string) =>
+    callIpc<void>("merge_subtitle", { videoPath, subtitlePath, outputPath, language: language ?? null, title: title ?? null, ffmpegPath: ffmpegPath ?? null }),
+
+  checkMergeSpace: (videoPath: string) =>
+    callIpc<{ video_size: number; free_space: number; enough: boolean }>("check_merge_space", { videoPath }),
 
   // === 字幕命令 ===
   parseSubtitleFile: (filePath: string) =>
@@ -82,6 +104,14 @@ export const api = {
 
   saveSubtitleFile: (file: SubtitleFile, outputPath: string) =>
     callIpc<void>("save_subtitle_file_cmd", { file, outputPath }),
+
+  // === 导出弹层命令（export-dialog-plan.md §4.6） ===
+  exportSubtitle: (file: SubtitleFile, outputPath: string, options: ExportOptions) =>
+    callIpc<void>("export_subtitle_cmd", { file, outputPath, options }),
+
+  // === 字幕流编辑 ===
+  editSubtitleStreams: (videoPath: string, streams: SubtitleStreamEdit[], outputPath: string | null, ffmpegPath?: string) =>
+    callIpc<void>("edit_subtitle_streams_cmd", { videoPath, streams, outputPath, ffmpegPath: ffmpegPath ?? null }),
 
   detectBilingual: (file: SubtitleFile) =>
     callIpc<BilingualDetectResult>("detect_bilingual", { file }),
@@ -131,6 +161,21 @@ export const api = {
 
   clearTranslateCache: () =>
     callIpc<number>("clear_translate_cache"),
+
+  // === 代理配置 ===
+  setProxy: (mode: string, host: string, port: string, username?: string, password?: string) =>
+    callIpc<void>("set_proxy", { mode, host, port, username: username ?? null, password: password ?? null }),
+
+  getProxy: () =>
+    callIpc<{ mode: string; host: string; port: string; username: string; hasPassword: boolean }>("get_proxy"),
+
+  // === 系统语言探测 ===
+  getSystemLang: () =>
+    callIpc<string>("get_system_lang"),
+
+  // === DevTools 控制（开发者模式）===
+  toggleDevtools: (open: boolean) =>
+    callIpc<void>("toggle_devtools", { open }),
 
   // === 凭据命令 ===
   saveCredential: (provider: string, key: string, value: string) =>
@@ -189,6 +234,9 @@ export const api = {
   downloadLibmpv: (proxy?: string) =>
     callIpc<void>("download_libmpv_cmd", { proxy: proxy ?? null }),
 
+  deleteLibmpv: () =>
+    callIpc<void>("delete_libmpv_cmd"),
+
   openInSystemPlayer: (videoPath: string) =>
     callIpc<void>("open_in_system_player_cmd", { videoPath }),
 
@@ -214,6 +262,9 @@ export const api = {
 
   playerSetSpeed: (speed: number) =>
     invoke<void>("player_set_speed_cmd", { speed }),
+
+  playerSetAudioTrack: (audioId: number) =>
+    invoke<void>("player_set_audio_track_cmd", { audioId }),
 
   playerGetPosition: () =>
     invoke<[number, number]>("player_get_position_cmd"),

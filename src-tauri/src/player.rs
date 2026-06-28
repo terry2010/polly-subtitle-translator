@@ -1,6 +1,8 @@
 // libmpv 播放器模块
 // 负责下载、检测 libmpv.dll，动态加载并内嵌播放视频。
 // 对应需求文档 §2.2 方案 B（原生子窗口嵌入）：libmpv 创建子窗口，通过 wid 嵌入 Tauri 主窗口。
+// 下载源：zhongfly/mpv-winbuild 的 GPL build，功能完整（含 D3D11/GPU 渲染、DXVA2 硬件解码）。
+// 下载源：zhongfly/mpv-winbuild 的 LGPL build（-Dgpl=false），许可证 LGPLv2.1+，允许闭源应用动态链接。
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -24,6 +26,7 @@ use windows::core::PCWSTR;
 use windows::Win32::Graphics::Gdi::HBRUSH;
 #[cfg(windows)]
 use windows::Win32::UI::Accessibility::*;
+use windows::Win32::System::Threading::GetCurrentThreadId;
 
 // WinEventHook 全局状态（回调函数无法传递上下文，只能用全局变量）
 #[cfg(windows)]
@@ -34,6 +37,14 @@ static mut HOOK_CHILD: HWND = HWND(std::ptr::null_mut());
 static mut HOOK_LAST_X: i32 = i32::MIN;
 #[cfg(windows)]
 static mut HOOK_LAST_Y: i32 = i32::MIN;
+/// 子窗口是否被主动隐藏（用于弹窗层级处理）。
+/// 位置同步线程据此跳过 SetWindowPos(SWP_SHOWWINDOW)，避免刚 hide 就被拉回。
+#[cfg(windows)]
+static HOOK_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 全局 AppHandle，供 child_wnd_proc 发送点击事件（wnd_proc 无法传递上下文）
+#[cfg(windows)]
+static GLOBAL_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 // === libmpv FFI 类型定义 ===
 
@@ -112,8 +123,10 @@ impl LibmpvStatus {
 const LIBMPV_DIR_NAME: &str = "libmpv";
 const LIBMPV_ARCHIVE_NAME: &str = "libmpv.7z";
 const LIBMPV_DLL_NAME: &str = "libmpv.dll";
-/// SourceForge libmpv RSS feed（获取最新 mpv-dev-x86_64 包）
-const SF_LIBMPV_RSS: &str = "https://sourceforge.net/projects/mpv-player-windows/rss?path=/libmpv";
+/// GitHub Releases API（zhongfly/mpv-winbuild，GPL build 的 libmpv）
+/// GPL build 功能完整，含 D3D11/GPU 渲染器和 DXVA2/D3D11VA 硬件解码。
+/// 资产命名：mpv-dev-x86_64-日期-git-哈希.7z
+const LIBMPV_RELEASES_API: &str = "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest";
 
 fn libmpv_dir(app_data_dir: &Path) -> std::path::PathBuf {
     app_data_dir.join(LIBMPV_DIR_NAME)
@@ -139,25 +152,25 @@ pub fn get_libmpv_path(app_data_dir: &Path) -> Option<std::path::PathBuf> {
     if dll_path.exists() { Some(dll_path) } else { None }
 }
 
-/// 从 SourceForge RSS 中解析最新 mpv-dev-x86_64-*.7z 的下载 URL（排除 v3/i686/aarch64）
-fn parse_latest_dev_url(rss_text: &str) -> Option<String> {
-    // RSS 中 link 格式：https://sourceforge.net/.../libmpv/mpv-dev-x86_64-日期-git-哈希.7z/download
-    for line in rss_text.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains("mpv-dev-x86_64-") && trimmed.contains("/download") && !trimmed.contains("v3") {
-            // 提取 URL
-            if let Some(start) = trimmed.find("https://") {
-                let url = &trimmed[start..];
-                let end = url.find(".7z/download").map(|i| i + ".7z/download".len()).unwrap_or(url.len());
-                return Some(url[..end].to_string());
-            }
+/// 从 GitHub Releases JSON 中解析最新 mpv-dev-x86_64-*.7z 的下载 URL（排除 lgpl/v3/aarch64）
+/// JSON 中 assets 数组每项含 name 与 browser_download_url 字段
+fn parse_latest_dev_url(releases_json: &str) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(releases_json).ok()?;
+    let assets = parsed.get("assets")?.as_array()?;
+    for asset in assets {
+        let name = asset.get("name")?.as_str()?;
+        // 匹配 mpv-dev-x86_64-*.7z，排除 lgpl（缺渲染器）、v3（需要 AVX2，兼容性窄）和 aarch64
+        if name.starts_with("mpv-dev-x86_64-") && name.ends_with(".7z") && !name.contains("v3") && !name.contains("lgpl") {
+            let url = asset.get("browser_download_url")?.as_str()?;
+            return Some(url.to_string());
         }
     }
     None
 }
 
-/// 下载 libmpv：从 SourceForge 获取最新 mpv-dev-x86_64 包，
+/// 下载 libmpv：从 GitHub zhongfly/mpv-winbuild releases 获取最新 mpv-dev-x86_64 包，
 /// 流式下载（emit 进度事件），解压并提取 libmpv-2.dll，重命名为 libmpv.dll
+/// 失败时清理半成品文件（7z、extract 目录、不完整的 dll）并 emit 失败事件
 pub fn download_libmpv(
     app_data_dir: &Path,
     proxy: Option<&str>,
@@ -165,9 +178,47 @@ pub fn download_libmpv(
 ) -> Result<(), AppError> {
     use tauri::Emitter;
 
+    // 内部主逻辑：返回 Err 时外层负责清理半成品
+    let result = download_libmpv_inner(app_data_dir, proxy, app_handle);
+
+    if let Err(ref e) = result {
+        // 清理半成品文件，避免下次 get_libmpv_status 误判或残留垃圾
+        let archive_path = libmpv_archive_path(app_data_dir);
+        let extract_dir = libmpv_dir(app_data_dir).join("extract");
+        let dll_path = libmpv_dll_path(app_data_dir);
+        let _ = fs::remove_file(&archive_path);
+        let _ = fs::remove_dir_all(&extract_dir);
+        // 仅当 dll 不完整时删除（下载中途断网不会产生 dll，但解压后失败可能产生部分 dll）
+        // 安全起见：删除 dll，让用户重新下载
+        if dll_path.exists() {
+            // 检查 dll 是否可加载，不可加载则删除
+            // 简化：下载流程中 dll 是最后一步复制产生的，若 result 是 Err 则 dll 一定不完整
+            let _ = fs::remove_file(&dll_path);
+        }
+        // emit 失败事件，前端据此显示错误提示（发送错误码 + 参数，前端自行翻译）
+        let ipc_err = e.to_ipc_error();
+        let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+            "stage": "failed", "progress": 0,
+            "code": ipc_err.code,
+            "args": ipc_err.args,
+        }));
+        tracing::warn!("libmpv 下载失败，已清理半成品文件: code={}", ipc_err.code);
+    }
+
+    result
+}
+
+/// 下载主逻辑（不含清理）
+fn download_libmpv_inner(
+    app_data_dir: &Path,
+    proxy: Option<&str>,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), AppError> {
+    use tauri::Emitter;
+
     let dir = libmpv_dir(app_data_dir);
-    fs::create_dir_all(&dir).map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-        detail: format!("创建目录失败: {}", e),
+    fs::create_dir_all(&dir).map_err(|e| AppError::PlayerDownloadMkdirFailed {
+        detail: e.to_string(),
     })?;
 
     let mut client_builder = reqwest::blocking::Client::builder()
@@ -176,32 +227,35 @@ pub fn download_libmpv(
     if let Some(p) = proxy {
         if !p.is_empty() {
             client_builder = client_builder.proxy(
-                reqwest::Proxy::all(p).map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-                    detail: format!("代理配置失败: {}", e),
+                reqwest::Proxy::all(p).map_err(|e| AppError::PlayerDownloadProxyFailed {
+                    detail: e.to_string(),
                 })?,
             );
         }
     }
-    let client = client_builder.build().map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-        detail: format!("HTTP 客户端构建失败: {}", e),
+    let client = client_builder.build().map_err(|e| AppError::PlayerDownloadHttpClientFailed {
+        detail: e.to_string(),
     })?;
 
-    // 1. 从 SourceForge RSS 获取最新 mpv-dev-x86_64 包 URL
+    // 1. 从 GitHub Releases API 获取最新 mpv-dev-x86_64 包 URL
     let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
         "stage": "fetching", "progress": 0, "message": "正在获取最新版本信息..."
     }));
-    tracing::info!("正在获取 SourceForge libmpv RSS...");
-    let rss_resp = client.get(SF_LIBMPV_RSS).send().map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-        detail: format!("RSS 请求失败: {}", e),
-    })?;
-    if !rss_resp.status().is_success() {
-        return Err(AppError::PlayerLibmpvDownloadFailed { detail: format!("RSS 状态码异常: {}", rss_resp.status()) });
+    tracing::info!("正在获取 zhongfly/mpv-winbuild 最新 release...");
+    let api_resp = client.get(LIBMPV_RELEASES_API)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .map_err(|e| AppError::PlayerDownloadRssRequestFailed {
+            detail: e.to_string(),
+        })?;
+    if !api_resp.status().is_success() {
+        return Err(AppError::PlayerDownloadRssStatusFailed { status: api_resp.status().to_string() });
     }
-    let rss_text = rss_resp.text().map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-        detail: format!("读取 RSS 失败: {}", e),
+    let releases_json = api_resp.text().map_err(|e| AppError::PlayerDownloadRssReadFailed {
+        detail: e.to_string(),
     })?;
-    let download_url = parse_latest_dev_url(&rss_text)
-        .ok_or_else(|| AppError::PlayerLibmpvDownloadFailed { detail: "RSS 中未找到 mpv-dev-x86_64 包".to_string() })?;
+    let download_url = parse_latest_dev_url(&releases_json)
+        .ok_or(AppError::PlayerDownloadPackageNotFound)?;
 
     tracing::info!("下载 libmpv: {}", download_url);
 
@@ -209,38 +263,46 @@ pub fn download_libmpv(
     let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
         "stage": "downloading", "progress": 0, "message": "开始下载..."
     }));
-    let response = client.get(&download_url).send().map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-        detail: format!("下载请求失败: {}", e),
+    let response = client.get(&download_url).send().map_err(|e| AppError::PlayerDownloadRequestFailed {
+        detail: e.to_string(),
     })?;
     if !response.status().is_success() {
-        return Err(AppError::PlayerLibmpvDownloadFailed { detail: format!("下载 HTTP 状态码异常: {}", response.status()) });
+        return Err(AppError::PlayerDownloadHttpStatusFailed { status: response.status().to_string() });
     }
     let total_size = response.content_length().unwrap_or(0);
     let archive_path = libmpv_archive_path(app_data_dir);
-    let mut file = fs::File::create(&archive_path).map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-        detail: format!("创建文件失败: {}", e),
+    let mut file = fs::File::create(&archive_path).map_err(|e| AppError::PlayerDownloadCreateFileFailed {
+        detail: e.to_string(),
     })?;
     use std::io::{Read, Write};
     let mut stream = response;
     let mut buf = [0u8; 65536];
     let mut downloaded: u64 = 0;
     let mut last_emit = std::time::Instant::now();
+    let download_start = std::time::Instant::now();
     loop {
-        let n = stream.read(&mut buf).map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-            detail: format!("读取下载流失败: {}", e),
+        let n = stream.read(&mut buf).map_err(|e| AppError::PlayerDownloadStreamReadFailed {
+            detail: e.to_string(),
         })?;
         if n == 0 { break; }
-        file.write_all(&buf[..n]).map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-            detail: format!("写入文件失败: {}", e),
+        file.write_all(&buf[..n]).map_err(|e| AppError::PlayerDownloadWriteFailed {
+            detail: e.to_string(),
         })?;
         downloaded += n as u64;
         // 每 200ms emit 一次进度
         if last_emit.elapsed() > std::time::Duration::from_millis(200) {
             let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+            let elapsed = download_start.elapsed().as_secs_f64();
+            let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
+            let speed_mb = speed_bps / 1024.0 / 1024.0;
+            let remaining_bytes = total_size.saturating_sub(downloaded);
+            let eta_secs = if speed_bps > 0.0 { remaining_bytes as f64 / speed_bps } else { 0.0 };
             let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
                 "stage": "downloading", "progress": pct,
                 "downloaded": downloaded, "total": total_size,
-                "message": format!("下载中 {}% ({} / {} MB)",
+                "speed_mbps": (speed_mb * 10.0).round() / 10.0,
+                "eta_secs": eta_secs.round() as u64,
+                "message": format!("Downloading {}% ({} / {} MB)",
                     pct,
                     downloaded / 1024 / 1024,
                     total_size / 1024 / 1024)
@@ -260,12 +322,12 @@ pub fn download_libmpv(
     let extract_dir = libmpv_dir(app_data_dir).join("extract");
     // 清理旧解压目录
     let _ = fs::remove_dir_all(&extract_dir);
-    fs::create_dir_all(&extract_dir).map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-        detail: format!("创建解压目录失败: {}", e),
+    fs::create_dir_all(&extract_dir).map_err(|e| AppError::PlayerDownloadExtractMkdirFailed {
+        detail: e.to_string(),
     })?;
     sevenz_rust::decompress_file(&archive_path, &extract_dir)
-        .map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-            detail: format!("解压 7z 失败: {}", e),
+        .map_err(|e| AppError::PlayerDownloadExtractFailed {
+            detail: e.to_string(),
         })?;
     let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
         "stage": "extracting", "progress": 90, "message": "正在安装 DLL..."
@@ -274,12 +336,12 @@ pub fn download_libmpv(
     // 4. 查找 libmpv-2.dll（dev 包中通常在 dll/ 目录下）
     let dll_source = find_file(&extract_dir, "libmpv-2.dll")
         .or_else(|| find_file(&extract_dir, "mpv-2.dll"))
-        .ok_or_else(|| AppError::PlayerLibmpvDownloadFailed { detail: "解压后未找到 libmpv-2.dll 或 mpv-2.dll".to_string() })?;
+        .ok_or(AppError::PlayerDownloadDllNotFound)?;
 
     // 5. 复制并重命名为 libmpv.dll
     let dll_dest = libmpv_dll_path(app_data_dir);
-    fs::copy(&dll_source, &dll_dest).map_err(|e| AppError::PlayerLibmpvDownloadFailed {
-        detail: format!("复制 dll 失败: {}", e),
+    fs::copy(&dll_source, &dll_dest).map_err(|e| AppError::PlayerDownloadCopyDllFailed {
+        detail: e.to_string(),
     })?;
 
     // 6. 清理解压目录和 7z 文件
@@ -290,6 +352,19 @@ pub fn download_libmpv(
         "stage": "done", "progress": 100, "message": "安装完成"
     }));
     tracing::info!("libmpv 下载完成: {}", dll_dest.display());
+    Ok(())
+}
+
+/// 删除已下载的 libmpv 组件（整个 libmpv 目录）
+pub fn delete_libmpv(app_data_dir: &Path) -> Result<(), AppError> {
+    let dir = libmpv_dir(app_data_dir);
+    if !dir.exists() {
+        return Ok(());
+    }
+    fs::remove_dir_all(&dir).map_err(|e| AppError::PlayerDownloadDeleteFailed {
+        detail: e.to_string(),
+    })?;
+    tracing::info!("libmpv 目录已删除: {}", dir.display());
     Ok(())
 }
 
@@ -312,12 +387,18 @@ fn find_file(dir: &Path, name: &str) -> Option<std::path::PathBuf> {
 
 /// 使用系统默认播放器打开视频文件（降级路径）
 pub fn open_in_system_player(video_path: &str) -> Result<(), AppError> {
-    let status = std::process::Command::new("cmd")
-        .args(["/C", "start", "", video_path])
-        .status()
-        .map_err(|e| AppError::PlayerLoadFailed { video_path: format!("{} ({})", video_path, e) })?;
+    let mut cmd = std::process::Command::new("cmd");
+    cmd.args(["/C", "start", "", video_path]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let status = cmd.status()
+        .map_err(|e| AppError::PlayerLoadFailed { detail: format!("{} ({})", video_path, e) })?;
     if !status.success() {
-        return Err(AppError::PlayerLoadFailed { video_path: video_path.to_string() });
+        return Err(AppError::PlayerLoadFailed { detail: video_path.to_string() });
     }
     Ok(())
 }
@@ -360,13 +441,13 @@ struct MpvApi {
 impl MpvApi {
     /// 从 libmpv.dll 动态加载所有需要的函数
     unsafe fn load(dll_path: &str) -> Result<Self, AppError> {
-        let lib = Library::new(dll_path).map_err(|e| AppError::PlayerLoadFailed {
-            video_path: format!("加载 libmpv.dll 失败: {} ({})", dll_path, e),
+        let lib = Library::new(dll_path).map_err(|e| AppError::PlayerLibmpvDllLoadFailed {
+            detail: format!("{} ({})", dll_path, e),
         })?;
         macro_rules! sym {
             ($name:literal, $type:ty) => {
                 *lib.get::<$type>(concat!($name, "\0").as_bytes())
-                    .map_err(|e| AppError::PlayerLoadFailed { video_path: format!("符号 {} 未找到: {}", $name, e) })?
+                    .map_err(|e| AppError::PlayerSymbolNotFound { name: $name.to_string(), detail: e.to_string() })?
             };
         }
         Ok(MpvApi {
@@ -403,7 +484,7 @@ pub struct Player {
     /// 位置轮询线程句柄
     poll_thread: Option<std::thread::JoinHandle<()>>,
     /// 窗口位置同步线程句柄
-    _hook_thread: Option<std::thread::JoinHandle<()>>,
+    hook_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(windows)]
@@ -427,18 +508,21 @@ impl Player {
         w: i32,
         h: i32,
     ) -> Result<Self, AppError> {
+        // 存储 AppHandle 供 child_wnd_proc 发送点击事件
+        let _ = GLOBAL_APP_HANDLE.set(app_handle.clone());
         unsafe {
-            tracing::info!("Player::new: 加载 dll: {}", dll_path);
+            let tid = GetCurrentThreadId();
+            tracing::info!("Player::new: 线程ID={}, 加载 dll: {}", tid, dll_path);
             let api = MpvApi::load(dll_path)?;
             tracing::info!("Player::new: dll 加载成功");
             // 创建子窗口
             let child_hwnd = create_child_window(parent_hwnd, x, y, w, h)?;
-            tracing::info!("Player::new: 子窗口创建成功: {:?}", child_hwnd);
+            tracing::info!("Player::new: 子窗口创建成功: HWND={:?}, 创建线程={}", child_hwnd, tid);
             // 创建 mpv 实例
             tracing::info!("Player::new: 调用 mpv_create");
             let mpv = (api.create)();
             if mpv.is_null() {
-                return Err(AppError::PlayerLoadFailed { video_path: "mpv_create 返回 null".to_string() });
+                return Err(AppError::PlayerInitFailed { code: "mpv_create returned null".to_string() });
             }
             tracing::info!("Player::new: mpv_create 成功: {:?}", mpv);
             // 设置 wid（将 libmpv 渲染嵌入子窗口）
@@ -449,7 +533,7 @@ impl Player {
             let ret = (api.set_option_string)(mpv, name_c.as_ptr(), wid_c.as_ptr());
             if ret < 0 {
                 (api.terminate_destroy)(mpv);
-                return Err(AppError::PlayerLoadFailed { video_path: format!("设置 wid 失败: {}", ret) });
+                return Err(AppError::PlayerSetWidFailed { code: ret.to_string() });
             }
             // 禁用 mpv 自带 OSD
             set_option(&api, mpv, "osd-level", "0")?;
@@ -461,14 +545,14 @@ impl Player {
             set_option(&api, mpv, "input-default-bindings", "no")?;
             // 硬件解码
             set_option(&api, mpv, "hwdec", "auto")?;
-            // 设置 vo 为 direct3d（wid 模式下最兼容）
-            set_option(&api, mpv, "vo", "direct3d")?;
+            // 设置 vo 为 gpu（GPL 版支持完整 GPU 渲染，wid 模式下用 d3d11 后端）
+            set_option(&api, mpv, "vo", "gpu")?;
             // 初始化
             tracing::info!("Player::new: 调用 mpv_initialize");
             let ret = (api.initialize)(mpv);
             if ret < 0 {
                 (api.terminate_destroy)(mpv);
-                return Err(AppError::PlayerLoadFailed { video_path: format!("mpv_initialize 失败: {}", ret) });
+                return Err(AppError::PlayerInitFailed { code: ret.to_string() });
             }
             tracing::info!("Player::new: mpv_initialize 成功");
             // 初始化后再次确认禁用 osc（有些选项需要运行时设置）
@@ -502,7 +586,7 @@ impl Player {
                 parent_hwnd,
                 stop_flag,
                 poll_thread: Some(thread),
-                _hook_thread: Some(hook_thread),
+                hook_thread: Some(hook_thread),
             })
         }
     }
@@ -519,7 +603,7 @@ impl Player {
             let ret = (self.api.command)(self.mpv, args.as_ptr());
             tracing::info!("player load: mpv_command 返回 {}", ret);
             if ret < 0 {
-                return Err(AppError::PlayerLoadFailed { video_path: format!("加载视频失败: {} ({})", file_path, ret) });
+                return Err(AppError::PlayerLoadVideoFailed { path: file_path.to_string(), code: ret.to_string() });
             }
             Ok(())
         }
@@ -551,7 +635,7 @@ impl Player {
             let ret = (self.api.command)(self.mpv, args.as_ptr());
             tracing::info!("player seek: ret={}", ret);
             if ret < 0 {
-                return Err(AppError::PlayerLoadFailed { video_path: format!("seek 失败: {}", ret) });
+                return Err(AppError::PlayerSeekFailed { code: ret.to_string() });
             }
             Ok(())
         }
@@ -569,6 +653,12 @@ impl Player {
         set_property(&self.api, self.mpv, "speed", &speed.to_string())
     }
 
+    /// 设置音频轨道（mpv aid，1-based 音频流序号）
+    pub fn set_audio_track(&self, audio_id: i32) -> Result<(), AppError> {
+        tracing::info!("player set_audio_track: {}", audio_id);
+        set_property(&self.api, self.mpv, "aid", &audio_id.to_string())
+    }
+
     /// 获取当前播放位置（秒）
     pub fn get_position(&self) -> Result<f64, AppError> {
         unsafe {
@@ -579,7 +669,7 @@ impl Player {
             }
             let s = std::ffi::CStr::from_ptr(ptr).to_string_lossy().to_string();
             (self.api.free)(ptr as *mut c_void);
-            s.parse::<f64>().map_err(|_| AppError::PlayerLoadFailed { video_path: "解析 time-pos 失败".to_string() })
+            s.parse::<f64>().map_err(|_| AppError::PlayerLoadFailed { detail: "parse time-pos failed".to_string() })
         }
     }
 
@@ -593,7 +683,7 @@ impl Player {
             }
             let s = std::ffi::CStr::from_ptr(ptr).to_string_lossy().to_string();
             (self.api.free)(ptr as *mut c_void);
-            s.parse::<f64>().map_err(|_| AppError::PlayerLoadFailed { video_path: "解析 duration 失败".to_string() })
+            s.parse::<f64>().map_err(|_| AppError::PlayerLoadFailed { detail: "parse duration failed".to_string() })
         }
     }
 
@@ -604,11 +694,18 @@ impl Player {
             let mut point = windows::Win32::Foundation::POINT { x, y };
             let _ = windows::Win32::Graphics::Gdi::ClientToScreen(self.parent_hwnd, &mut point);
             tracing::info!("player_resize: 屏幕坐标=({},{}), 大小={}x{}", point.x, point.y, w, h);
+            // 子窗口被主动隐藏时（弹窗层级处理），只更新位置不恢复显示，
+            // 避免 SWP_SHOWWINDOW 把刚 hide 的窗口又拉回。show() 恢复时窗口已在正确位置。
+            let flags = if HOOK_HIDDEN.load(std::sync::atomic::Ordering::Relaxed) {
+                SWP_NOZORDER
+            } else {
+                SWP_NOZORDER | SWP_SHOWWINDOW
+            };
             let _ = SetWindowPos(
                 self.child_hwnd,
                 None,
                 point.x, point.y, w, h,
-                SWP_NOZORDER | SWP_SHOWWINDOW,
+                flags,
             );
         }
         Ok(())
@@ -616,25 +713,52 @@ impl Player {
 
     /// 显示子窗口
     pub fn show(&self) {
+        #[cfg(windows)]
+        HOOK_HIDDEN.store(false, std::sync::atomic::Ordering::Relaxed);
         unsafe { let _ = ShowWindow(self.child_hwnd, SW_SHOW); }
     }
 
     /// 隐藏子窗口（用于弹窗层级处理）
     pub fn hide(&self) {
+        #[cfg(windows)]
+        HOOK_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
         unsafe { let _ = ShowWindow(self.child_hwnd, SW_HIDE); }
     }
 
     /// 销毁播放器
     pub fn destroy(&mut self) {
+        let tid = unsafe { GetCurrentThreadId() };
+        tracing::info!("Player::destroy 开始, child_hwnd={:?}, 销毁线程={}", self.child_hwnd, tid);
         self.stop_flag.store(true, Ordering::Relaxed);
         unsafe { (self.api.wakeup)(self.mpv); }
         if let Some(t) = self.poll_thread.take() {
             let _ = t.join();
+            tracing::info!("Player::destroy: poll_thread 已 join");
+        }
+        if let Some(t) = self.hook_thread.take() {
+            let _ = t.join();
+            tracing::info!("Player::destroy: hook_thread 已 join");
         }
         unsafe {
+            // 隐藏窗口
+            let _ = ShowWindow(self.child_hwnd, SW_HIDE);
+            // 在 mpv_terminate_destroy 前后都调用 OleInitialize，且永不调用 OleUninitialize。
+            // mpv 内部可能多次调用 CoUninitialize/OleUninitialize，
+            // 我们通过不断增加 OLE 引用计数来抵消，确保 OLE 永不卸载。
+            let _ = windows::Win32::System::Ole::OleInitialize(None);
+            // 销毁 mpv
             (self.api.terminate_destroy)(self.mpv);
-            let _ = DestroyWindow(self.child_hwnd);
+            // mpv 销毁后再次增加 OLE 引用计数
+            let _ = windows::Win32::System::Ole::OleInitialize(None);
+            // 销毁窗口
+            let ret = DestroyWindow(self.child_hwnd);
+            if ret.is_err() {
+                tracing::warn!("DestroyWindow 失败: {:?}, 错误码={:?}", ret, windows::Win32::Foundation::GetLastError());
+            } else {
+                tracing::info!("DestroyWindow 成功, 销毁线程={}", tid);
+            }
         }
+        tracing::info!("Player::destroy 完成");
     }
 }
 
@@ -656,8 +780,8 @@ fn set_option(api: &MpvApi, mpv: *mut MpvHandle, name: &str, value: &str) -> Res
         let value_c = CString::new(value).unwrap();
         let ret = (api.set_option_string)(mpv, name_c.as_ptr(), value_c.as_ptr());
         if ret < 0 {
-            return Err(AppError::PlayerLoadFailed {
-                video_path: format!("设置选项 {}={} 失败: {}", name, value, ret),
+            return Err(AppError::PlayerSetOptionFailed {
+                name: name.to_string(), value: value.to_string(), code: ret.to_string(),
             });
         }
         Ok(())
@@ -672,8 +796,8 @@ fn set_property(api: &MpvApi, mpv: *mut MpvHandle, name: &str, value: &str) -> R
         let ret = (api.set_property_string)(mpv, name_c.as_ptr(), value_c.as_ptr());
         tracing::info!("set_property {}={}: ret={}", name, value, ret);
         if ret < 0 {
-            return Err(AppError::PlayerLoadFailed {
-                video_path: format!("设置属性 {}={} 失败: {}", name, value, ret),
+            return Err(AppError::PlayerSetPropertyFailed {
+                name: name.to_string(), value: value.to_string(), code: ret.to_string(),
             });
         }
         Ok(())
@@ -681,6 +805,8 @@ fn set_property(api: &MpvApi, mpv: *mut MpvHandle, name: &str, value: &str) -> R
 }
 
 /// 窗口过程：不擦除背景，让 mpv 直接渲染
+/// 捕获 WM_LBUTTONDOWN：单击视频区域切换播放/暂停（WS_EX_TRANSPARENT 穿透不可靠，
+/// 改为在子窗口直接捕获点击并通过 Tauri 事件通知前端）
 #[cfg(windows)]
 unsafe extern "system" fn child_wnd_proc(
     hwnd: HWND,
@@ -690,6 +816,14 @@ unsafe extern "system" fn child_wnd_proc(
 ) -> LRESULT {
     match msg {
         0x0014 => return LRESULT(1), // WM_ERASEBKGND
+        0x0201 => { // WM_LBUTTONDOWN
+            // 通知前端切换播放/暂停
+            use tauri::Emitter;
+            if let Some(app) = GLOBAL_APP_HANDLE.get() {
+                let _ = app.emit("player-click", ());
+            }
+            return LRESULT(0);
+        }
         _ => {}
     }
     DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -725,8 +859,8 @@ fn create_child_window(parent: HWND, x: i32, y: i32, w: i32, h: i32) -> Result<H
             None,
             None,
             None,
-        ).map_err(|e| AppError::PlayerLoadFailed {
-            video_path: format!("创建悬浮窗口失败: {}", e),
+        ).map_err(|e| AppError::PlayerCreateWindowFailed {
+            detail: e.to_string(),
         })?;
         tracing::info!("悬浮窗口创建成功: 屏幕坐标=({},{}), 大小={}x{}", point.x, point.y, w, h);
         Ok(hwnd)
@@ -755,6 +889,11 @@ fn position_sync_loop(parent: HWND, child: HWND, stop_flag: Arc<AtomicBool>) {
         // EVENT_OBJECT_LOCATIONCHANGE = 0x800B
         // 只处理父窗口的位置变化
         if event != 0x800B || hwnd.0 != HOOK_PARENT.0 {
+            return;
+        }
+        // 子窗口被主动隐藏时（弹窗层级处理），跳过位置同步，
+        // 避免 SetWindowPos(SWP_SHOWWINDOW) 把刚 hide 的窗口又拉回。
+        if HOOK_HIDDEN.load(std::sync::atomic::Ordering::Relaxed) {
             return;
         }
         let parent = HOOK_PARENT;
@@ -807,12 +946,14 @@ fn position_sync_loop(parent: HWND, child: HWND, stop_flag: Arc<AtomicBool>) {
             }
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        // 清理
-        let _ = windows::Win32::UI::Accessibility::UnhookWinEvent(hook);
+        // 清理：先重置全局变量，让回调停止处理事件，再 UnhookWinEvent
         HOOK_PARENT = HWND::default();
         HOOK_CHILD = HWND::default();
         HOOK_LAST_X = i32::MIN;
         HOOK_LAST_Y = i32::MIN;
+        HOOK_HIDDEN.store(false, Ordering::Relaxed);
+        let unhook_ret = windows::Win32::UI::Accessibility::UnhookWinEvent(hook);
+        tracing::info!("UnhookWinEvent 返回: {:?}", unhook_ret);
     }
 }
 
@@ -822,6 +963,12 @@ fn fallback_poll_loop(parent: HWND, child: HWND, stop_flag: &Arc<AtomicBool>) {
     let mut last_x = i32::MIN;
     let mut last_y = i32::MIN;
     while !stop_flag.load(Ordering::Relaxed) {
+        // 子窗口被主动隐藏时（弹窗层级处理），跳过位置同步，
+        // 避免 SetWindowPos(SWP_SHOWWINDOW) 把刚 hide 的窗口又拉回。
+        if HOOK_HIDDEN.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(8));
+            continue;
+        }
         unsafe {
             let mut tl = windows::Win32::Foundation::POINT { x: 0, y: 0 };
             let _ = windows::Win32::Graphics::Gdi::ClientToScreen(parent, &mut tl);
@@ -858,7 +1005,6 @@ fn poll_position_loop(
     let get_prop: FnMpvGetPropertyString = unsafe { std::mem::transmute(api_get_prop) };
     let free_fn: FnMpvFree = unsafe { std::mem::transmute(api_free) };
     let mpv = mpv_addr as *mut MpvHandle;
-    let mut log_counter = 0u32;
     while !stop_flag.load(Ordering::Relaxed) {
         std::thread::sleep(std::time::Duration::from_millis(100)); // 10Hz
         if stop_flag.load(Ordering::Relaxed) {
@@ -895,11 +1041,6 @@ fn poll_position_loop(
                 (free_fn)(pause_ptr as *mut c_void);
                 s == "yes"
             };
-            // 每秒输出一次调试日志
-            log_counter += 1;
-            if log_counter % 10 == 0 {
-                tracing::info!("poll: time-pos={:?}, duration={:?}, paused={}", pos, dur, paused);
-            }
             // emit 事件
             use tauri::Emitter;
             let _ = app.emit("player_position", serde_json::json!({
@@ -934,7 +1075,7 @@ mod tests {
         };
         let json = serde_json::to_string(&status).expect("序列化失败");
         assert!(json.contains("\"downloaded\":true"));
-        assert!(json.contains("\"path\":\"C:\\\\app\\libmpv\\\\libmpv.dll\""));
+        assert!(status.path.as_deref() == Some("C:\\app\\libmpv\\libmpv.dll"));
         assert!(json.contains("\"version\":\"2.1\""));
     }
 

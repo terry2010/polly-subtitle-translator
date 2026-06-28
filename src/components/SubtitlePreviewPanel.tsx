@@ -2,16 +2,17 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
-import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play } from "lucide-react";
+import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
 import { AutoTextarea } from "./AutoTextarea";
-import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../lib/api";
 import type { SubtitleEntry } from "../lib/ipc-types";
+import { uiState } from "../lib/utils";
+import { ExportDialog } from "./ExportDialog";
 
 type PreviewMode = "original" | "bilingual" | "translated";
 
@@ -24,15 +25,16 @@ function formatTimecode(ms: number): string {
   return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")},${millis.toString().padStart(3, "0")}`;
 }
 
-export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }: { extracting?: boolean; currentPlayTime?: number }) {
+export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, currentPlayTime = 0 }: { extracting?: boolean; extractProgress?: number; currentPlayTime?: number }) {
   const { t } = useTranslation();
   const store = useSubtitleStore();
-  const { file } = store;
+  const { file, bilingualDetect, isSplit } = store;
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [showFindReplace, setShowFindReplace] = useState(false);
   const [offsetInput, setOffsetInput] = useState("");
   const [showOffset, setShowOffset] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("bilingual");
+  const [exportOpen, setExportOpen] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entryIndex: number } | null>(null);
   const translateStore = useTranslateStore();
@@ -64,6 +66,8 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
     if (activeEntryIndex < 0) return;
     if (isMouseOverPanelRef.current) return;
     if (isAutoScrollingRef.current) return;
+    // 有下拉框（如音轨选择）展开时暂停自动滚动，避免滚动动画导致下拉菜单被浏览器收起
+    if (uiState.selectOpen) return;
 
     const scrollEl = parentRef.current;
     if (!scrollEl) return;
@@ -121,19 +125,17 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
     };
   }, [maybeScrollToActive]);
 
-  const handleSave = useCallback(async () => {
+  const handleSave = useCallback(() => {
     if (!file) return;
-    const outputPath = await save({
-      filters: [
-        { name: "SRT", extensions: ["srt"] },
-        { name: "ASS", extensions: ["ass"] },
-        { name: "VTT", extensions: ["vtt"] },
-      ],
-    });
-    if (outputPath) {
-      await store.saveSubtitle(outputPath);
-    }
-  }, [file, store]);
+    setExportOpen(true);
+  }, [file]);
+
+  // Ctrl+S 快捷键：监听 MainView 分发的 "export-subtitle" 事件，打开 ExportDialog
+  useEffect(() => {
+    const onExport = () => { if (file) setExportOpen(true); };
+    window.addEventListener("export-subtitle", onExport);
+    return () => window.removeEventListener("export-subtitle", onExport);
+  }, [file]);
 
   const handleAddEntry = useCallback(() => {
     if (!file) return;
@@ -173,6 +175,11 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
     if (!file) return;
     const entry = file.entries.find((e) => e.index === entryIndex);
     if (!entry) return;
+    // 跳过 ass 矢量绘图指令（含 \p1 标记），不是字幕文本
+    if (entry.text.includes("\\p1")) {
+      closeContextMenu();
+      return;
+    }
     closeContextMenu();
     try {
       const result = await translateStore.startTranslate(
@@ -226,7 +233,7 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
       await api.playerPlay();
     } catch (e) {
       console.error("跳转播放失败:", e);
-      toast.error(t("subtitle.playFromHereFailed", "跳转播放失败"));
+      toast.error(t("subtitle.playFromHereFailed"));
     }
   }, [file, closeContextMenu, t]);
 
@@ -251,7 +258,7 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
       // 如果点击的不是 textarea 或按钮，关闭编辑
       if (!target.closest("textarea") && !target.closest("button")) {
         setEditingIndex(null);
-        toast.warning(t("subtitle.editCancelled", "编辑已取消"));
+        toast.warning(t("subtitle.editCancelled"));
       }
     };
     // 延迟绑定，避免触发编辑的同一 click 事件
@@ -266,12 +273,23 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
 
   // === SECTION 1 END ===
 
-  if (extracting) {
+  if (extracting && !file) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
-        <div className="text-center">
-          <Loader2 className="mx-auto h-8 w-8 animate-spin mb-2" />
-          <p className="text-sm">{t("subtitle.extracting", "正在提取字幕中...")}</p>
+        <div className="text-center w-48">
+          <Loader2 className="mx-auto h-8 w-8 animate-spin mb-3" />
+          <p className="text-sm mb-2">{t("subtitle.extracting")}</p>
+          {extractProgress > 0 && (
+            <>
+              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-300"
+                  style={{ width: `${Math.min(100, extractProgress)}%` }}
+                />
+              </div>
+              <p className="text-xs mt-1 tabular-nums">{extractProgress.toFixed(0)}%</p>
+            </>
+          )}
         </div>
       </div>
     );
@@ -313,6 +331,46 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
           <Plus className="h-3.5 w-3.5" />
         </Button>
         <div className="flex-1" />
+        {/* 切换原译：将原文和译文对调（仅已拆分时可用） */}
+        {isSplit && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={() => store.swapOriginalTranslated()}
+            disabled={!file.entries.some((e) => e.translated)}
+            title={t("subtitle.swapOriginalTranslated", "切换原译")}
+          >
+            <ArrowLeftRight className="mr-1 h-3.5 w-3.5" />
+            {t("subtitle.swapOriginalTranslated", "切换原译")}
+          </Button>
+        )}
+        {/* 拆分字幕 / 取消拆分 */}
+        {isSplit ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={() => store.unsplitBilingual()}
+            title={t("subtitle.unsplitBilingual", "取消拆分")}
+          >
+            <SplitSquareHorizontal className="mr-1 h-3.5 w-3.5" />
+            {t("subtitle.unsplitBilingual", "取消拆分")}
+          </Button>
+        ) : (
+          bilingualDetect && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => store.splitBilingual()}
+              title={t("subtitle.splitBilingual", "拆分字幕")}
+            >
+              <SplitSquareHorizontal className="mr-1 h-3.5 w-3.5" />
+              {t("subtitle.splitBilingual", "拆分字幕")}
+            </Button>
+          )
+        )}
         {/* 清除翻译结果 */}
         <Button
           size="sm"
@@ -320,7 +378,7 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
           className="h-7 px-2 text-xs"
           onClick={() => {
             store.clearTranslations();
-            toast.success(t("subtitle.translationsCleared", "翻译结果已清除"));
+            toast.success(t("subtitle.translationsCleared"));
           }}
           disabled={!file.entries.some((e) => e.translated)}
         >
@@ -424,10 +482,10 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
                     <span className="font-mono text-xs text-muted-foreground truncate">
                       #{entry.index} · {formatTimecode(entry.start_ms)} → {formatTimecode(entry.end_ms)}
                     </span>
-                    {/* 从该字幕开始时刻播放 */}
+                    {/* 从该字幕开始时刻播放（仅 hover 显示，与删除按钮一致） */}
                     <button
                       onClick={(e) => { e.stopPropagation(); handlePlayFromHere(entry.index); }}
-                      className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-primary hover:text-primary-foreground"
+                      className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary hover:text-primary-foreground"
                       title={t("subtitle.playFromHereHint", "从该字幕开始时刻播放视频")}
                     >
                       <Play className="h-3 w-3 translate-x-[0.5px]" />
@@ -597,6 +655,9 @@ export function SubtitlePreviewPanel({ extracting = false, currentPlayTime = 0 }
         <span>{t("subtitle.count", "条目数")}: {file.entries.length}</span>
         {store.undoStack.length > 0 && <span className="text-orange-500">● {t("subtitle.unsaved", "已修改")}</span>}
       </div>
+
+      {/* 导出弹层（file 非空才挂载，避免 Props 类型不匹配） */}
+      {file && <ExportDialog open={exportOpen} onOpenChange={setExportOpen} file={file} />}
     </div>
   );
 }

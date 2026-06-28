@@ -5,6 +5,60 @@ use crate::db::{translate_cache_key, Database};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 
+/// 代理配置（从 config 表读取，构建 reqwest::Client 时使用）
+#[derive(Debug, Clone, Default)]
+pub struct ProxyConfig {
+    pub mode: String,       // "none" / "http" / "socks5"
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
+impl ProxyConfig {
+    /// 从 Database 读取代理配置
+    pub fn load_from_db(db: &Database) -> Self {
+        let get = |k: &str| db.get_config(k).ok().flatten().unwrap_or_default();
+        let user = get("proxy_user");
+        Self {
+            mode: get("proxy_mode"),
+            host: get("proxy_host"),
+            port: get("proxy_port").parse().unwrap_or(0),
+            username: if user.is_empty() { None } else { Some(user) },
+            password: crate::config::CredentialStore::load("proxy", "pass").ok(),
+        }
+    }
+
+    /// 构建 reqwest 代理 URL（如 mode != none）
+    fn proxy_url(&self) -> Option<String> {
+        if self.mode == "none" || self.host.is_empty() || self.port == 0 {
+            return None;
+        }
+        let scheme = if self.mode == "socks5" { "socks5" } else { "http" };
+        match (&self.username, &self.password) {
+            (Some(u), Some(p)) if !u.is_empty() => Some(format!("{}://{}:{}@{}:{}", scheme, u, p, self.host, self.port)),
+            _ => Some(format!("{}://{}:{}", scheme, self.host, self.port)),
+        }
+    }
+
+    /// 构建 reqwest::Client（带代理或普通）
+    pub fn build_client(&self) -> reqwest::Client {
+        match self.proxy_url() {
+            Some(url) => {
+                tracing::info!("使用代理: {}", self.mode);
+                reqwest::Client::builder()
+                    .proxy(reqwest::Proxy::all(&url).unwrap_or_else(|e| {
+                        tracing::warn!("代理配置失败: {}, 使用直连", e);
+                        reqwest::Proxy::all("direct://").unwrap()
+                    }))
+                    .build()
+                    .unwrap_or_else(|_| reqwest::Client::new())
+            }
+            None => reqwest::Client::new(),
+        }
+    }
+}
+
 /// 翻译提供商类型
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -254,11 +308,10 @@ pub struct BaiduProvider {
 
 impl BaiduProvider {
     pub fn new(app_id: String, secret_key: String) -> Self {
-        Self {
-            app_id,
-            secret_key,
-            client: reqwest::Client::new(),
-        }
+        Self::with_client(app_id, secret_key, reqwest::Client::new())
+    }
+    pub fn with_client(app_id: String, secret_key: String, client: reqwest::Client) -> Self {
+        Self { app_id, secret_key, client }
     }
 
     fn sign(&self, query: &str, salt: &str) -> String {
@@ -307,9 +360,8 @@ impl TranslateProviderTrait for BaiduProvider {
                 .timeout(std::time::Duration::from_secs(15))
                 .send()
                 .await
-                .map_err(|e| AppError::TranslateNetworkError {
-                    provider: "baidu".to_string(),
-                    detail: format!("请求失败: {}", e),
+                .map_err(|e| AppError::TranslateRequestFailed {
+                    detail: e.to_string(),
                 })?;
 
             if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -336,9 +388,8 @@ impl TranslateProviderTrait for BaiduProvider {
             let body: serde_json::Value = resp
                 .json()
                 .await
-                .map_err(|e| AppError::TranslateNetworkError {
-                    provider: "baidu".to_string(),
-                    detail: format!("响应解析失败: {}", e),
+                .map_err(|e| AppError::TranslateResponseParseFailed {
+                    detail: e.to_string(),
                 })?;
 
             // 百度 error_code 可能是字符串或数字
@@ -359,7 +410,7 @@ impl TranslateProviderTrait for BaiduProvider {
                 }
                 return Err(AppError::TranslateNetworkError {
                     provider: "baidu".to_string(),
-                    detail: format!("百度错误 code: {}, msg: {}", code, msg),
+                    detail: format!("error_code: {}, msg: {}", code, msg),
                 });
             }
 
@@ -429,11 +480,10 @@ pub struct BingProvider {
 
 impl BingProvider {
     pub fn new(api_key: String, region: String) -> Self {
-        Self {
-            api_key,
-            region,
-            client: reqwest::Client::new(),
-        }
+        Self::with_client(api_key, region, reqwest::Client::new())
+    }
+    pub fn with_client(api_key: String, region: String, client: reqwest::Client) -> Self {
+        Self { api_key, region, client }
     }
 }
 
@@ -497,9 +547,8 @@ impl TranslateProviderTrait for BingProvider {
         }
 
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
-            AppError::TranslateNetworkError {
-                provider: "bing".to_string(),
-                detail: format!("响应解析失败: {}", e),
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
             }
         })?;
 
@@ -564,10 +613,10 @@ pub struct GoogleProvider {
 
 impl GoogleProvider {
     pub fn new(api_key: String) -> Self {
-        Self {
-            api_key,
-            client: reqwest::Client::new(),
-        }
+        Self::with_client(api_key, reqwest::Client::new())
+    }
+    pub fn with_client(api_key: String, client: reqwest::Client) -> Self {
+        Self { api_key, client }
     }
 }
 
@@ -623,9 +672,8 @@ impl TranslateProviderTrait for GoogleProvider {
         }
 
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
-            AppError::TranslateNetworkError {
-                provider: "google".to_string(),
-                detail: format!("响应解析失败: {}", e),
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
             }
         })?;
 
@@ -786,6 +834,11 @@ impl<'a> TranslateScheduler<'a> {
 
         // 1. 缓存查询 + 占位符保护
         for entry in entries {
+            // 跳过 ass 矢量绘图指令（含 \p1 标记），不是字幕文本
+            if entry.text.contains("\\p1") {
+                tracing::info!("字幕 #{} 含 \\p1 绘图指令，跳过翻译", entry.index);
+                continue;
+            }
             let cache_key = translate_cache_key(
                 &entry.text,
                 source_lang,
@@ -943,9 +996,7 @@ impl<'a> TranslateScheduler<'a> {
             }
         }
 
-        Err(last_error.unwrap_or(AppError::Unknown {
-            detail: "翻译重试耗尽".to_string(),
-        }))
+        Err(last_error.unwrap_or(AppError::TranslateRetriesExhausted))
     }
 }
 
@@ -954,6 +1005,16 @@ pub fn create_provider(
     provider: &TranslateProvider,
     credentials: &ProviderCredentials,
 ) -> Result<Box<dyn TranslateProviderTrait>, AppError> {
+    create_provider_with_proxy(provider, credentials, &ProxyConfig::default())
+}
+
+/// 创建翻译 provider 实例（带代理配置）
+pub fn create_provider_with_proxy(
+    provider: &TranslateProvider,
+    credentials: &ProviderCredentials,
+    proxy: &ProxyConfig,
+) -> Result<Box<dyn TranslateProviderTrait>, AppError> {
+    let client = proxy.build_client();
     match provider {
         TranslateProvider::Baidu => {
             let app_id = credentials.app_id.clone().ok_or_else(|| {
@@ -966,7 +1027,7 @@ pub fn create_provider(
                     provider: "baidu".to_string(),
                 }
             })?;
-            Ok(Box::new(BaiduProvider::new(app_id, secret_key)))
+            Ok(Box::new(BaiduProvider::with_client(app_id, secret_key, client)))
         }
         TranslateProvider::Bing => {
             let api_key = credentials.secret_key.clone().ok_or_else(|| {
@@ -975,7 +1036,7 @@ pub fn create_provider(
                 }
             })?;
             let region = credentials.region.clone().unwrap_or_else(|| "global".to_string());
-            Ok(Box::new(BingProvider::new(api_key, region)))
+            Ok(Box::new(BingProvider::with_client(api_key, region, client)))
         }
         TranslateProvider::Google => {
             let api_key = credentials.secret_key.clone().ok_or_else(|| {
@@ -983,7 +1044,7 @@ pub fn create_provider(
                     provider: "google".to_string(),
                 }
             })?;
-            Ok(Box::new(GoogleProvider::new(api_key)))
+            Ok(Box::new(GoogleProvider::with_client(api_key, client)))
         }
     }
 }

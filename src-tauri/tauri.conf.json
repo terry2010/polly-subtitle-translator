@@ -18,7 +18,9 @@
         "minWidth": 1024,
         "minHeight": 600,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "backgroundColor": "#ffffff",
+        "devtools": true
       }
     ],
     "security": {
@@ -39,7 +41,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": [],
     "externalBin": [],
     "copyright": "",
     "category": "Utility",

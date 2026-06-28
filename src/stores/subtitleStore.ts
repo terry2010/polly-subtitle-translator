@@ -1,8 +1,9 @@
 // 字幕状态 store
 import { create } from "zustand";
 import type { SubtitleFile, SubtitleEntry, BilingualDetectResult } from "../lib/ipc-types";
-import { api } from "../lib/api";
+import { api, formatIpcError } from "../lib/api";
 import { toast } from "sonner";
+import i18n from "../lib/i18n";
 
 interface SubtitleState {
   file: SubtitleFile | null;
@@ -10,6 +11,12 @@ interface SubtitleState {
   error: string | null;
   // 双语检测结果
   bilingualDetect: BilingualDetectResult | null;
+  // 是否已拆分双语字幕
+  isSplit: boolean;
+  // 拆分前的原始文件（用于取消拆分恢复）
+  preSplitFile: SubtitleFile | null;
+  // 拆分前的双语检测结果（用于取消拆分后恢复"拆分字幕"按钮）
+  preSplitBilingualDetect: BilingualDetectResult | null;
   // undo/redo 栈
   undoStack: SubtitleFile[];
   redoStack: SubtitleFile[];
@@ -32,6 +39,8 @@ interface SubtitleState {
   setFindQuery: (q: string) => void;
   setReplaceQuery: (q: string) => void;
   splitBilingual: () => Promise<void>;
+  unsplitBilingual: () => void;
+  swapOriginalTranslated: () => void;
   dismissBilingualDetect: () => void;
 }
 
@@ -48,13 +57,16 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   loading: false,
   error: null,
   bilingualDetect: null,
+  isSplit: false,
+  preSplitFile: null,
+  preSplitBilingualDetect: null,
   undoStack: [],
   redoStack: [],
   findQuery: "",
   replaceQuery: "",
 
   loadSubtitle: async (path: string) => {
-    set({ loading: true, error: null, bilingualDetect: null });
+    set({ loading: true, error: null, bilingualDetect: null, isSplit: false, preSplitFile: null, preSplitBilingualDetect: null });
     try {
       const file = await api.parseSubtitleFile(path);
       set({ file, loading: false, undoStack: [], redoStack: [] });
@@ -65,9 +77,14 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
           set({ bilingualDetect: detect });
           const langAName = langDisplayName(detect.lang_a);
           const langBName = langDisplayName(detect.lang_b);
-          toast.info(`检测到双语字幕（${langAName} + ${langBName}，匹配 ${detect.matched_count}/${detect.total_count} 条）`, {
+          toast.info(i18n.t("subtitle.bilingualDetected", {
+            langA: langAName,
+            langB: langBName,
+            matched: detect.matched_count,
+            total: detect.total_count,
+          }), {
             action: {
-              label: "拆分",
+              label: i18n.t("subtitle.split"),
               onClick: () => get().splitBilingual(),
             },
             duration: 10000,
@@ -77,12 +94,12 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
         console.warn("双语检测失败:", e);
       }
     } catch (e: any) {
-      const msg = e?.message ?? e?.code ?? JSON.stringify(e);
+      const msg = formatIpcError(e);
       set({ loading: false, error: msg });
     }
   },
 
-  setFile: (file) => set({ file, undoStack: [], redoStack: [] }),
+  setFile: (file) => set({ file, undoStack: [], redoStack: [], isSplit: false, preSplitFile: null, preSplitBilingualDetect: null }),
 
   updateEntry: (index, patch) => {
     const state = get();
@@ -212,11 +229,35 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
     try {
       const splitFile = await api.splitBilingualSubtitle(state.file, state.bilingualDetect.split_mode);
       const undoPatch = pushUndo(state);
-      set({ ...undoPatch, file: splitFile, bilingualDetect: null });
-      toast.success("双语字幕已拆分");
+      // 保存拆分前的原始文件和双语检测结果，用于取消拆分恢复
+      set({ ...undoPatch, file: splitFile, bilingualDetect: null, isSplit: true, preSplitFile: state.file, preSplitBilingualDetect: state.bilingualDetect });
+      toast.success(i18n.t("subtitle.splitSuccess"));
     } catch (e: any) {
-      toast.error("拆分失败: " + (e?.message ?? String(e)));
+      toast.error(formatIpcError(e));
     }
+  },
+
+  unsplitBilingual: () => {
+    const state = get();
+    if (!state.file || !state.preSplitFile) return;
+    const undoPatch = pushUndo(state);
+    // 恢复拆分前的原始文件和双语检测结果（恢复"拆分字幕"按钮）
+    set({ ...undoPatch, file: state.preSplitFile, isSplit: false, preSplitFile: null, bilingualDetect: state.preSplitBilingualDetect, preSplitBilingualDetect: null });
+    toast.success(i18n.t("subtitle.splitCancelled"));
+  },
+
+  swapOriginalTranslated: () => {
+    const state = get();
+    if (!state.file) return;
+    const undoPatch = pushUndo(state);
+    // 将每条字幕的原文和译文对调
+    const entries = state.file.entries.map((e) => ({
+      ...e,
+      text: e.translated || e.text,
+      translated: e.text,
+    }));
+    set({ ...undoPatch, file: { ...state.file, entries } });
+    toast.success(i18n.t("subtitle.swapSuccess"));
   },
 
   dismissBilingualDetect: () => set({ bilingualDetect: null }),

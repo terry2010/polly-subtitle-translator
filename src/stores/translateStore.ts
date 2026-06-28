@@ -1,7 +1,7 @@
 // 翻译状态 store
 import { create } from "zustand";
 import type { TranslateResult, SubtitleEntry } from "../lib/ipc-types";
-import { api } from "../lib/api";
+import { api, formatIpcError } from "../lib/api";
 
 interface TranslateState {
   translating: boolean;
@@ -74,7 +74,7 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
       set({ translating: false, progress: entries.length, result });
       return result;
     } catch (e: any) {
-      const error = e?.message ?? e?.code ?? (typeof e === "string" ? e : JSON.stringify(e));
+      const error = formatIpcError(e);
       set({ translating: false, error });
       return null;
     } finally {
