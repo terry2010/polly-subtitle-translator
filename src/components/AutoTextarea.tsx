@@ -8,10 +8,11 @@ interface AutoTextareaProps {
   placeholder?: string;
   onClick?: (e: React.MouseEvent) => void;
   onKeyDown?: (e: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
   autoFocus?: boolean;
 }
 
-export function AutoTextarea({ value, onChange, className, placeholder, onClick, onKeyDown, autoFocus }: AutoTextareaProps) {
+export function AutoTextarea({ value, onChange, className, placeholder, onClick, onKeyDown, onContextMenu, autoFocus }: AutoTextareaProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
 
   const adjustHeight = useCallback(() => {
@@ -41,6 +42,7 @@ export function AutoTextarea({ value, onChange, className, placeholder, onClick,
       placeholder={placeholder}
       onClick={onClick}
       onKeyDown={onKeyDown}
+      onContextMenu={onContextMenu}
       rows={1}
       style={{ minHeight: "28px", overflow: "hidden" }}
     />

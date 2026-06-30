@@ -1,2 +1,19 @@
 /src-tauri/target/
 node_modules
+
+# IDE / 工具配置（个人本地）
+/.idea/
+/.devin/
+/.agent_logs/
+
+# 构建产物
+/dist/
+/release/
+
+# 测试用媒体文件
+*.mkv
+*.srt
+*.ass
+*.sub
+*.vtt
+*.ssa

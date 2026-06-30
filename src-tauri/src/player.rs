@@ -405,6 +405,729 @@ pub fn open_in_system_player(video_path: &str) -> Result<(), AppError> {
 
 // === SECTION 2 END ===
 
+// === 已安装播放器枚举（右键菜单"用播放器打开"用） ===
+
+/// 已安装的播放器信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InstalledPlayer {
+    /// 显示名称（如 "QQ影音"、"VLC media player"）
+    pub name: String,
+    /// exe 完整路径
+    pub exe_path: String,
+    /// 是否为该扩展名的默认播放器
+    pub is_default: bool,
+}
+
+/// 播放器图标信息（前端用 convertFileSrc 加载 icon_path 显示图标）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayerIcon {
+    /// 对应的 exe 完整路径（用于和 InstalledPlayer.exe_path 匹配）
+    pub exe_path: String,
+    /// 图标 PNG 文件的完整路径（前端用 convertFileSrc 转为可加载的 URL）
+    pub icon_path: String,
+}
+
+/// 视频扩展名 → 注册表查询用的扩展名（带点）
+fn video_ext_with_dot(video_path: &str) -> Option<String> {
+    let path = std::path::Path::new(video_path);
+    path.extension().map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+}
+
+/// 用 Windows Shell API SHAssocEnumHandlers 枚举文件关联处理器
+/// 这是资源管理器右键"打开方式"子菜单使用的同一个 API，返回的列表和顺序完全一致。
+/// 返回 Vec<(ui_name, prog_id_or_exe_name, is_recommended)>
+#[cfg(windows)]
+fn enum_assoc_handlers(ext: &str) -> Vec<(String, String, bool)> {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::Shell::{
+        IAssocHandler, SHAssocEnumHandlers, ASSOC_FILTER_RECOMMENDED,
+    };
+
+    let mut result = Vec::new();
+    let ext_hstring = HSTRING::from(ext);
+
+    unsafe {
+        // ASSOC_FILTER_RECOMMENDED：和资源管理器右键"打开方式"展开的子菜单一致
+        // 只返回系统推荐的处理程序（默认程序 + 常用/推荐程序），不会把所有注册了关联的程序都列出来。
+        let enum_handlers = match SHAssocEnumHandlers(&ext_hstring, ASSOC_FILTER_RECOMMENDED) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!("enum_assoc_handlers: SHAssocEnumHandlers 失败: {:?}", e);
+                return result;
+            }
+        };
+
+        loop {
+            // IAssocHandler 不是 Copy，不能用 [None; 16]，改用 Vec
+            let mut handlers: Vec<Option<IAssocHandler>> = (0..16).map(|_| None).collect();
+            let mut fetched: u32 = 0;
+            let hr = enum_handlers.Next(&mut handlers, Some(std::ptr::from_mut(&mut fetched)));
+            if hr.is_err() || fetched == 0 {
+                break;
+            }
+            for i in 0..fetched as usize {
+                if let Some(handler) = handlers[i].take() {
+                    // GetUIName/GetName 返回 PWSTR，需要手动转 String
+                    let ui_name = handler.GetUIName()
+                        .ok()
+                        .and_then(|pwstr| pwstr.to_string().ok())
+                        .unwrap_or_default();
+                    let name = handler.GetName()
+                        .ok()
+                        .and_then(|pwstr| pwstr.to_string().ok())
+                        .unwrap_or_default();
+                    // IsRecommended 返回 HRESULT，ok() 判断是否成功
+                    let is_recommended = handler.IsRecommended().is_ok();
+                    tracing::debug!(
+                        "enum_assoc_handlers: ui_name='{}', name='{}', recommended={}",
+                        ui_name, name, is_recommended
+                    );
+                    if !ui_name.is_empty() {
+                        result.push((ui_name, name, is_recommended));
+                    }
+                }
+            }
+        }
+    }
+    tracing::info!("enum_assoc_handlers: ext={}, 共 {} 个关联处理器", ext, result.len());
+    result
+}
+
+#[cfg(not(windows))]
+fn enum_assoc_handlers(_ext: &str) -> Vec<(String, String, bool)> {
+    Vec::new()
+}
+
+/// 从 ProgID 解析出 exe 路径和显示名
+/// ProgID 注册在 HKCR\<ProgID>\shell\open\command，默认值形如:
+///   "C:\Program Files\VLC\vlc.exe" --started-from-file "%1"
+/// HKCR\<ProgID> 的默认值通常是友好名称（如 "VLC media player"）
+/// 但也可能是文件类型描述（如 "mkv - Matroska 电影文件"），此时用 exe 文件名作为显示名
+#[cfg(windows)]
+fn resolve_prog_id(prog_id: &str) -> Option<(String, String)> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let hcr = RegKey::predef(HKEY_CLASSES_ROOT);
+    // 友好名称
+    let friendly_name = hcr.open_subkey(prog_id)
+        .ok()
+        .and_then(|key| key.get_value::<String, _>("").ok());
+    // command 行
+    let cmd_key = hcr.open_subkey(&format!("{}\\shell\\open\\command", prog_id)).ok()?;
+    let cmd_line: String = cmd_key.get_value("").ok()?;
+    let exe_path = parse_exe_from_command(&cmd_line)?;
+    // exe 必须存在且以 .exe 结尾，否则跳过（可能是文件类型描述而非播放器）
+    if !exe_path.to_lowercase().ends_with(".exe") || !std::path::Path::new(&exe_path).exists() {
+        tracing::debug!("resolve_prog_id: {} → exe 不存在或非 exe: {}", prog_id, exe_path);
+        return None;
+    }
+    // 判断 friendly_name 是否是文件类型描述（含"文件"、扩展名等关键词）
+    // 如果是，用 exe 文件名作为显示名
+    let exe_stem = std::path::Path::new(&exe_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| prog_id.to_string());
+    let name = match friendly_name {
+        Some(ref n) if !n.is_empty() => {
+            let lower = n.to_lowercase();
+            // 文件类型描述特征：含"文件"、"file"、扩展名（如 ".mkv"）、或就是 ProgID 本身
+            let is_filetype_desc = lower.contains("文件")
+                || lower.contains("file")
+                || lower.contains(".mkv")
+                || lower.contains(".mp4")
+                || lower.contains(".avi")
+                || lower.contains("matroska")
+                || lower.contains("video clip")
+                || n == prog_id;
+            if is_filetype_desc {
+                exe_stem // 用 exe 文件名代替文件类型描述
+            } else {
+                n.clone()
+            }
+        }
+        _ => exe_stem,
+    };
+    tracing::debug!("resolve_prog_id: {} → name={}, exe={}", prog_id, name, exe_path);
+    Some((name, exe_path))
+}
+
+/// 从命令行字符串中提取 exe 路径
+/// 处理: "C:\path\app.exe" args...  或  C:\path\app.exe args...
+fn parse_exe_from_command(cmd: &str) -> Option<String> {
+    let trimmed = cmd.trim();
+    if trimmed.starts_with('"') {
+        // 带引号：找到闭合引号
+        let end = trimmed[1..].find('"')?;
+        Some(trimmed[1..1 + end].to_string())
+    } else {
+        // 不带引号：取第一个空格前的部分
+        let end = trimmed.find(' ').unwrap_or(trimmed.len());
+        Some(trimmed[..end].to_string())
+    }
+}
+
+/// 从 OpenWithList 的 exe 名称（如 "PotPlayerMini64.exe"）解析完整路径
+/// 查 HKCR\Applications\<exe>\shell\open\command
+#[cfg(windows)]
+fn resolve_app_exe(exe_name: &str) -> Option<(String, String)> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let hcr = RegKey::predef(HKEY_CLASSES_ROOT);
+    let key = hcr.open_subkey(&format!("Applications\\{}\\shell\\open\\command", exe_name)).ok()?;
+    let cmd_line: String = key.get_value("").ok()?;
+    let exe_path = parse_exe_from_command(&cmd_line)?;
+    let name = std::path::Path::new(&exe_path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| exe_name.to_string());
+    Some((name, exe_path))
+}
+
+/// 已知播放器路径探测（补充注册表 OpenWithList/Progids 没覆盖到的安装版播放器）
+/// 多管齐下：注册表 InstallPath + WOW6432Node + Uninstall 枚举 + App Paths + 常见路径
+#[cfg(windows)]
+fn detect_known_players() -> Vec<InstalledPlayer> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let mut result: Vec<InstalledPlayer> = Vec::new();
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+
+    // helper：检查 exe 是否存在，存在则 push
+    let mut try_push = |name: &str, exe_path: &str| {
+        if std::path::Path::new(exe_path).exists() {
+            result.push(InstalledPlayer {
+                name: name.to_string(),
+                exe_path: exe_path.to_string(),
+                is_default: false,
+            });
+            tracing::debug!("detect_known_players: found {} at {}", name, exe_path);
+        }
+    };
+
+    // --- PotPlayer ---
+    // 注册表路径可能有多个变体，含 WOW6432Node（32 位 PotPlayer 安装在 64 位系统）
+    // 值名也可能是 InstallPath 或 Path
+    for subkey in &[
+        "SOFTWARE\\PotPlayer", "SOFTWARE\\PotPlayer64", "SOFTWARE\\Daum\\PotPlayer",
+        "SOFTWARE\\WOW6432Node\\PotPlayer", "SOFTWARE\\WOW6432Node\\PotPlayer64",
+        "SOFTWARE\\WOW6432Node\\Daum\\PotPlayer",
+    ] {
+        if let Ok(key) = hklm.open_subkey(subkey) {
+            // 尝试多种值名
+            for value_name in &["InstallPath", "Path", "InstallDir"] {
+                if let Ok(install_path) = key.get_value::<String, _>(value_name) {
+                    tracing::debug!("detect_known_players: PotPlayer {}\\{} = {}", subkey, value_name, install_path);
+                    // PotPlayerMini64.exe (64位) 或 PotPlayerMini.exe (32位)
+                    for exe_name in &["PotPlayerMini64.exe", "PotPlayerMini.exe"] {
+                        let exe = format!("{}\\{}", install_path, exe_name);
+                        try_push("PotPlayer", &exe);
+                    }
+                }
+            }
+        }
+    }
+
+    // --- VLC ---
+    for subkey in &[
+        "SOFTWARE\\VideoLAN\\VLC",
+        "SOFTWARE\\WOW6432Node\\VideoLAN\\VLC",
+    ] {
+        if let Ok(key) = hklm.open_subkey(subkey) {
+            for value_name in &["InstallDir", "InstallPath", "Path"] {
+                if let Ok(install_dir) = key.get_value::<String, _>(value_name) {
+                    tracing::debug!("detect_known_players: VLC {}\\{} = {}", subkey, value_name, install_dir);
+                    let exe = format!("{}\\vlc.exe", install_dir);
+                    try_push("VLC media player", &exe);
+                }
+            }
+        }
+    }
+
+    // --- MPC-HC / MPC-BE ---
+    for exe_path in &[
+        r"C:\Program Files\MPC-HC\mpc-hc64.exe",
+        r"C:\Program Files\MPC-HC\mpc-hc.exe",
+        r"C:\Program Files (x86)\MPC-HC\mpc-hc.exe",
+        r"C:\Program Files\MPC-BE\mpc-be64.exe",
+        r"C:\Program Files\MPC-BE\mpc-be.exe",
+        r"C:\Program Files (x86)\MPC-BE\mpc-be.exe",
+    ] {
+        if std::path::Path::new(exe_path).exists() {
+            let name = std::path::Path::new(exe_path)
+                .file_stem().map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| "MPC".to_string());
+            try_push(&name, exe_path);
+        }
+    }
+
+    // --- mpv ---
+    // mpv 通常解压即用，但有些安装版会注册 App Paths
+    for subkey in &[
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\mpv.exe",
+        "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\App Paths\\mpv.exe",
+    ] {
+        for root in [&hklm, &hkcu] {
+            if let Ok(key) = root.open_subkey(subkey) {
+                if let Ok(path) = key.get_value::<String, _>("") {
+                    let clean = path.trim_matches('"').to_string();
+                    try_push("mpv", &clean);
+                }
+            }
+        }
+    }
+
+    // --- 通过 Uninstall 注册表枚举补充（覆盖 QQ影音、迅雷播放器、恒星播放器等） ---
+    // 匹配 DisplayName 含关键词的条目，从 InstallLocation 或 DisplayIcon 推断 exe 路径
+    // 同时查 HKLM 和 HKCU（现代播放器常装在用户目录，注册在 HKCU Uninstall）
+    let player_keywords = [
+        "potplayer", "vlc", "mpc-hc", "mpc-be", "mpc hc", "mpc be",
+        "qqplayer", "qq player", "qq影音", "迅雷播放器", "thunder player",
+        "stellarplayer", "恒星播放器", "wmplayer", "media player",
+        "mpv", "pot player", "pot player", "qq 影音",
+    ];
+    for (root_name, root) in &[("HKLM", &hklm), ("HKCU", &hkcu)] {
+        for uninstall_path in &[
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+            "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall",
+        ] {
+            if let Ok(uninstall_key) = root.open_subkey(uninstall_path) {
+                for subkey_name in uninstall_key.enum_keys().filter_map(|k| k.ok()) {
+                    if let Ok(sub) = uninstall_key.open_subkey(&subkey_name) {
+                        let display_name: Option<String> = sub.get_value("DisplayName").ok();
+                        let install_location: Option<String> = sub.get_value("InstallLocation").ok();
+                        let display_icon: Option<String> = sub.get_value("DisplayIcon").ok();
+                        let name_lower = display_name.as_deref().unwrap_or("").to_lowercase();
+                        if !player_keywords.iter().any(|kw| name_lower.contains(kw)) {
+                            continue;
+                        }
+                        tracing::debug!(
+                            "detect_known_players: Uninstall 匹配 {}\\{}\\{}: name={:?}, loc={:?}, icon={:?}",
+                            root_name, uninstall_path, subkey_name, display_name, install_location, display_icon
+                        );
+                        // 从 InstallLocation 找 exe
+                        if let Some(loc) = &install_location {
+                            if !loc.is_empty() && std::path::Path::new(loc).is_dir() {
+                                // 尝试常见 exe 名
+                                for exe_name in &[
+                                    "PotPlayerMini64.exe", "PotPlayerMini.exe", "vlc.exe",
+                                    "mpc-hc64.exe", "mpc-hc.exe", "mpc-be64.exe", "mpc-be.exe",
+                                    "QQPlayer.exe", "ThunderPlayer.exe", "mpv.exe",
+                                    "PotPlayer.exe", "QQPlayerMini.exe", "StellarPlayer.exe",
+                                ] {
+                                    let exe = format!("{}\\{}", loc, exe_name);
+                                    if std::path::Path::new(&exe).exists() {
+                                        let display = display_name.as_deref().unwrap_or(exe_name);
+                                        try_push(display, &exe);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        // 从 DisplayIcon 找 exe（格式可能是 "C:\path\app.exe,0"）
+                        if let Some(icon) = &display_icon {
+                            let exe_path = icon.split(',').next().unwrap_or("").trim_matches('"').trim();
+                            if exe_path.to_lowercase().ends_with(".exe") && std::path::Path::new(exe_path).exists() {
+                                let display = display_name.as_deref().unwrap_or("");
+                                try_push(display, exe_path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Windows Media Player（系统自带，兜底） ---
+    let wmp = r"C:\Windows\System32\wmplayer.exe";
+    try_push("Windows Media Player", wmp);
+
+    // 去重（按 exe_path，不区分大小写，全局去重）
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    result.retain(|p| {
+        let key = p.exe_path.to_lowercase();
+        if seen.contains(&key) {
+            false
+        } else {
+            seen.insert(key);
+            true
+        }
+    });
+    tracing::info!("detect_known_players: 共找到 {} 个播放器", result.len());
+    result
+}
+
+/// 列出已安装的视频播放器，与 Windows 资源管理器右键"打开方式"子菜单完全一致。
+///
+/// 主方案：用 SHAssocEnumHandlers Shell API 枚举关联处理器
+///   - 这是资源管理器"打开方式"子菜单使用的同一个 API
+///   - 返回顺序与资源管理器完全一致（推荐项在前，然后按最近使用排序）
+///
+/// 默认程序判定：HKCU\...\FileExts\.ext\UserChoice 的 ProgID 才是真正的默认程序，
+/// 与 SHAssocEnumHandlers 枚举结果匹配后只设置一个 is_default=true。
+///
+/// 补充方案：detect_known_players 探测已知播放器（覆盖未注册关联的安装版播放器）
+///
+/// 去重：按 exe_path 不区分大小写去重
+#[cfg(windows)]
+pub fn list_installed_players(video_path: &str) -> Result<Vec<InstalledPlayer>, AppError> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let ext = match video_ext_with_dot(video_path) {
+        Some(e) => e,
+        None => return Ok(vec![]),
+    };
+
+    // 1. 先确定真正的默认程序 exe 路径（UserChoice）
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let user_choice_path = format!(
+        "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\{}\\UserChoice",
+        ext
+    );
+    let default_exe = hkcu
+        .open_subkey(&user_choice_path)
+        .ok()
+        .and_then(|k| k.get_value::<String, _>("ProgId").ok())
+        .and_then(|prog_id| {
+            tracing::debug!("list_installed_players: UserChoice ProgID for {} = {}", ext, prog_id);
+            resolve_prog_id(&prog_id)
+                .or_else(|| resolve_app_exe(&prog_id))
+                .map(|(_, exe_path)| exe_path.to_lowercase())
+        });
+    tracing::debug!("list_installed_players: 默认程序 exe = {:?}", default_exe);
+
+    // exe_path（小写）→ InstalledPlayer，用于去重
+    let mut by_exe: std::collections::HashMap<String, InstalledPlayer> = std::collections::HashMap::new();
+    // 有序列表（按插入顺序）
+    let mut ordered: Vec<String> = Vec::new();
+
+    let mut insert = |player: InstalledPlayer| {
+        let key = player.exe_path.to_lowercase();
+        if !by_exe.contains_key(&key) {
+            ordered.push(key.clone());
+            by_exe.insert(key, player);
+        }
+    };
+
+    // === 主方案：SHAssocEnumHandlers ===
+    // 枚举结果与资源管理器"打开方式"子菜单完全一致
+    let assoc_handlers = enum_assoc_handlers(&ext);
+    for (ui_name, prog_id_or_exe, _is_recommended) in assoc_handlers {
+        // 尝试从 ProgID 或 exe 名解析出 exe 路径
+        let resolved = resolve_prog_id(&prog_id_or_exe)
+            .or_else(|| resolve_app_exe(&prog_id_or_exe));
+
+        if let Some((_, exe_path)) = resolved {
+            if std::path::Path::new(&exe_path).exists() {
+                // 是否是真正的默认程序：与 UserChoice 解析出的 exe 路径匹配
+                let is_default = default_exe.as_ref().map(|d| d.eq_ignore_ascii_case(&exe_path.to_lowercase())).unwrap_or(false);
+                insert(InstalledPlayer {
+                    name: ui_name,
+                    exe_path,
+                    is_default,
+                });
+                continue;
+            }
+        }
+
+        // 如果 prog_id_or_exe 本身是完整路径
+        if prog_id_or_exe.to_lowercase().ends_with(".exe")
+            && std::path::Path::new(&prog_id_or_exe).exists()
+        {
+            let exe_path = prog_id_or_exe;
+            let is_default = default_exe.as_ref().map(|d| d.eq_ignore_ascii_case(&exe_path.to_lowercase())).unwrap_or(false);
+            insert(InstalledPlayer {
+                name: ui_name,
+                exe_path,
+                is_default,
+            });
+            continue;
+        }
+
+        // 解析失败但 UIName 有效：记录日志，后续 detect_known_players 可能补上
+        tracing::debug!(
+            "list_installed_players: 无法解析 exe 路径: ui_name='{}', name='{}'",
+            ui_name, prog_id_or_exe
+        );
+    }
+
+    // === 补充方案：已知播放器探测 ===
+    // 覆盖 SHAssocEnumHandlers 未返回的安装版播放器（未注册文件关联的）
+    for player in detect_known_players() {
+        insert(player);
+    }
+
+    // 转为有序列表
+    let result: Vec<InstalledPlayer> = ordered
+        .into_iter()
+        .map(|key| by_exe.remove(&key).unwrap())
+        .collect();
+
+    tracing::info!(
+        "list_installed_players: ext={}, 共 {} 个播放器: {:?}",
+        ext,
+        result.len(),
+        result.iter().map(|p| format!("{}({})", p.name, p.is_default)).collect::<Vec<_>>()
+    );
+
+    Ok(result)
+}
+
+#[cfg(not(windows))]
+pub fn list_installed_players(_video_path: &str) -> Result<Vec<InstalledPlayer>, AppError> {
+    Ok(vec![])
+}
+
+/// 用指定播放器打开视频文件
+pub fn open_with_player(exe_path: &str, video_path: &str) -> Result<(), AppError> {
+    let status = std::process::Command::new(exe_path)
+        .arg(video_path)
+        .spawn()
+        .map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("{} ({})", exe_path, e),
+        })?;
+    let _ = status; // 不等待，spawn 后立即返回
+    Ok(())
+}
+
+/// 在资源管理器中定位视频文件（explorer /select,"path"）
+/// 注意：explorer 的 /select 参数对路径中的空格/特殊字符敏感，
+/// 必须把 /select,"path" 作为单个参数传递（用 raw_arg 避免 Rust 自动加引号）。
+/// 直接用 .arg() 传含空格的参数时 Rust 会自动加引号，导致 explorer 解析失败打开"我的文档"。
+pub fn reveal_in_explorer(file_path: &str) -> Result<(), AppError> {
+    // 将路径中的正斜杠统一为反斜杠（explorer 对正斜杠支持不佳）
+    let normalized = file_path.replace('/', "\\");
+    let select_arg = format!("/select,\"{}\"", normalized);
+    let mut cmd = std::process::Command::new("explorer.exe");
+    // raw_arg 不自动加引号，直接原样传递参数
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.raw_arg(select_arg);
+    }
+    #[cfg(not(windows))]
+    {
+        cmd.arg(select_arg);
+    }
+    cmd.spawn()
+        .map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("explorer ({})", e),
+        })?;
+    Ok(())
+}
+
+// === SECTION 2.5 END ===
+
+// === SECTION 2.6: 播放器图标提取 ===
+
+/// 计算 exe_path 的 hash，用作图标文件名（避免路径中的特殊字符问题）
+fn icon_filename(exe_path: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    exe_path.to_lowercase().hash(&mut hasher);
+    format!("{:016x}.png", hasher.finish())
+}
+
+/// 从 exe 文件提取图标并保存为 PNG
+/// 用 SHGetFileInfo 获取 HICON，GetDIBits 获取像素数据，png crate 编码
+#[cfg(windows)]
+fn extract_icon_to_png(exe_path: &str, output_path: &Path) -> Result<(), AppError> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::UI::Shell::{SHGetFileInfoW, SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON};
+
+    unsafe {
+        // 1. SHGetFileInfo 获取大图标 HICON
+        let exe_wide: Vec<u16> = exe_path.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut shfi = SHFILEINFOW::default();
+        let result = SHGetFileInfoW(
+            PCWSTR(exe_wide.as_ptr()),
+            windows::Win32::Storage::FileSystem::FILE_FLAGS_AND_ATTRIBUTES(0),
+            Some(&mut shfi),
+            std::mem::size_of::<SHFILEINFOW>() as u32,
+            SHGFI_ICON | SHGFI_LARGEICON,
+        );
+        if result == 0 || shfi.hIcon.is_invalid() {
+            return Err(AppError::PlayerLoadFailed {
+                detail: format!("SHGetFileInfo 失败: {}", exe_path),
+            });
+        }
+        let hicon = shfi.hIcon;
+
+        // 2. GetIconInfo 获取 HBITMAP
+        let mut icon_info = ICONINFO::default();
+        let ok = GetIconInfo(hicon, &mut icon_info).is_ok();
+        if !ok {
+            let _ = DestroyIcon(hicon);
+            return Err(AppError::PlayerLoadFailed {
+                detail: format!("GetIconInfo 失败: {}", exe_path),
+            });
+        }
+
+        let hbm_color = icon_info.hbmColor;
+        let hbm_mask = icon_info.hbmMask;
+
+        // 如果 hbmColor 为空（单色图标），用 hbmMask 代替
+        let hbm = if hbm_color.is_invalid() { hbm_mask } else { hbm_color };
+
+        // 3. GetObject 获取位图尺寸
+        let mut bmp = BITMAP::default();
+        let bytes = GetObjectW(hbm.into(), std::mem::size_of::<BITMAP>() as i32, Some(&mut bmp as *mut _ as *mut std::ffi::c_void));
+        if bytes == 0 {
+            if !hbm_color.is_invalid() { let _ = DeleteObject(hbm_color.into()); }
+            if !hbm_mask.is_invalid() { let _ = DeleteObject(hbm_mask.into()); }
+            let _ = DestroyIcon(hicon);
+            return Err(AppError::PlayerLoadFailed {
+                detail: format!("GetObject 失败: {}", exe_path),
+            });
+        }
+
+        let width = bmp.bmWidth as u32;
+        let height = bmp.bmHeight as u32;
+        if width == 0 || height == 0 {
+            if !hbm_color.is_invalid() { let _ = DeleteObject(hbm_color.into()); }
+            if !hbm_mask.is_invalid() { let _ = DeleteObject(hbm_mask.into()); }
+            let _ = DestroyIcon(hicon);
+            return Err(AppError::PlayerLoadFailed {
+                detail: format!("图标尺寸为 0: {}", exe_path),
+            });
+        }
+
+        // 4. GetDIBits 获取 RGBA 像素数据（top-down）
+        let hdc = GetDC(None);
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width as i32,
+                biHeight: -(height as i32), // 负值 = top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                biSizeImage: 0,
+                biXPelsPerMeter: 0,
+                biYPelsPerMeter: 0,
+                biClrUsed: 0,
+                biClrImportant: 0,
+            },
+            bmiColors: [RGBQUAD::default()],
+        };
+
+        let mut pixels = vec![0u8; (width * height * 4) as usize];
+        let lines = GetDIBits(
+            hdc,
+            hbm,
+            0,
+            height,
+            Some(pixels.as_mut_ptr() as *mut _),
+            &mut bmi,
+            DIB_RGB_COLORS,
+        );
+        ReleaseDC(None, hdc);
+
+        // 清理 GDI 资源
+        if !hbm_color.is_invalid() { let _ = DeleteObject(hbm_color.into()); }
+        if !hbm_mask.is_invalid() { let _ = DeleteObject(hbm_mask.into()); }
+        let _ = DestroyIcon(hicon);
+
+        if lines == 0 {
+            return Err(AppError::PlayerLoadFailed {
+                detail: format!("GetDIBits 失败: {}", exe_path),
+            });
+        }
+
+        // 5. BGRA → RGBA 转换（Windows 位图是 BGRA，PNG 需要 RGBA）
+        for chunk in pixels.chunks_exact_mut(4) {
+            chunk.swap(0, 2); // B <-> R
+        }
+
+        // 6. 用 png crate 编码
+        let file = std::fs::File::create(output_path).map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("创建图标文件失败: {} ({})", output_path.display(), e),
+        })?;
+        let w = std::io::BufWriter::new(file);
+        let mut encoder = png::Encoder::new(w, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("PNG 编码失败: {}", e),
+        })?;
+        writer.write_image_data(&pixels).map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("PNG 写入失败: {}", e),
+        })?;
+        writer.finish().map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("PNG 完成失败: {}", e),
+        })?;
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn extract_icon_to_png(_exe_path: &str, _output_path: &Path) -> Result<(), AppError> {
+    Err(AppError::PlayerLoadFailed { detail: "不支持的平台".to_string() })
+}
+
+/// 提取播放器图标（异步，已存在的跳过）
+/// 在加载视频时调用，后台提取所有播放器的图标到 icons_dir 目录
+pub fn extract_player_icons(video_path: &str, icons_dir: &Path) -> Result<Vec<PlayerIcon>, AppError> {
+    // 确保目录存在
+    std::fs::create_dir_all(icons_dir).map_err(|e| AppError::PlayerLoadFailed {
+        detail: format!("创建图标目录失败: {} ({})", icons_dir.display(), e),
+    })?;
+
+    // 获取播放器列表
+    let players = list_installed_players(video_path)?;
+    let mut result = Vec::new();
+
+    for player in &players {
+        let filename = icon_filename(&player.exe_path);
+        let icon_path = icons_dir.join(&filename);
+
+        // 已存在则跳过提取
+        if !icon_path.exists() {
+            tracing::debug!("extract_player_icons: 提取图标 {} → {}", player.exe_path, icon_path.display());
+            if let Err(e) = extract_icon_to_png(&player.exe_path, &icon_path) {
+                tracing::warn!("extract_player_icons: 提取图标失败 {} : {}", player.exe_path, e);
+                continue;
+            }
+        }
+
+        result.push(PlayerIcon {
+            exe_path: player.exe_path.clone(),
+            icon_path: icon_path.to_string_lossy().to_string(),
+        });
+    }
+
+    tracing::info!("extract_player_icons: 共提取 {} 个图标", result.len());
+    Ok(result)
+}
+
+/// 清除播放器图标缓存
+pub fn clear_player_icons_cache(icons_dir: &Path) -> Result<usize, AppError> {
+    if !icons_dir.exists() {
+        return Ok(0);
+    }
+    let mut count = 0;
+    for entry in std::fs::read_dir(icons_dir).map_err(|e| AppError::PlayerLoadFailed {
+        detail: format!("读取图标目录失败: {} ({})", icons_dir.display(), e),
+    })? {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            if path.extension().map(|e| e == "png").unwrap_or(false) {
+                if std::fs::remove_file(&path).is_ok() {
+                    count += 1;
+                }
+            }
+        }
+    }
+    tracing::info!("clear_player_icons_cache: 清除 {} 个图标", count);
+    Ok(count)
+}
+
+// === SECTION 2.6 END ===
+
 // === libmpv FFI 函数签名 + 动态加载 ===
 
 /// 定义 libmpv 函数指针类型
@@ -831,6 +1554,21 @@ unsafe extern "system" fn child_wnd_proc(
             }
             return LRESULT(0);
         }
+        0x0204 => { // WM_RBUTTONDOWN：右键视频区域，emit 屏幕坐标给前端弹自定义菜单
+            use tauri::Emitter;
+            // lparam 的低 16 位是客户区 x，高 16 位是 y
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            // 转为屏幕坐标，前端用屏幕坐标定位菜单（fixed 定位 + window.screenX/Y）
+            let mut pt = windows::Win32::Foundation::POINT { x, y };
+            let _ = windows::Win32::Graphics::Gdi::ClientToScreen(hwnd, &mut pt);
+            if let Some(app) = GLOBAL_APP_HANDLE.get() {
+                let _ = app.emit("player-right-click", (pt.x, pt.y));
+            }
+            return LRESULT(0);
+        }
+        0x0205 => return LRESULT(0), // WM_RBUTTONUP：吞掉，防止 DefWindowProc 生成 WM_CONTEXTMENU
+        0x007B => return LRESULT(0), // WM_CONTEXTMENU：吞掉，阻止系统默认右键菜单
         _ => {}
     }
     DefWindowProcW(hwnd, msg, wparam, lparam)

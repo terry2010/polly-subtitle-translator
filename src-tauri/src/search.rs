@@ -655,7 +655,7 @@ const ZIMUKU_BASE: &str = "https://zimuku.org";
 
 /// 搜索 zimuku 字幕（首次请求，可能触发验证码）
 fn zimuku_search(query: &str, proxy: &crate::translate::ProxyConfig) -> Result<Vec<SubtitleSearchResult>, AppError> {
-    zimuku_search_inner(query, proxy, None, None)
+    zimuku_search_inner(query, proxy, None, None, None)
 }
 
 /// SubHD 搜索内部实现
@@ -708,6 +708,7 @@ fn subhd_search_inner(query: &str, proxy: &crate::translate::ProxyConfig) -> Res
                 captcha_image: img,
                 session_cookie: String::new(),
                 original_url: search_url,
+                verify_path: String::new(),
             });
         }
     }
@@ -735,106 +736,261 @@ fn subhd_search_inner(query: &str, proxy: &crate::translate::ProxyConfig) -> Res
     Ok(results)
 }
 
+/// 从响应中收集所有 set-cookie 的 name=value 对
+fn collect_cookies(resp: &reqwest::blocking::Response) -> Vec<String> {
+    resp.headers()
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .filter_map(|s| {
+            let kv = s.split(';').next()?;
+            if kv.contains('=') { Some(kv.trim().to_string()) } else { None }
+        })
+        .collect()
+}
+
+/// 合并已有 cookie 和新 cookie（新 cookie 覆盖同名的）
+fn merge_cookies(existing: &[String], new: &[String]) -> Vec<String> {
+    let mut result: Vec<String> = existing.to_vec();
+    for n in new {
+        let name = n.split('=').next().unwrap_or("");
+        result.retain(|c| c.split('=').next().unwrap_or("") != name);
+        result.push(n.clone());
+    }
+    result
+}
+
+/// stringToHex：把字符串转成 hex（与 JS 的 stringToHex 一致）
+fn string_to_hex(s: &str) -> String {
+    s.chars().map(|c| format!("{:02x}", c as u32)).collect()
+}
+
+/// 从 HTML 中提取云锁 JS 跳转路径前缀
+/// 匹配 `self.location = "/some/path" + stringToHex(` 中的 `/some/path`
+fn extract_yunsuo_location(html: &str) -> Option<String> {
+    // 查找 `self.location = "` 后面的路径
+    let pattern = "self.location = \"";
+    let pos = html.find(pattern)?;
+    let rest = &html[pos + pattern.len()..];
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
+/// 从 HTML 中提取验证码图片（base64 BMP）
+fn extract_captcha_image(html: &str) -> Option<String> {
+    // 方式1：base64 编码的 BMP 图片
+    if let Some(pos) = html.find("data:image/bmp;base64,") {
+        let start = pos + "data:image/bmp;base64,".len();
+        if let Some(end) = html[start..].find('"') {
+            return Some(format!("data:image/bmp;base64,{}", &html[start..start + end]));
+        }
+    }
+    // 方式2：verifyimg class 的 src 属性
+    if let Some(start) = html.find("verifyimg") {
+        let rest = &html[start..];
+        if let Some(s) = rest.find("src=\"") {
+            let abs_start = start + s + 5;
+            if let Some(end) = html[abs_start..].find('"') {
+                return Some(html[abs_start..abs_start + end].to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 检测是否为云锁验证页面
+fn is_yunsuo_page(html: &str, status: reqwest::StatusCode) -> bool {
+    status == 404
+        || html.contains("security_verify_img")
+        || html.contains("verifyimg")
+        || html.contains("YunSuoAutoJump")
+        || html.contains("self.location")
+}
+
 /// zimuku 搜索内部实现
 /// captcha: 用户输入的验证码（第二次请求时传）
 /// session_cookie: 第一次请求获得的 cookie（第二次请求时传）
+/// verify_path: 从验证页面 JS 中提取的跳转路径前缀
 fn zimuku_search_inner(
     query: &str,
     proxy: &crate::translate::ProxyConfig,
     captcha: Option<&str>,
     session_cookie: Option<&str>,
+    verify_path: Option<&str>,
 ) -> Result<Vec<SubtitleSearchResult>, AppError> {
     let proxy_info = format!("mode={}, host={}, port={}", proxy.mode, proxy.host, proxy.port);
     tracing::info!("zimuku 搜索，代理配置: {}", proxy_info);
     let client = proxy.build_blocking_client();
 
-    // 1. 搜索影片
     let search_url = format!("{}/search?q={}", ZIMUKU_BASE, url_encode(query));
+    let mut all_cookies: Vec<String> = Vec::new();
 
-    // 如果有验证码，构建带验证码的 URL
-    let request_url = if let Some(captcha) = captcha {
-        // stringToHex: 把验证码字符串转成 hex
-        let hex_captcha: String = captcha.chars().map(|c| format!("{:02x}", c as u32)).collect();
-        // 设置 srcurl cookie + security_verify_img 参数
-        let srcurl_hex: String = search_url.chars().map(|c| format!("{:02x}", c as u32)).collect();
-        let mut req = client
-            .get(&format!("{}&security_verify_img={}", search_url, hex_captcha))
-            .header("Referer", ZIMUKU_BASE);
-        // 带 session cookie
-        if let Some(cookie) = session_cookie {
-            req = req.header("Cookie", format!("{}; srcurl={}", cookie, srcurl_hex));
+    // 如果有 session_cookie（来自第一次请求），初始化 cookie
+    if let Some(sc) = session_cookie {
+        if !sc.is_empty() {
+            all_cookies.push(sc.to_string());
         }
-        req
-    } else {
-        client
-            .get(&search_url)
-            .header("Referer", ZIMUKU_BASE)
-    };
+    }
 
+    // === 阶段1：如果有验证码，先提交验证码 ===
+    if let Some(captcha) = captcha {
+        let hex_captcha = string_to_hex(captcha);
+        let srcurl_hex = string_to_hex(&search_url);
+        tracing::info!("zimuku 验证码提交: captcha={}, hex={}", captcha, hex_captcha);
+
+        // 构建 cookie：session_cookie + srcurl
+        let mut cookie_parts = all_cookies.clone();
+        cookie_parts.push(format!("srcurl={}", srcurl_hex));
+
+        // 验证码提交 URL：server_url + verify_path + hex_captcha
+        // verify_path 是从 JS 中提取的路径前缀（如 "/search?q=xxx&security_verify_data="）
+        let verify_url = if let Some(vp) = verify_path {
+            if !vp.is_empty() {
+                // verify_path 可能是相对路径，拼接 base
+                if vp.starts_with("http") {
+                    format!("{}{}", vp, hex_captcha)
+                } else {
+                    format!("{}{}{}", ZIMUKU_BASE, vp, hex_captcha)
+                }
+            } else {
+                format!("{}&security_verify_data={}", search_url, hex_captcha)
+            }
+        } else {
+            format!("{}&security_verify_data={}", search_url, hex_captcha)
+        };
+        tracing::info!("zimuku 验证码提交 URL: {}", verify_url);
+
+        let resp = client
+            .get(&verify_url)
+            .header("Referer", ZIMUKU_BASE)
+            .header("Cookie", cookie_parts.join("; "))
+            .send()
+            .map_err(|e| {
+                let detail = format!("{} [代理: {}]", format_error_chain(&e), proxy_info);
+                AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+            })?;
+
+        tracing::info!("zimuku 验证码提交响应状态: {}", resp.status());
+        let resp_cookies = collect_cookies(&resp);
+        all_cookies = merge_cookies(&all_cookies, &resp_cookies);
+        tracing::info!("zimuku 验证后 cookies: {:?}", all_cookies);
+
+        // 消费响应体（不需要内容）
+        let _ = resp.text();
+    }
+
+    // === 阶段2：请求搜索页面（验证通过后应返回真正搜索结果） ===
     tracing::info!("zimuku 搜索: {}", search_url);
-    let resp = request_url
+    let resp = client
+        .get(&search_url)
+        .header("Referer", ZIMUKU_BASE)
+        .header("Cookie", all_cookies.join("; "))
         .send()
         .map_err(|e| {
             let detail = format!("{} [代理: {}]", format_error_chain(&e), proxy_info);
-            tracing::warn!("zimuku 请求失败: {}", detail);
             AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
         })?;
 
-    tracing::info!("zimuku 响应状态: {}", resp.status());
-
-    // 在 text() 之前获取 cookie 和 url
-    let session_cookie_from_resp = resp
-        .headers()
-        .get_all("set-cookie")
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .find_map(|s| {
-            if s.contains("security_session_verify") {
-                let start = s.find("security_session_verify=")?;
-                let rest = &s[start + "security_session_verify=".len()..];
-                let end = rest.find(';').unwrap_or(rest.len());
-                Some(format!("security_session_verify={}", &rest[..end]))
-            } else {
-                None
-            }
-        });
+    let status = resp.status();
+    tracing::info!("zimuku 搜索响应状态: {}", status);
+    let resp_cookies = collect_cookies(&resp);
+    all_cookies = merge_cookies(&all_cookies, &resp_cookies);
     let original_url = resp.url().to_string();
 
-    let html_text = resp
-        .text()
-        .map_err(|e| {
-            let detail = format!("读取响应失败: {}", e);
-            tracing::warn!("zimuku {}", detail);
-            AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
-        })?;
+    let html_text = resp.text().map_err(|e| {
+        let detail = format!("读取响应失败: {}", e);
+        AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+    })?;
 
     // 检测验证码页面
-    if html_text.contains("security_verify_img") || html_text.contains("verifyimg") {
-        // 提取验证码图片
-        let captcha_image = html_text
-            .find("verifyimg")
-            .and_then(|start| {
-                let rest = &html_text[start..];
-                rest.find("src=\"").map(|s| s + 5)
-            })
-            .and_then(|src_start| {
-                // src_start 是相对于 verifyimg 位置的偏移
-                let abs_start = html_text.find("verifyimg")? + src_start;
-                html_text[abs_start..].find('"').map(|end| html_text[abs_start..abs_start + end].to_string())
-            });
+    if is_yunsuo_page(&html_text, status) {
+        let captcha_image = extract_captcha_image(&html_text);
+        let verify_path = extract_yunsuo_location(&html_text);
+        tracing::info!("zimuku 需要验证码, verify_path={:?}", verify_path);
 
         if let Some(img) = captcha_image {
             return Err(AppError::SearchCaptchaRequired {
                 provider: "zimuku".to_string(),
                 captcha_image: img,
-                session_cookie: session_cookie_from_resp.unwrap_or_default(),
+                session_cookie: all_cookies.iter().find(|c| c.starts_with("security_session_verify") || c.starts_with("yunsuo_session_verify")).cloned().unwrap_or_default(),
                 original_url,
+                verify_path: verify_path.unwrap_or_default(),
             });
         }
+        // 没有验证码图片但有 JS 跳转（YunSuoAutoJump），尝试自动绕过
+        if let Some(vp) = verify_path {
+            tracing::info!("zimuku 自动绕过云锁 JS 跳转, verify_path={}", vp);
+            let srcurl_hex = string_to_hex(&search_url);
+            let mut cookie_parts = all_cookies.clone();
+            cookie_parts.push(format!("srcurl={}", srcurl_hex));
+            // 用屏幕分辨率作为 verify_data
+            let verify_data = string_to_hex("1920,1080");
+            let bypass_url = format!("{}{}{}", ZIMUKU_BASE, vp, verify_data);
+            let resp = client
+                .get(&bypass_url)
+                .header("Referer", ZIMUKU_BASE)
+                .header("Cookie", cookie_parts.join("; "))
+                .send()
+                .map_err(|e| {
+                    let detail = format!("绕过请求失败: {}", e);
+                    AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+                })?;
+            let resp_cookies = collect_cookies(&resp);
+            all_cookies = merge_cookies(&all_cookies, &resp_cookies);
+            let _ = resp.text();
+
+            // 再次请求搜索页面
+            let resp = client
+                .get(&search_url)
+                .header("Referer", ZIMUKU_BASE)
+                .header("Cookie", all_cookies.join("; "))
+                .send()
+                .map_err(|e| {
+                    let detail = format!("{} [代理: {}]", format_error_chain(&e), proxy_info);
+                    AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+                })?;
+            let status = resp.status();
+            tracing::info!("zimuku 绕过后搜索响应状态: {}", status);
+            let resp_cookies = collect_cookies(&resp);
+            all_cookies = merge_cookies(&all_cookies, &resp_cookies);
+            let html_text = resp.text().map_err(|e| {
+                let detail = format!("读取响应失败: {}", e);
+                AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+            })?;
+            // 如果仍然有验证码，返回错误
+            if is_yunsuo_page(&html_text, status) {
+                let captcha_image = extract_captcha_image(&html_text);
+                if let Some(img) = captcha_image {
+                    return Err(AppError::SearchCaptchaRequired {
+                        provider: "zimuku".to_string(),
+                        captcha_image: img,
+                        session_cookie: all_cookies.iter().find(|c| c.starts_with("security_session_verify") || c.starts_with("yunsuo_session_verify")).cloned().unwrap_or_default(),
+                        original_url: search_url,
+                        verify_path: extract_yunsuo_location(&html_text).unwrap_or_default(),
+                    });
+                }
+                tracing::warn!("zimuku 自动绕过失败，HTML 片段（前1000字符）: {}", &html_text[..html_text.len().min(1000)]);
+                return Ok(Vec::new());
+            }
+            // 绕过成功，继续解析
+            return zimuku_parse_and_fetch_sublist(&html_text, &search_url, &all_cookies, &client, &proxy_info);
+        }
+        tracing::warn!("zimuku 检测到验证页面但未找到验证码图片和跳转路径，HTML 片段（前1000字符）: {}", &html_text[..html_text.len().min(1000)]);
     }
 
-    // 2. 解析搜索结果，获取第一个影片的字幕列表页链接
-    let sublist_url = match zimuku_parse_search_results(&html_text) {
+    zimuku_parse_and_fetch_sublist(&html_text, &search_url, &all_cookies, &client, &proxy_info)
+}
+
+/// 解析搜索结果页，获取字幕列表页并解析字幕
+fn zimuku_parse_and_fetch_sublist(
+    html_text: &str,
+    search_url: &str,
+    all_cookies: &[String],
+    client: &reqwest::blocking::Client,
+    proxy_info: &str,
+) -> Result<Vec<SubtitleSearchResult>, AppError> {
+    // 解析搜索结果，获取第一个影片的字幕列表页链接
+    let sublist_url = match zimuku_parse_search_results(html_text) {
         Some(url) => {
             tracing::info!("zimuku 字幕列表页: {}", url);
             url
@@ -845,63 +1001,100 @@ fn zimuku_search_inner(
         }
     };
 
-    // 3. 访问字幕列表页
+    // 访问字幕列表页（带上所有 cookie，保持会话）
     let resp = client
         .get(&sublist_url)
-        .header("Referer", &search_url)
+        .header("Referer", search_url)
+        .header("Cookie", all_cookies.join("; "))
         .send()
         .map_err(|e| {
             let detail = format!("字幕列表页请求失败: {}", e);
-            tracing::warn!("zimuku {}", detail);
             AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
         })?;
 
-    tracing::info!("zimuku 字幕列表页响应状态: {}", resp.status());
+    let status = resp.status();
+    tracing::info!("zimuku 字幕列表页响应状态: {}", status);
+    let resp_cookies = collect_cookies(&resp);
+    let mut cookies = merge_cookies(all_cookies, &resp_cookies);
 
-    let html_text = resp
-        .text()
-        .map_err(|e| {
-            let detail = format!("读取字幕列表页失败: {}", e);
-            tracing::warn!("zimuku {}", detail);
-            AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
-        })?;
+    let html_text = resp.text().map_err(|e| {
+        let detail = format!("读取字幕列表页失败: {}", e);
+        AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+    })?;
 
     // 字幕列表页也可能有验证码
-    if html_text.contains("security_verify_img") || html_text.contains("verifyimg") {
-        let captcha_image = html_text
-            .find("verifyimg")
-            .and_then(|start| {
-                let rest = &html_text[start..];
-                rest.find("src=\"").map(|s| s + 5)
-            })
-            .and_then(|src_start| {
-                let abs_start = html_text.find("verifyimg")? + src_start;
-                html_text[abs_start..].find('"').map(|end| html_text[abs_start..abs_start + end].to_string())
-            });
-
+    if is_yunsuo_page(&html_text, status) {
+        let captcha_image = extract_captcha_image(&html_text);
         if let Some(img) = captcha_image {
             return Err(AppError::SearchCaptchaRequired {
                 provider: "zimuku".to_string(),
                 captcha_image: img,
-                session_cookie: String::new(),
+                session_cookie: cookies.iter().find(|c| c.starts_with("security_session_verify") || c.starts_with("yunsuo_session_verify")).cloned().unwrap_or_default(),
                 original_url: sublist_url,
+                verify_path: extract_yunsuo_location(&html_text).unwrap_or_default(),
             });
+        }
+        // 尝试自动绕过
+        if let Some(vp) = extract_yunsuo_location(&html_text) {
+            tracing::info!("zimuku 字幕列表页自动绕过云锁, verify_path={}", vp);
+            let srcurl_hex = string_to_hex(&sublist_url);
+            let mut cookie_parts = cookies.clone();
+            cookie_parts.push(format!("srcurl={}", srcurl_hex));
+            let verify_data = string_to_hex("1920,1080");
+            let bypass_url = format!("{}{}{}", ZIMUKU_BASE, vp, verify_data);
+            let resp = client
+                .get(&bypass_url)
+                .header("Referer", &sublist_url)
+                .header("Cookie", cookie_parts.join("; "))
+                .send()
+                .map_err(|e| {
+                    let detail = format!("绕过请求失败: {}", e);
+                    AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+                })?;
+            let resp_cookies = collect_cookies(&resp);
+            cookies = merge_cookies(&cookies, &resp_cookies);
+            let _ = resp.text();
+            // 再次请求字幕列表页
+            let resp = client
+                .get(&sublist_url)
+                .header("Referer", search_url)
+                .header("Cookie", cookies.join("; "))
+                .send()
+                .map_err(|e| {
+                    let detail = format!("字幕列表页重试失败: {}", e);
+                    AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+                })?;
+            let html_text = resp.text().map_err(|e| {
+                let detail = format!("读取字幕列表页失败: {}", e);
+                AppError::SearchNetworkError { provider: "zimuku".to_string(), detail }
+            })?;
+            if is_yunsuo_page(&html_text, reqwest::StatusCode::OK) {
+                tracing::warn!("zimuku 字幕列表页绕过失败");
+                return Ok(Vec::new());
+            }
+            // 解析字幕列表
+            let entries = zimuku_parse_sublist(&html_text);
+            return Ok(entries.into_iter().map(|e| SubtitleSearchResult {
+                file_name: e.title,
+                language: e.language,
+                download_count: e.download_count,
+                rating: e.rating,
+                release_info: e.ext,
+                subtitle_id: format!("zimuku:{}", e.detail_url),
+            }).collect());
         }
     }
 
-    // 4. 解析字幕列表
+    // 解析字幕列表
     let entries = zimuku_parse_sublist(&html_text);
-    let results = entries
-        .into_iter()
-        .map(|e| SubtitleSearchResult {
-            file_name: e.title,
-            language: e.language,
-            download_count: e.download_count,
-            rating: e.rating,
-            release_info: e.ext,
-            subtitle_id: format!("zimuku:{}", e.detail_url),
-        })
-        .collect();
+    let results = entries.into_iter().map(|e| SubtitleSearchResult {
+        file_name: e.title,
+        language: e.language,
+        download_count: e.download_count,
+        rating: e.rating,
+        release_info: e.ext,
+        subtitle_id: format!("zimuku:{}", e.detail_url),
+    }).collect();
 
     Ok(results)
 }
@@ -1242,17 +1435,19 @@ pub fn search_subtitles_multi(
 
 /// 带验证码的搜索入口（zimuku 云锁验证码通过后继续搜索）
 /// captcha: 用户输入的验证码
-/// session_cookie: 第一次请求返回的 security_session_verify cookie
+/// session_cookie: 第一次请求返回的 cookie
+/// verify_path: 从验证页面 JS 中提取的跳转路径前缀（location_re）
 pub fn search_subtitles_with_captcha(
     query: &str,
     source: &str,
     captcha: &str,
     session_cookie: &str,
+    verify_path: &str,
     proxy: &crate::translate::ProxyConfig,
 ) -> Result<Vec<SubtitleSearchResult>, AppError> {
     let provider = SearchSource::from_str(source)?;
     match provider {
-        SearchSource::Zimuku => zimuku_search_inner(query, proxy, Some(captcha), Some(session_cookie)),
+        SearchSource::Zimuku => zimuku_search_inner(query, proxy, Some(captcha), Some(session_cookie), Some(verify_path)),
         // SubHD 验证码机制不同，暂不支持自动重试，直接重新搜索
         SearchSource::Subhd => subhd_search_inner(query, proxy),
         _ => Err(AppError::SearchNotConfigured),

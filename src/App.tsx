@@ -117,7 +117,7 @@ export default function App() {
       } else {
         // 无模式，根据文件扩展名判断
         const ext = filePath.split(".").pop()?.toLowerCase();
-        if (ext && ["srt", "ass", "ssa", "vtt"].includes(ext)) {
+        if (ext && ["srt", "ass", "ssa", "vtt", "sub"].includes(ext)) {
           await loadSubtitle(filePath);
         } else {
           await openVideo(filePath);
@@ -179,6 +179,21 @@ export default function App() {
     };
   }, []);
 
+  // 禁用 WebView 全局默认右键菜单（capture 阶段 preventDefault，
+  // 不影响各组件 onContextMenu 回调执行其自定义菜单）
+  // 例外：input/textarea/contenteditable 中允许系统右键菜单（剪切/复制/粘贴）
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return; // 不阻止，让系统菜单显示
+      }
+      e.preventDefault();
+    };
+    window.addEventListener("contextmenu", handler, true);
+    return () => { window.removeEventListener("contextmenu", handler, true); };
+  }, []);
+
   // 启动时从 config 初始化翻译默认语言（含跟随系统语言）
   useEffect(() => {
     const initLangs = async () => {
@@ -203,7 +218,7 @@ export default function App() {
   // 监听文件拖放事件（用 Rust 端 on_window_event 转发，比前端 onDragDropEvent 更可靠）
   useEffect(() => {
     const VIDEO_EXTS = ["mkv", "mp4", "avi", "mov", "wmv", "flv", "ts", "m2ts"];
-    const SUB_EXTS = ["srt", "ass", "ssa", "vtt"];
+    const SUB_EXTS = ["srt", "ass", "ssa", "vtt", "sub"];
 
     const handleFile = (filePath: string) => {
       const ext = filePath.split(".").pop()?.toLowerCase();

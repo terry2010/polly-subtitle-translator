@@ -288,6 +288,7 @@ pub enum AppError {
         captcha_image: String,
         session_cookie: String,
         original_url: String,
+        verify_path: String,
     },
 
     // === Subtitle ===
@@ -587,12 +588,13 @@ impl AppError {
             SearchDownloadFailed { provider } => IpcError::new("search.downloadFailed", Severity::Recoverable)
                 .with_args(serde_json::json!({ "provider": provider })),
 
-            SearchCaptchaRequired { provider, captcha_image, session_cookie, original_url } => IpcError::new("search.captchaRequired", Severity::Recoverable)
+            SearchCaptchaRequired { provider, captcha_image, session_cookie, original_url, verify_path } => IpcError::new("search.captchaRequired", Severity::Recoverable)
                 .with_args(serde_json::json!({
                     "provider": provider,
                     "captchaImage": captcha_image,
                     "sessionCookie": session_cookie,
                     "originalUrl": original_url,
+                    "verifyPath": verify_path,
                 })),
 
             // === Subtitle ===

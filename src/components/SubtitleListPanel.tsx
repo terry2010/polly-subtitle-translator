@@ -72,7 +72,7 @@ export function SubtitleListPanel() {
   const handleApplyOffset = useCallback(() => {
     const offset = parseInt(offsetInput, 10);
     if (!isNaN(offset)) {
-      store.applyTimeOffset(offset);
+      store.applyTimeOffset(offset, 0, 999999);
       setShowOffset(false);
       setOffsetInput("");
     }
@@ -137,14 +137,14 @@ export function SubtitleListPanel() {
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => store.findReplace(store.findQuery, store.replaceQuery, false)}
+            onClick={() => store.replaceCurrent()}
           >
             Replace
           </Button>
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => store.findReplace(store.findQuery, store.replaceQuery, true)}
+            onClick={() => store.replaceAll()}
           >
             All
           </Button>

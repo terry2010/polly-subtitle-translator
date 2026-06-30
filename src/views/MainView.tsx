@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload } from "lucide-react";
+import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check } from "lucide-react";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { Button } from "../components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -31,6 +31,119 @@ export function setWindowSizeInitialized(v: boolean) {
   windowSizeState.initialized = v;
 }
 
+// === 可搜索语言选择器 ===
+interface LangOption {
+  code: string;
+  name: string;       // 英文名
+  nativeName: string; // 母语名
+}
+
+interface SearchableLangSelectProps {
+  value: string;
+  onChange: (code: string) => void;
+  options: LangOption[];
+  placeholder?: string;
+}
+
+function SearchableLangSelect({ value, onChange, options, placeholder }: SearchableLangSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // 点击外部关闭
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setQuery("");
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // 打开时自动聚焦输入框
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 0);
+    } else {
+      setQuery("");
+    }
+  }, [open]);
+
+  const selected = options.find((o) => o.code === value);
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((o) =>
+        o.code.toLowerCase().includes(q) ||
+        o.name.toLowerCase().includes(q) ||
+        o.nativeName.toLowerCase().includes(q)
+      )
+    : options;
+
+  return (
+    <div className="relative flex-1" ref={ref}>
+      <button
+        type="button"
+        className="flex h-8 w-full items-center justify-between rounded-md border border-input bg-transparent px-2 text-xs shadow-sm hover:bg-muted/50 focus:outline-none focus:ring-1"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="truncate">{selected ? selected.nativeName : (placeholder ?? "")}</span>
+        <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0" />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 right-0 z-50 mt-1 rounded-md border border-border bg-popover shadow-md">
+          <div className="p-1.5 border-b border-border">
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="搜索语言..."
+              className="h-7 w-full rounded border border-input bg-transparent px-2 text-xs outline-none focus:ring-1"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && filtered.length > 0) {
+                  onChange(filtered[0].code);
+                  setOpen(false);
+                }
+                if (e.key === "Escape") {
+                  setOpen(false);
+                }
+              }}
+            />
+          </div>
+          <div className="max-h-48 overflow-auto p-1">
+            {filtered.length === 0 ? (
+              <div className="px-2 py-3 text-center text-xs text-muted-foreground">无匹配结果</div>
+            ) : (
+              filtered.map((o) => (
+                <button
+                  key={o.code}
+                  type="button"
+                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-xs hover:bg-accent"
+                  onClick={() => {
+                    onChange(o.code);
+                    setOpen(false);
+                  }}
+                >
+                  <span className="flex items-center gap-2">
+                    {o.code === value && <Check className="h-3 w-3 text-primary" />}
+                    {o.code !== value && <span className="w-3" />}
+                    <span>{o.nativeName}</span>
+                  </span>
+                  <span className="text-muted-foreground text-[10px]">{o.name}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function MainView() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -52,6 +165,62 @@ export default function MainView() {
   const extractCacheRef = useRef<Map<number, any>>(new Map());
   // 自动提取已执行的 stream index（避免重复提取）
   const autoExtractedRef = useRef<number | null>(null);
+  // 视频信息卡展开/收起状态
+  const [cardExpanded, setCardExpanded] = useState(true);
+  const [cardHovered, setCardHovered] = useState(false);
+  // 视频信息遮罩（右键"视频信息"触发：遮住整个界面但高亮顶部卡片）
+  const [videoInfoOverlay, setVideoInfoOverlay] = useState(false);
+  const [overlayFading, setOverlayFading] = useState(false);
+  const cardCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 打开视频后默认展开，5秒后收起（鼠标 hover 时不收起）
+  useEffect(() => {
+    if (!probeResult) return;
+    setCardExpanded(true);
+    if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
+    cardCollapseTimer.current = setTimeout(() => {
+      if (!cardHovered) setCardExpanded(false);
+    }, 5000);
+    return () => {
+      if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
+    };
+  }, [probeResult]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 鼠标进入卡片：展开 + 取消收起定时器
+  const handleCardMouseEnter = useCallback(() => {
+    setCardHovered(true);
+    if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
+    setCardExpanded(true);
+  }, []);
+
+  // 鼠标离开卡片：如果不是因为视频信息遮罩，则收起
+  const handleCardMouseLeave = useCallback(() => {
+    setCardHovered(false);
+    if (videoInfoOverlay) return; // 视频信息展示中，不收起
+    if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
+    cardCollapseTimer.current = setTimeout(() => setCardExpanded(false), 300);
+  }, [videoInfoOverlay]);
+
+  // 右键"视频信息"：显示遮罩 + 展开卡片，1秒后遮罩淡出
+  const handleShowVideoInfo = useCallback(() => {
+    setVideoInfoOverlay(true);
+    setOverlayFading(false);
+    setCardExpanded(true);
+    if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
+    // 1秒后遮罩开始淡出
+    setTimeout(() => setOverlayFading(true), 1000);
+    // 淡出动画完成后移除遮罩
+    setTimeout(() => {
+      setVideoInfoOverlay(false);
+      setOverlayFading(false);
+      // 遮罩消失后，如果鼠标不在卡片上，5秒后收起
+      if (!cardHovered) {
+        if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
+        cardCollapseTimer.current = setTimeout(() => setCardExpanded(false), 5000);
+      }
+    }, 1500); // 1秒 + 0.5秒淡出动画
+  }, [cardHovered]);
+
   // 从纯字幕模式切到视频模式时，跳过一次自动提取，保留当前编辑的字幕
   const skipAutoExtractRef = useRef(false);
   // 提取取消标志：关闭视频时设为 true，正在进行的提取完成后丢弃结果
@@ -94,6 +263,10 @@ export default function MainView() {
         skipAutoExtractRef.current = true;
       }
       await openVideo(selected);
+      // 后台异步提取播放器图标（不阻塞主流程，已提取过的会跳过）
+      api.extractPlayerIcons(selected).catch((e) => {
+        console.warn("提取播放器图标失败:", e);
+      });
       if (cur?.source_path) {
         const name = cur.source_path.split(/[\\/]/).pop() ?? cur.source_path;
         setImportedSubtitles((prev) =>
@@ -109,7 +282,7 @@ export default function MainView() {
     const hasPlayer = !!useVideoStore.getState().probeResult;
     const doOpen = () => open({
       multiple: false,
-      filters: [{ name: "Subtitle", extensions: ["srt", "ass", "ssa", "vtt"] }],
+      filters: [{ name: "Subtitle", extensions: ["srt", "ass", "ssa", "vtt", "sub"] }],
     });
     const selected = hasPlayer ? await withPlayerHidden(doOpen) : await doOpen();
     if (typeof selected === "string") {
@@ -122,7 +295,7 @@ export default function MainView() {
     const hasPlayer = !!useVideoStore.getState().probeResult;
     const doOpen = () => open({
       multiple: true,
-      filters: [{ name: "Subtitle", extensions: ["srt", "ass", "ssa", "vtt"] }],
+      filters: [{ name: "Subtitle", extensions: ["srt", "ass", "ssa", "vtt", "sub"] }],
     });
     const selected = hasPlayer ? await withPlayerHidden(doOpen) : await doOpen();
     if (selected && Array.isArray(selected)) {
@@ -219,7 +392,7 @@ export default function MainView() {
       });
       setExtractedFiles((prev) => [
         ...prev,
-        { name: `${baseName}.${lang}.${ext}`, path: outputPath, status: "已提取" },
+        { name: `${baseName}.${lang}.${ext}`, path: outputPath, status: t("video.extracted", "已提取") },
       ]);
 
       // 提取完成后查询翻译缓存，自动填充已翻译的条目
@@ -261,7 +434,7 @@ export default function MainView() {
     } finally {
       setExtracting(false);
     }
-  }, [probeResult, selectedSubtitleStream, subtitleStore]);
+  }, [probeResult, selectedSubtitleStream, subtitleStore, t]);
 
   // 自动提取字幕：当 selectedSubtitleStream 首次被设置时自动提取
   const handleExtractRef = useRef(handleExtractSubtitle);
@@ -325,7 +498,7 @@ export default function MainView() {
   // 同时调整位置保持窗口中心点不变，避免放大后窗口跑出屏幕
   // 首次渲染跳过：Rust setup 已完成初始居中，避免二次定位导致抖动
   // 使用模块级变量，避免组件卸载重载（如从设置页返回）时丢失状态
-  const hasFile = !!(probeResult || subtitleStore.file || loading || error);
+  const hasFile = !!(probeResult || subtitleStore.file || loading || error || subtitleStore.error);
   useEffect(() => {
     if (windowSizeState.initialized === null) {
       windowSizeState.initialized = hasFile;
@@ -407,8 +580,174 @@ export default function MainView() {
     setCurrentPlayTime(posSec);
   }, []);
 
+  // ISO 639-2/B → ISO 639-1 映射（FFprobe 常见的三字母语言码 + 非标准码）
+  const LANG_639_2_TO_1: Record<string, string> = {
+    // 英语
+    eng: "en", en: "en",
+    // 中文
+    chi: "zh", zho: "zh", zh: "zh", chs: "zh", cht: "zh",
+    "zh-hans": "zh", "zh-hant": "zh", "zh-cn": "zh", "zh-tw": "zh",
+    // 日语
+    jpn: "ja", ja: "ja",
+    // 韩语
+    kor: "ko", ko: "ko",
+    // 法语
+    fra: "fr", fre: "fr", fr: "fr",
+    // 德语
+    deu: "de", ger: "de", de: "de",
+    // 西班牙语
+    spa: "es", es: "es",
+    // 俄语
+    rus: "ru", ru: "ru",
+    // 葡萄牙语
+    por: "pt", pt: "pt", ptb: "pt", "pt-br": "pt",
+    // 意大利语
+    ita: "it", it: "it",
+    // 泰语
+    tha: "th", th: "th",
+    // 越南语
+    vie: "vi", vi: "vi",
+    // 印尼语
+    ind: "id", id: "id",
+    // 马来语
+    may: "ms", msa: "ms", ms: "ms",
+    // 阿拉伯语
+    ara: "ar", ar: "ar",
+    // 印地语
+    hin: "hi", hi: "hi",
+    // 土耳其语
+    tur: "tr", tr: "tr",
+    // 波兰语
+    pol: "pl", pl: "pl",
+    // 荷兰语
+    nld: "nl", dut: "nl", nl: "nl",
+    // 瑞典语
+    swe: "sv", sv: "sv",
+    // 芬兰语
+    fin: "fi", fi: "fi",
+    // 丹麦语
+    dan: "da", da: "da",
+    // 挪威语
+    nor: "no", no: "no",
+    // 捷克语
+    ces: "cs", cz: "cs", cs: "cs",
+    // 匈牙利语
+    hun: "hu", hu: "hu",
+    // 罗马尼亚语
+    ron: "ro", rum: "ro", ro: "ro",
+    // 希腊语
+    ell: "el", gre: "el", el: "el",
+    // 希伯来语
+    heb: "he", he: "he",
+    // 乌克兰语
+    ukr: "uk", uk: "uk",
+    // 波斯语
+    fas: "fa", per: "fa", fa: "fa",
+    // 缅甸语
+    mya: "my", bur: "my", my: "my",
+    // 高棉语（柬埔寨）
+    khm: "km", km: "km",
+    // 老挝语
+    lao: "lo", lo: "lo",
+    // 蒙古语
+    mon: "mn", mn: "mn",
+    // 世界语
+    epo: "eo", eo: "eo",
+    // 其他常见亚洲语言
+    tgl: "tl", tl: "tl", // 他加禄语（菲律宾）
+  };
+
+  // 当选中的字幕流变化时，自动推断来源语言
+  useEffect(() => {
+    if (!selectedSubtitleStream) return;
+    const rawLang = selectedSubtitleStream.language;
+    if (rawLang && rawLang.trim()) {
+      const normalized = LANG_639_2_TO_1[rawLang.trim().toLowerCase()];
+      if (normalized) {
+        translateStore.setSourceLang(normalized);
+        return;
+      }
+    }
+    // 无法识别语言 → auto
+    translateStore.setSourceLang("auto");
+  }, [selectedSubtitleStream]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 来源语言列表（含 auto）
+  const SOURCE_LANG_OPTIONS: LangOption[] = [
+    { code: "auto", name: "Auto Detect", nativeName: t("translate.autoDetect", "自动检测") },
+    { code: "en", name: "English", nativeName: "English" },
+    { code: "ja", name: "Japanese", nativeName: "日本語" },
+    { code: "ko", name: "Korean", nativeName: "한국어" },
+    { code: "zh", name: "Chinese", nativeName: "中文" },
+    { code: "fr", name: "French", nativeName: "Français" },
+    { code: "de", name: "German", nativeName: "Deutsch" },
+    { code: "es", name: "Spanish", nativeName: "Español" },
+    { code: "ru", name: "Russian", nativeName: "Русский" },
+    { code: "pt", name: "Portuguese", nativeName: "Português" },
+    { code: "it", name: "Italian", nativeName: "Italiano" },
+    { code: "th", name: "Thai", nativeName: "ไทย" },
+    { code: "vi", name: "Vietnamese", nativeName: "Tiếng Việt" },
+    { code: "id", name: "Indonesian", nativeName: "Bahasa Indonesia" },
+    { code: "ms", name: "Malay", nativeName: "Bahasa Melayu" },
+    { code: "ar", name: "Arabic", nativeName: "العربية" },
+    { code: "hi", name: "Hindi", nativeName: "हिन्दी" },
+    { code: "tr", name: "Turkish", nativeName: "Türkçe" },
+    { code: "pl", name: "Polish", nativeName: "Polski" },
+    { code: "nl", name: "Dutch", nativeName: "Nederlands" },
+    { code: "sv", name: "Swedish", nativeName: "Svenska" },
+    { code: "fi", name: "Finnish", nativeName: "Suomi" },
+    { code: "da", name: "Danish", nativeName: "Dansk" },
+    { code: "no", name: "Norwegian", nativeName: "Norsk" },
+    { code: "cs", name: "Czech", nativeName: "Čeština" },
+    { code: "hu", name: "Hungarian", nativeName: "Magyar" },
+    { code: "ro", name: "Romanian", nativeName: "Română" },
+    { code: "el", name: "Greek", nativeName: "Ελληνικά" },
+    { code: "he", name: "Hebrew", nativeName: "עברית" },
+    { code: "uk", name: "Ukrainian", nativeName: "Українська" },
+    { code: "fa", name: "Persian", nativeName: "فارسی" },
+    { code: "my", name: "Burmese", nativeName: "မြန်မာ" },
+    { code: "km", name: "Khmer", nativeName: "ខ្មែរ" },
+    { code: "lo", name: "Lao", nativeName: "ລາວ" },
+    { code: "mn", name: "Mongolian", nativeName: "Монгол" },
+    { code: "tl", name: "Tagalog", nativeName: "Tagalog" },
+  ];
+
+  // 目标语言列表（不含 auto）
+  const TARGET_LANG_OPTIONS: LangOption[] = SOURCE_LANG_OPTIONS.filter((o) => o.code !== "auto");
+
+  // 各翻译引擎是否支持 auto 自动检测源语言
+  const PROVIDER_SUPPORTS_AUTO: Record<string, boolean> = {
+    baidu: true,
+    bing: false,
+    google: false,
+  };
+
   const handleTranslateAndMerge = useCallback(async () => {
     if (!subtitleStore.file) return;
+    const { sourceLang, provider } = translateStore;
+    // 检查：翻译 API 是否已配置凭据
+    if (!providerConfigured[provider]) {
+      const providerName = provider === "bing" ? "Bing" : provider === "google" ? "Google" : t("settings.baidu");
+      toast.error(
+        t("translate.providerNotConfigured", "{{provider}} 翻译 API 尚未配置密钥，请先在设置中配置后再翻译", { provider: providerName }),
+        {
+          action: {
+            label: t("translate.goConfig", "去配置"),
+            onClick: () => navigate("/settings?provider=" + provider),
+          },
+          duration: 5000,
+        }
+      );
+      return;
+    }
+    // 检查：如果翻译 API 不支持 auto 且源语言为 auto，提示用户
+    if (sourceLang === "auto" && !PROVIDER_SUPPORTS_AUTO[provider]) {
+      const providerName = provider === "bing" ? "Bing" : provider === "google" ? "Google" : provider;
+      toast.error(
+        t("translate.autoNotSupported", "{{provider}} 翻译不支持自动检测源语言，请在上方「来源语言」下拉框中手动选择字幕的语言", { provider: providerName })
+      );
+      return;
+    }
     // 逐条翻译、逐条填充
     const result = await translateStore.startTranslate(
       subtitleStore.file.entries,
@@ -428,7 +767,7 @@ export default function MainView() {
       });
       subtitleStore.setFile({ ...subtitleStore.file, entries });
     }
-  }, [subtitleStore, translateStore]);
+  }, [subtitleStore, translateStore, t, providerConfigured, navigate]);
 
   const formatDuration = (s: number | null) => {
     if (!s) return "--";
@@ -450,7 +789,7 @@ export default function MainView() {
   // === SECTION 2 END ===
 
   // 空状态：未打开任何文件
-  if (!probeResult && !loading && !error && !subtitleStore.file) {
+  if (!probeResult && !loading && !error && !subtitleStore.file && !subtitleStore.error) {
     return (
       <div className="flex h-screen flex-col">
         <div className="flex flex-1 flex-col items-center justify-center gap-6">
@@ -492,6 +831,14 @@ export default function MainView() {
 
   return (
     <div className="flex h-screen flex-col">
+      {/* 视频信息遮罩：遮住整个界面，顶部卡片 z-[60] 浮在遮罩上方 */}
+      {videoInfoOverlay && (
+        <div
+          className={`fixed inset-0 z-50 bg-black/40 transition-opacity duration-500 ${
+            overlayFading ? "opacity-0" : "opacity-100"
+          }`}
+        />
+      )}
       {/* 主体两栏布局 */}
       <main className="flex flex-1 overflow-hidden">
         {/* 左栏：播放预览 + 字幕对比预览 */}
@@ -504,6 +851,11 @@ export default function MainView() {
           {error && (
             <div className="m-4 rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
               {error}
+            </div>
+          )}
+          {subtitleStore.error && !error && (
+            <div className="m-4 rounded-md border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
+              {subtitleStore.error}
             </div>
           )}
 
@@ -520,6 +872,8 @@ export default function MainView() {
                   <VideoPlayer
                     probeResult={probeResult}
                     onPositionUpdate={handlePositionUpdate}
+                    onCloseVideo={() => { clearVideo(); subtitleStore.setFile(null); handleCloseVideo(); }}
+                    onShowVideoInfo={handleShowVideoInfo}
                   />
                 </div>
                 {/* 内嵌字幕列表 */}
@@ -607,27 +961,41 @@ export default function MainView() {
 
         {/* 右栏：视频信息 + 字幕操作区 */}
         <div className="w-80 border-l overflow-auto p-3 space-y-3 flex-shrink-0">
-          {/* 视频信息卡 */}
+          {/* 视频信息卡（可展开/收起，hover 展开，5秒后自动收起） */}
           {probeResult && (
-            <Card>
+            <Card
+              className={`relative transition-all duration-300 overflow-hidden ${videoInfoOverlay ? "z-[60]" : ""}`}
+              onMouseEnter={handleCardMouseEnter}
+              onMouseLeave={handleCardMouseLeave}
+            >
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-1 text-sm">
                   <Film className="h-4 w-4" />
                   {videoFileName}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-1 text-xs text-muted-foreground">
-                <div>{t("video.duration")}: {formatDuration(probeResult.format.duration)} · {formatSize(probeResult.format.size)}</div>
-                {probeResult.video_stream && (
-                  <div>{probeResult.video_stream.width}x{probeResult.video_stream.height} {probeResult.video_stream.codec_name}</div>
-                )}
-                <div>{t("video.audioStreams")}: {probeResult.audio_streams.map(s => s.language ?? "??").join(", ")}</div>
-              </CardContent>
+              <div
+                className="grid transition-all duration-300 ease-in-out"
+                style={{
+                  gridTemplateRows: cardExpanded ? "1fr" : "0fr",
+                  opacity: cardExpanded ? 1 : 0,
+                }}
+              >
+                <CardContent className="space-y-1 text-xs text-muted-foreground overflow-hidden">
+                  <div>{t("video.duration")}: {formatDuration(probeResult.format.duration)} · {formatSize(probeResult.format.size)}</div>
+                  {probeResult.video_stream && (
+                    <div>{probeResult.video_stream.width}x{probeResult.video_stream.height} {probeResult.video_stream.codec_name}</div>
+                  )}
+                  <div>{t("video.format", "格式")}: {probeResult.format.format_name}</div>
+                  <div>{t("video.audioStreams")}: {probeResult.audio_streams.map(s => s.language ?? "??").join(", ")}</div>
+                  <div>{t("video.subtitleStreams")}: {probeResult.subtitle_streams.length}</div>
+                </CardContent>
+              </div>
             </Card>
           )}
 
-          {/* 快捷操作卡（视频模式）：关闭视频 / 系统设置 / 导入字幕 / 搜索 */}
-          {probeResult && (
+          {/* 快捷操作卡：视频模式 / 纯字幕模式 / 错误状态 */}
+          {probeResult || (subtitleStore.file && !probeResult) || error || subtitleStore.error ? (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm">{t("video.quickOps")}</CardTitle>
@@ -636,7 +1004,7 @@ export default function MainView() {
                 <div className="flex gap-1">
                   <Button size="sm" variant="destructive" className="h-7 flex-1 px-1 text-xs" onClick={() => { clearVideo(); subtitleStore.setFile(null); handleCloseVideo(); }}>
                     <X className="h-3.5 w-3.5 mr-0.5" />
-                    {t("video.closeVideo")}
+                    {probeResult ? t("video.closeVideo") : subtitleStore.file ? t("subtitle.closeSubtitle", "关闭字幕") : t("common.close", "关闭")}
                   </Button>
                   <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => navigate("/settings")}>
                     <SettingsIcon className="h-3.5 w-3.5 mr-0.5" />
@@ -644,10 +1012,17 @@ export default function MainView() {
                   </Button>
                 </div>
                 <div className="flex gap-1">
-                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={handleImportSubtitle}>
-                    <Upload className="h-3.5 w-3.5 mr-0.5" />
-                    {t("menu.importSubtitle")}
-                  </Button>
+                  {probeResult ? (
+                    <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={handleImportSubtitle}>
+                      <Upload className="h-3.5 w-3.5 mr-0.5" />
+                      {t("menu.importSubtitle")}
+                    </Button>
+                  ) : (
+                    <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={handleOpenVideo}>
+                      <Film className="h-3.5 w-3.5 mr-0.5" />
+                      {t("menu.openVideo")}
+                    </Button>
+                  )}
                   <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => setSearchOpen(true)}>
                     <Search className="h-3.5 w-3.5 mr-0.5" />
                     {t("search.title")}
@@ -655,7 +1030,7 @@ export default function MainView() {
                 </div>
               </CardContent>
             </Card>
-          )}
+          ) : null}
 
           {/* 字幕文件信息（纯字幕模式） */}
           {subtitleStore.file && !probeResult && (
@@ -673,60 +1048,30 @@ export default function MainView() {
             </Card>
           )}
 
-          {/* 快捷操作卡（纯字幕模式）：关闭字幕 / 系统设置 / 打开视频 / 字幕搜索 */}
-          {subtitleStore.file && !probeResult && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">{t("video.quickOps")}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-1.5">
-                <div className="flex gap-1">
-                  <Button size="sm" variant="destructive" className="h-7 flex-1 px-1 text-xs" onClick={() => { subtitleStore.setFile(null); }}>
-                    <X className="h-3.5 w-3.5 mr-0.5" />
-                    {t("subtitle.closeSubtitle")}
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => navigate("/settings")}>
-                    <SettingsIcon className="h-3.5 w-3.5 mr-0.5" />
-                    {t("menu.systemSettings")}
-                  </Button>
-                </div>
-                <div className="flex gap-1">
-                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={handleOpenVideo}>
-                    <Film className="h-3.5 w-3.5 mr-0.5" />
-                    {t("menu.openVideo")}
-                  </Button>
-                  <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => setSearchOpen(true)}>
-                    <Search className="h-3.5 w-3.5 mr-0.5" />
-                    {t("search.title")}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
           {/* 字幕操作区 */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">{t("video.subtitleOps")}</CardTitle>
+              <CardTitle className="text-sm">{t("video.translateSubtitle", "翻译字幕")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              {/* 来源语言：默认从字幕流语言推断，无法识别时为 auto */}
+              <div className="flex items-center gap-2">
+                <label className="w-12 text-xs text-muted-foreground flex-shrink-0">{t("translate.sourceLang", "来源语言")}</label>
+                <SearchableLangSelect
+                  value={translateStore.sourceLang}
+                  onChange={translateStore.setSourceLang}
+                  options={SOURCE_LANG_OPTIONS}
+                />
+              </div>
+
               {/* 翻译目标语言：label 和下拉框同一行 */}
               <div className="flex items-center gap-2">
-                <label className="text-xs text-muted-foreground flex-shrink-0">{t("translate.targetLang")}</label>
-                <Select
+                <label className="w-12 text-xs text-muted-foreground flex-shrink-0">{t("translate.targetLang")}</label>
+                <SearchableLangSelect
                   value={translateStore.targetLang}
-                  onValueChange={translateStore.setTargetLang}
-                >
-                  <SelectTrigger className="h-8 text-xs flex-1">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="zh">中文</SelectItem>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="ja">日本語</SelectItem>
-                    <SelectItem value="ko">한국어</SelectItem>
-                  </SelectContent>
-                </Select>
+                  onChange={translateStore.setTargetLang}
+                  options={TARGET_LANG_OPTIONS}
+                />
               </div>
 
               {/* 翻译引擎 + API 下拉框 */}

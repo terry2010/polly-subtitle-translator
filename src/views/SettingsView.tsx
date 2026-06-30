@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { setWindowSizeInitialized } from "./MainView";
-import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Search, Film, Wrench, Info, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -16,7 +16,7 @@ import { useFfmpegStore } from "../stores/ffmpegStore";
 import { useUpdateStore } from "../stores/updateStore";
 import { api, formatIpcError } from "../lib/api";
 
-type SettingsTab = "general" | "translate" | "search" | "player" | "advanced" | "about";
+type SettingsTab = "general" | "translate" | "player" | "advanced" | "about";
 
 export default function SettingsView() {
   const { t } = useTranslation();
@@ -97,7 +97,6 @@ export default function SettingsView() {
   const navItems: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: "general", label: t("settings.general"), icon: <SettingsIcon className="h-4 w-4" /> },
     { key: "translate", label: t("settings.translateApi"), icon: <Languages className="h-4 w-4" /> },
-    { key: "search", label: t("settings.subtitleSearch"), icon: <Search className="h-4 w-4" /> },
     { key: "player", label: t("settings.player"), icon: <Film className="h-4 w-4" /> },
     { key: "advanced", label: t("settings.advanced"), icon: <Wrench className="h-4 w-4" /> },
     { key: "about", label: t("settings.about"), icon: <Info className="h-4 w-4" /> },
@@ -139,7 +138,6 @@ export default function SettingsView() {
               <GeneralSettings theme={theme} setTheme={setTheme} language={language} setLanguage={setLanguage} />
             )}
             {activeTab === "translate" && <TranslateApiSettings />}
-            {activeTab === "search" && <SearchSettings />}
             {activeTab === "player" && <PlayerSettings />}
             {activeTab === "advanced" && <AdvancedSettings />}
             {activeTab === "about" && <AboutSettings />}
@@ -343,6 +341,7 @@ const PROVIDER_LINKS: Record<string, { url: string; appIdLabel?: string; appIdPl
 
 function TranslateApiSettings() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const [provider, setProvider] = useState("baidu");
   const [searchParams] = useSearchParams();
   const [appId, setAppId] = useState("");
@@ -353,6 +352,9 @@ function TranslateApiSettings() {
   const [testError, setTestError] = useState("");
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  // 代理状态：proxyMode=none 时无代理；useProxy=null=未设置(默认跟随), true/false=显式
+  const [proxyMode, setProxyMode] = useState("none");
+  const [useProxy, setUseProxy] = useState<boolean | null>(null);
 
   // 加载已保存的配置（URL 参数优先）
   useEffect(() => {
@@ -375,14 +377,21 @@ function TranslateApiSettings() {
       api.getConfig(`translate_${provider}_app_id`).catch(() => null),
       api.getConfig(`translate_${provider}_region`).catch(() => null),
       api.getCredential(provider, "secret").catch(() => null),
-    ]).then(([savedAppId, savedRegion, savedSecretKeyring]) => {
+      api.getTranslateUseProxy(provider).catch(() => null),
+    ]).then(([savedAppId, savedRegion, savedSecretKeyring, savedUseProxy]) => {
       if (savedAppId) setAppId(savedAppId);
       if (savedRegion) setRegion(savedRegion);
       // 凭据仅从 keyring 读取（不降级到明文数据库）
       if (savedSecretKeyring) setSecretKey("••••••••");
+      setUseProxy(savedUseProxy ?? null);
       setLoading(false);
     });
   }, [provider]);
+
+  // 加载软件代理模式（判断是否配置了代理）
+  useEffect(() => {
+    api.getProxy().then((cfg) => setProxyMode(cfg.mode)).catch(() => {});
+  }, []);
 
   const handleSave = useCallback(async () => {
     try {
@@ -508,6 +517,41 @@ function TranslateApiSettings() {
             </div>
           )}
 
+          {/* 使用软件代理 */}
+          <div className="flex items-center justify-between border-t pt-3">
+            <div>
+              <label className="text-sm font-medium">{t("settings.useProxy", "使用软件代理")}</label>
+              <p className="text-xs text-muted-foreground">
+                {proxyMode !== "none"
+                  ? t("settings.useProxyDesc", "通过软件配置的代理访问此翻译 API")
+                  : t("settings.useProxyNoProxy", "软件还未配置代理，点击前往配置")}
+              </p>
+            </div>
+            {proxyMode !== "none" ? (
+              <input
+                type="checkbox"
+                className="h-4 w-4 cursor-pointer accent-primary"
+                checked={useProxy !== false}
+                onChange={(e) => {
+                  const checked = e.target.checked;
+                  // checked=true → 设置为 true（或清除为 null，效果一样都是用代理）
+                  // checked=false → 设置为 false（明确不用代理）
+                  const newVal = checked ? null : false;
+                  setUseProxy(newVal);
+                  api.setTranslateUseProxy(provider, newVal).catch(() => {});
+                }}
+              />
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => navigate("/settings?tab=advanced")}
+              >
+                {t("settings.goConfigProxy", "去配置")}
+              </Button>
+            )}
+          </div>
+
           {/* 保存 + 测试 */}
           <div className="flex items-center gap-3 pt-2">
             <Button size="sm" onClick={handleSave} disabled={loading}>
@@ -540,54 +584,6 @@ function TranslateApiSettings() {
 }
 
 // === SECTION 3 END ===
-
-// === 字幕搜索设置 ===
-function SearchSettings() {
-  const { t } = useTranslation();
-  const [apiKey, setApiKey] = useState("");
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    api.getCredential("opensubtitles", "api_key").then((v) => v && setApiKey("••••••••"));
-  }, []);
-
-  const handleSave = useCallback(async () => {
-    if (apiKey && apiKey !== "••••••••") {
-      await api.saveCredential("opensubtitles", "api_key", apiKey);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
-    }
-  }, [apiKey]);
-
-  return (
-    <div className="space-y-4">
-      <div>
-        <h2 className="text-xl font-semibold">{t("settings.subtitleSearch")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.searchDesc", "配置 OpenSubtitles API 密钥以启用在线字幕搜索")}</p>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">OpenSubtitles</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <label className="text-sm font-medium">{t("settings.openSubtitlesApiKey")}</label>
-            <p className="text-xs text-muted-foreground mb-1">{t("settings.apiKeyDesc", "在 opensubtitles.com 注册获取 API 密钥")}</p>
-            <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="OpenSubtitles API Key" />
-          </div>
-          <div className="flex items-center gap-3">
-            <Button size="sm" onClick={handleSave}>{t("common.save")}</Button>
-            {saved && <span className="text-sm text-green-600"><Check className="inline h-4 w-4" /> {t("settings.testSuccess")}</span>}
-            <a href="https://www.opensubtitles.com/consumers" target="_blank" rel="noreferrer" className="ml-auto text-xs text-primary hover:underline flex items-center gap-1">
-              {t("settings.getApiKey")} <ExternalLink className="h-3 w-3" />
-            </a>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
 
 // === 播放器设置 ===
 
@@ -723,7 +719,7 @@ function PlayerSettings() {
                 </div>
               )}
               <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-                <span className="truncate">{ffMessage}</span>
+                <span className="truncate">{ffStageLabel}</span>
                 {ffStage === "downloading" && ffSpeed > 0 && (
                   <span className="shrink-0">{ffSpeed.toFixed(1)} MB/s · {formatEta(ffEta)}</span>
                 )}
@@ -787,7 +783,7 @@ function PlayerSettings() {
                 </div>
               )}
               <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-                <span className="truncate">{mpvMessage}</span>
+                <span className="truncate">{mpvStageLabel}</span>
                 {mpvStage === "downloading" && mpvSpeed > 0 && (
                   <span className="shrink-0">{mpvSpeed.toFixed(1)} MB/s · {formatEta(mpvEta)}</span>
                 )}
@@ -814,6 +810,8 @@ function AdvancedSettings() {
 
   const handleClearCache = useCallback(async () => {
     await api.clearTranslateCache();
+    // 同时清除播放器图标缓存
+    await api.clearPlayerIconsCache().catch((e) => console.warn("清除图标缓存失败:", e));
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 2000);
   }, []);
@@ -868,6 +866,10 @@ function ProxySettings() {
   const [password, setPassword] = useState("");
   const [hasPassword, setHasPassword] = useState(false);
   const [saving, setSaving] = useState(false);
+  // 代理测试
+  const [testUrl, setTestUrl] = useState("https://www.google.com");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; msg: string } | null>(null);
 
   useEffect(() => {
     api.getProxy().then((cfg) => {
@@ -880,7 +882,8 @@ function ProxySettings() {
   }, []);
 
   const save = useCallback(async (newMode: string, newHost: string, newPort: string, newUser: string, newPass: string) => {
-    setSaving(true);
+    // 延迟显示 spinner，避免快速保存时按钮闪烁
+    const spinnerTimer = setTimeout(() => setSaving(true), 200);
     try {
       // 密码字段为占位符时不覆盖已有密码
       const passToSend = newPass === "••••••••" ? undefined : newPass;
@@ -894,9 +897,29 @@ function ProxySettings() {
     } catch {
       toast.error(t("settings.proxySaveFailed"));
     } finally {
+      clearTimeout(spinnerTimer);
       setSaving(false);
     }
   }, [t]);
+
+  const handleTest = useCallback(async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      // 先保存当前配置，确保测试用的是最新代理设置
+      const passToSend = password === "••••••••" ? undefined : password;
+      await api.setProxy(mode, host, port, username || undefined, passToSend);
+      const result = await api.testProxy(testUrl);
+      setTestResult({
+        ok: true,
+        msg: t("settings.proxyTestOk", "连接成功，耗时 {{ms}}ms，状态码 {{status}}", { ms: result.elapsed_ms, status: result.status }),
+      });
+    } catch (e: any) {
+      setTestResult({ ok: false, msg: formatIpcError(e) });
+    } finally {
+      setTesting(false);
+    }
+  }, [mode, host, port, username, password, testUrl, t]);
 
   const showProxyFields = mode !== "none";
 
@@ -909,7 +932,7 @@ function ProxySettings() {
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium">{t("settings.proxyMode", "代理模式")}</p>
-            <p className="text-xs text-muted-foreground">{t("settings.proxyModeDesc", "用于 Google 翻译等需翻墙服务")}</p>
+            <p className="text-xs text-muted-foreground">{t("settings.proxyModeDesc", "用于提升部分翻译服务的网络连接稳定性")}</p>
           </div>
           <Select value={mode} onValueChange={(v) => {
             setMode(v);
@@ -955,6 +978,28 @@ function ProxySettings() {
               {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
               {t("common.save", "保存")}
             </Button>
+
+            {/* 代理测试 */}
+            <div className="border-t pt-3 space-y-2">
+              <label className="text-xs text-muted-foreground">{t("settings.proxyTestUrl", "测试网址")}</label>
+              <div className="flex gap-2">
+                <Input
+                  value={testUrl}
+                  onChange={(e) => setTestUrl(e.target.value)}
+                  placeholder="https://www.google.com"
+                  className="flex-1"
+                />
+                <Button size="sm" variant="secondary" disabled={testing} onClick={handleTest}>
+                  {testing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                  {t("settings.proxyTest", "测试连接")}
+                </Button>
+              </div>
+              {testResult && (
+                <p className={`text-xs ${testResult.ok ? "text-green-600" : "text-destructive"}`}>
+                  {testResult.msg}
+                </p>
+              )}
+            </div>
           </div>
         )}
       </CardContent>

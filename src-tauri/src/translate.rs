@@ -417,6 +417,37 @@ impl BaiduProvider {
         hasher.update(input.as_bytes());
         format!("{:x}", hasher.finalize())
     }
+
+    /// 将标准 ISO 639-1 语言码映射为百度 API 专用的语言码
+    /// 百度部分语言使用非标准码：ja→jp, ko→kor, fr→fra
+    fn to_baidu_lang(lang: &str) -> String {
+        match lang {
+            "ja" => "jp".to_string(),
+            "ko" => "kor".to_string(),
+            "fr" => "fra".to_string(),
+            // 以下为百度支持但码不同的其他常见语言
+            "es" => "spa".to_string(),
+            "de" => "de".to_string(),
+            "ru" => "ru".to_string(),
+            "pt" => "pt".to_string(),
+            "it" => "it".to_string(),
+            "th" => "th".to_string(),
+            "vi" => "vie".to_string(),
+            "ar" => "ara".to_string(),
+            "hi" => "hi".to_string(),
+            "tr" => "tr".to_string(),
+            "nl" => "nl".to_string(),
+            "pl" => "pl".to_string(),
+            "el" => "el".to_string(),
+            "sv" => "swe".to_string(),
+            "fi" => "fin".to_string(),
+            "da" => "dan".to_string(),
+            "cs" => "cs".to_string(),
+            "hu" => "hu".to_string(),
+            "auto" => "auto".to_string(),
+            other => other.to_string(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -469,8 +500,8 @@ impl TranslateProviderTrait for BaiduProvider {
             let url = "https://fanyi-api.baidu.com/api/trans/vip/translate";
             let params = serde_json::json!({
                 "q": joined,
-                "from": source_lang,
-                "to": target_lang,
+                "from": Self::to_baidu_lang(source_lang),
+                "to": Self::to_baidu_lang(target_lang),
                 "appid": self.app_id,
                 "salt": salt,
                 "sign": sign,

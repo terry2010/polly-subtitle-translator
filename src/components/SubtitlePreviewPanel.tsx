@@ -2,12 +2,13 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
-import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight } from "lucide-react";
+import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight, ChevronUp, ChevronDown } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
+import { useVideoStore } from "../stores/videoStore";
 import { AutoTextarea } from "./AutoTextarea";
 import { api } from "../lib/api";
 import type { SubtitleEntry } from "../lib/ipc-types";
@@ -29,21 +30,46 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   const { t } = useTranslation();
   const store = useSubtitleStore();
   const { file, bilingualDetect, isSplit } = store;
+  const videoStore = useVideoStore();
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [showFindReplace, setShowFindReplace] = useState(false);
-  const [offsetInput, setOffsetInput] = useState("");
-  const [showOffset, setShowOffset] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("bilingual");
   const [exportOpen, setExportOpen] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entryIndex: number } | null>(null);
   const translateStore = useTranslateStore();
+  // 时间轴偏移：行内面板
+  const [offsetRowIndex, setOffsetRowIndex] = useState<number | null>(null);
+  const [offsetValue, setOffsetValue] = useState("");
+  const [offsetEndIndex, setOffsetEndIndex] = useState("");
+  const [offsetAppliedMsg, setOffsetAppliedMsg] = useState<string | null>(null);
+  // 已应用过偏移的行 → 偏移提示消息（永久显示）
+  const [offsetAppliedRows, setOffsetAppliedRows] = useState<Map<number, string>>(new Map());
+  // 已应用过偏移的行 → 上次填入的偏移值和结束编号（再次打开时恢复）
+  const [offsetLastInput, setOffsetLastInput] = useState<Map<number, { value: string; endIndex: string }>>(new Map());
+  // 超出视频时长确认弹窗
+  const [offsetExceedDialog, setOffsetExceedDialog] = useState<{ count: number; maxExceedSec: number; offsetMs: number; fromIndex: number; toIndex: number } | null>(null);
+  // 新增字幕：时间编辑面板
+  const [insertEditingIndex, setInsertEditingIndex] = useState<number | null>(null);
+  const [insertStartMs, setInsertStartMs] = useState(0);
+  const [insertEndMs, setInsertEndMs] = useState(0);
+  const [insertText, setInsertText] = useState("");
+  const [insertTranslated, setInsertTranslated] = useState("");
+  // 已完成编辑的新增字幕 → 保存最终状态（永久提示 + 恢复）
+  const [insertDoneRows, setInsertDoneRows] = useState<Map<number, { start_ms: number; end_ms: number; translated: string }>>(new Map());
+  // 重置确认弹窗
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [resetSteps, setResetSteps] = useState(0);
 
   const rowVirtualizer = useVirtualizer({
     count: file?.entries.length ?? 0,
     getScrollElement: () => parentRef.current,
     estimateSize: (index) => {
       if (file && file.entries[index]?.index === editingIndex) return 200;
+      if (file && file.entries[index]?.index === offsetRowIndex) return 120;
+      if (file && file.entries[index]?.index === insertEditingIndex) return 280;
+      if (file && offsetAppliedRows.has(file.entries[index]?.index)) return 90;
+      if (file && insertDoneRows.has(file.entries[index]?.index)) return 90;
       return 72;
     },
     overscan: 5,
@@ -161,28 +187,217 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
     return () => window.removeEventListener("export-subtitle", onExport);
   }, [file]);
 
-  const handleAddEntry = useCallback(() => {
+  // 在当前字幕下方插入新字幕
+  const handleInsertEntry = useCallback((entryIndex: number) => {
     if (!file) return;
+    const curIdx = file.entries.findIndex((e) => e.index === entryIndex);
+    if (curIdx === -1) return;
+    const cur = file.entries[curIdx];
+    // 找下一条非删除条目
+    let nextEntry: SubtitleEntry | null = null;
+    for (let i = curIdx + 1; i < file.entries.length; i++) {
+      if (!file.entries[i]._deleted) { nextEntry = file.entries[i]; break; }
+    }
     const maxIndex = file.entries.reduce((max, e) => Math.max(max, e.index), -1);
+    const start_ms = cur.end_ms;
+    const end_ms = nextEntry ? nextEntry.start_ms : start_ms + 1000;
     const newEntry: SubtitleEntry = {
       index: maxIndex + 1,
-      start_ms: 0,
-      end_ms: 1000,
+      start_ms,
+      end_ms: Math.max(end_ms, start_ms), // 保证 end >= start
       text: "",
       translated: "",
       style: null,
     };
-    store.addEntry(newEntry);
+    store.insertEntryAfter(newEntry, entryIndex);
+    // 进入新增字幕的时间编辑面板
+    setInsertEditingIndex(newEntry.index);
+    setInsertStartMs(newEntry.start_ms);
+    setInsertEndMs(newEntry.end_ms);
+    setInsertText("");
+    setInsertTranslated("");
   }, [file, store]);
 
-  const handleApplyOffset = useCallback(() => {
-    const offset = parseInt(offsetInput, 10);
-    if (!isNaN(offset)) {
-      store.applyTimeOffset(offset);
-      setShowOffset(false);
-      setOffsetInput("");
+  // 打开行内时间轴偏移面板
+  const openOffsetPanel = useCallback((entryIndex: number) => {
+    if (!file) return;
+    setOffsetRowIndex(entryIndex);
+    setOffsetAppliedMsg(null);
+    // 已偏移过的行恢复上次的输入值，否则用默认值
+    const last = offsetLastInput.get(entryIndex);
+    if (last) {
+      setOffsetValue(last.value);
+      setOffsetEndIndex(last.endIndex);
+    } else {
+      setOffsetValue("");
+      const lastEntry = file.entries[file.entries.length - 1];
+      setOffsetEndIndex(lastEntry ? String(lastEntry.index) : String(entryIndex));
     }
-  }, [offsetInput, store]);
+  }, [file, offsetLastInput]);
+
+  // 关闭偏移面板
+  const closeOffsetPanel = useCallback(() => {
+    setOffsetRowIndex(null);
+    setOffsetValue("");
+    setOffsetAppliedMsg(null);
+  }, []);
+
+  // 本地计算偏移后的条目（不修改 store），用于检查
+  const computeOffsetEntries = useCallback((offsetMs: number, fromIndex: number, toIndex: number) => {
+    if (!file) return [];
+    return file.entries.map((e) => {
+      if (e.index < fromIndex || e.index > toIndex || e._deleted) return e;
+      const duration = e.end_ms - e.start_ms;
+      const newStart = e.start_ms + offsetMs;
+      if (newStart < 0) {
+        return { ...e, start_ms: 0, end_ms: duration };
+      }
+      return { ...e, start_ms: newStart, end_ms: e.end_ms + offsetMs };
+    });
+  }, [file]);
+
+  // 实际应用偏移到 store + 更新 UI 状态
+  const commitOffset = useCallback((offsetMs: number, fromIndex: number, toIndex: number, offsetSec: number) => {
+    store.applyTimeOffset(offsetMs, fromIndex, toIndex);
+    // 构建提示消息
+    const msgs: string[] = [`已偏移 ${offsetSec > 0 ? "+" : ""}${offsetSec} 秒`];
+    // 本地计算裁剪和重叠（基于偏移前的 file）
+    if (file) {
+      let clippedCount = 0;
+      let overlapCount = 0;
+      const newEntries = computeOffsetEntries(offsetMs, fromIndex, toIndex);
+      for (const e of file.entries) {
+        if (e.index < fromIndex || e.index > toIndex || e._deleted) continue;
+        if (e.start_ms + offsetMs < 0 && e.start_ms > 0) clippedCount++;
+      }
+      // 检查重叠：用计算后的条目和全局前一条比较
+      for (let i = 0; i < newEntries.length; i++) {
+        const e = newEntries[i];
+        if (e.index < fromIndex || e.index > toIndex || e._deleted) continue;
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = newEntries[j];
+          if (prev._deleted) continue;
+          if (e.start_ms < prev.end_ms) overlapCount++;
+          break;
+        }
+      }
+      if (clippedCount > 0) msgs.push(`${clippedCount} 条开始时间裁剪到 0`);
+      if (overlapCount > 0) msgs.push(`${overlapCount} 条开始时间早于上一条`);
+    }
+    const msgStr = msgs.join("，");
+    setOffsetAppliedRows((prev) => new Map(prev).set(fromIndex, msgStr));
+    setOffsetLastInput((prev) => new Map(prev).set(fromIndex, { value: offsetValue, endIndex: offsetEndIndex }));
+    setOffsetAppliedMsg(msgStr);
+  }, [file, store, computeOffsetEntries, offsetValue, offsetEndIndex]);
+
+  // 执行时间轴偏移：先本地检查，再决定是否应用
+  const handleApplyOffset = useCallback(() => {
+    if (!file || offsetRowIndex == null) return;
+    const offsetSec = parseFloat(offsetValue);
+    if (isNaN(offsetSec)) return;
+    const offsetMs = Math.round(offsetSec * 1000);
+    const toIndex = parseInt(offsetEndIndex, 10);
+    if (isNaN(toIndex)) return;
+    const fromIndex = offsetRowIndex;
+
+    // 本地计算偏移后的条目（不修改 store）
+    const newEntries = computeOffsetEntries(offsetMs, fromIndex, toIndex);
+
+    // 检查超出视频时长
+    const videoDuration = videoStore.probeResult?.format?.duration;
+    let exceeded = 0;
+    let maxExceed = 0;
+    if (videoDuration) {
+      const durationMs = videoDuration * 1000;
+      for (const e of newEntries) {
+        if (e.index < fromIndex || e.index > toIndex || e._deleted) continue;
+        if (e.end_ms > durationMs) {
+          exceeded++;
+          const exceed = (e.end_ms - durationMs) / 1000;
+          if (exceed > maxExceed) maxExceed = exceed;
+        }
+      }
+    }
+
+    if (exceeded > 0) {
+      // 有超出：弹窗确认，暂不应用
+      setOffsetExceedDialog({ count: exceeded, maxExceedSec: maxExceed, offsetMs, fromIndex, toIndex });
+    } else {
+      // 无超出：直接应用
+      commitOffset(offsetMs, fromIndex, toIndex, offsetSec);
+    }
+  }, [file, offsetRowIndex, offsetValue, offsetEndIndex, computeOffsetEntries, videoStore, commitOffset]);
+
+  // 强制应用（超出时长仍然应用）
+  const handleForceApplyOffset = useCallback(() => {
+    if (!offsetExceedDialog) return;
+    const { offsetMs, fromIndex, toIndex } = offsetExceedDialog;
+    const offsetSec = offsetMs / 1000;
+    commitOffset(offsetMs, fromIndex, toIndex, offsetSec);
+    setOffsetExceedDialog(null);
+  }, [offsetExceedDialog, commitOffset]);
+
+  // 完成新增字幕的编辑（时间 + 原文 + 译文）
+  const handleInsertDone = useCallback(() => {
+    if (insertEditingIndex == null) return;
+    // 更新 store 中的时间、原文、译文
+    store.updateEntry(insertEditingIndex, { start_ms: insertStartMs, end_ms: insertEndMs, text: insertText, translated: insertTranslated });
+    // 保存最终状态（用于永久提示和恢复）
+    setInsertDoneRows((prev) => new Map(prev).set(insertEditingIndex, {
+      start_ms: insertStartMs,
+      end_ms: insertEndMs,
+      translated: insertTranslated,
+    }));
+    setInsertEditingIndex(null);
+  }, [insertEditingIndex, insertStartMs, insertEndMs, insertText, insertTranslated, store]);
+
+  // 取消新增字幕的时间编辑
+  // 从未保存过的新增字幕 → 彻底删除；已保存过的 → 仅关闭面板
+  const handleInsertCancel = useCallback(() => {
+    if (insertEditingIndex == null) return;
+    if (!insertDoneRows.has(insertEditingIndex)) {
+      // 从未保存过，彻底删除
+      store.removeEntry(insertEditingIndex);
+    }
+    setInsertEditingIndex(null);
+  }, [insertEditingIndex, insertDoneRows, store]);
+
+  // 重新打开已完成编辑的新增字幕（恢复上次状态）
+  const reopenInsertEdit = useCallback((entryIndex: number) => {
+    const saved = insertDoneRows.get(entryIndex);
+    if (!saved) return;
+    const entry = file?.entries.find((e) => e.index === entryIndex);
+    setInsertEditingIndex(entryIndex);
+    setInsertStartMs(saved.start_ms);
+    setInsertEndMs(saved.end_ms);
+    setInsertText(entry?.text ?? "");
+    setInsertTranslated(saved.translated);
+  }, [insertDoneRows, file]);
+
+  // 重置到初始状态
+  const handleResetClick = useCallback(() => {
+    const steps = store.undoStack.length;
+    if (steps === 0) {
+      toast.info(t("subtitle.resetNoChanges", "没有需要重置的修改"));
+      return;
+    }
+    setResetSteps(steps);
+    setResetDialogOpen(true);
+  }, [store, t]);
+
+  const handleResetConfirm = useCallback(() => {
+    const steps = store.resetToInitial();
+    // 清理所有行内编辑状态
+    setOffsetRowIndex(null);
+    setOffsetAppliedRows(new Map());
+    setOffsetLastInput(new Map());
+    setInsertEditingIndex(null);
+    setInsertDoneRows(new Map());
+    setEditingIndex(null);
+    setShowFindReplace(false);
+    setResetDialogOpen(false);
+    toast.success(t("subtitle.resetDone", "已重置为初始状态"));
+  }, [store, t]);
 
   // 右键菜单处理
   const handleContextMenu = useCallback((e: React.MouseEvent, entryIndex: number) => {
@@ -266,13 +481,26 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
     if (!contextMenu) return;
     const handleClick = () => closeContextMenu();
     const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") closeContextMenu(); };
+    // 右键时也关闭旧菜单（新右键事件会触发 handleContextMenu 打开新菜单或 stopPropagation）
+    const handleCtx = () => closeContextMenu();
     window.addEventListener("click", handleClick);
     window.addEventListener("keydown", handleEsc);
+    window.addEventListener("contextmenu", handleCtx, true);
     return () => {
       window.removeEventListener("click", handleClick);
       window.removeEventListener("keydown", handleEsc);
+      window.removeEventListener("contextmenu", handleCtx, true);
     };
   }, [contextMenu, closeContextMenu]);
+
+  // 查找匹配时滚动到对应条目
+  useEffect(() => {
+    if (store.findMatchEntryIndex == null) return;
+    const entryIdx = file?.entries.findIndex((e) => e.index === store.findMatchEntryIndex);
+    if (entryIdx == null || entryIdx < 0) return;
+    // 虚拟滚动 scrollToIndex
+    rowVirtualizer.scrollToIndex(entryIdx, { align: "center" });
+  }, [store.findMatchEntryIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 点击外部关闭编辑框
   useEffect(() => {
@@ -331,11 +559,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   }
 
   return (
-    <div
-      className="flex h-full flex-col overflow-hidden"
-      onMouseEnter={() => { isMouseOverPanelRef.current = true; uiState.mouseInSubtitleEditor = true; }}
-      onMouseLeave={() => { isMouseOverPanelRef.current = false; uiState.mouseInSubtitleEditor = false; }}
-    >
+    <div className="flex h-full flex-col overflow-hidden">
       {/* 工具栏 */}
       <div className="flex items-center gap-1 border-b px-2 py-1 flex-shrink-0">
         <Button size="sm" variant="ghost" onClick={store.undo} disabled={store.undoStack.length === 0} className="h-7 w-7 p-0">
@@ -348,11 +572,8 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
         <Button size="sm" variant="ghost" onClick={() => setShowFindReplace(!showFindReplace)} className="h-7 px-2">
           <Search className="h-3.5 w-3.5" />
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => setShowOffset(!showOffset)} className="h-7 px-2">
-          <Clock className="h-3.5 w-3.5" />
-        </Button>
-        <Button size="sm" variant="ghost" onClick={handleAddEntry} className="h-7 px-2">
-          <Plus className="h-3.5 w-3.5" />
+        <Button size="sm" variant="ghost" onClick={handleResetClick} disabled={store.undoStack.length === 0} className="h-7 px-2" title={t("subtitle.reset", "重置")}>
+          <RotateCcw className="h-3.5 w-3.5" />
         </Button>
         <div className="flex-1" />
         {/* 切换原译：将原文和译文对调（仅已拆分时可用） */}
@@ -428,51 +649,79 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
 
       {/* 查找替换 */}
       {showFindReplace && (
-        <div className="flex items-center gap-2 border-b px-3 py-1.5 bg-muted/30 flex-shrink-0">
+        <div
+          className="flex items-center gap-2 border-b px-3 py-1.5 bg-muted/30 flex-shrink-0 flex-wrap"
+          onMouseEnter={() => { isMouseOverPanelRef.current = true; uiState.mouseInSubtitleEditor = true; }}
+          onMouseLeave={() => { isMouseOverPanelRef.current = false; uiState.mouseInSubtitleEditor = false; }}
+        >
           <Input
             placeholder={t("subtitle.find", "查找")}
             value={store.findQuery}
             onChange={(e) => store.setFindQuery(e.target.value)}
-            className="h-7 w-32 text-xs"
+            onKeyDown={(e) => { if (e.key === "Enter") store.findNext(); }}
+            className="h-7 w-28 text-xs"
           />
           <Input
             placeholder={t("subtitle.replace", "替换")}
             value={store.replaceQuery}
             onChange={(e) => store.setReplaceQuery(e.target.value)}
-            className="h-7 w-32 text-xs"
+            className="h-7 w-28 text-xs"
           />
-          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => store.findReplace(store.findQuery, store.replaceQuery, false)}>
+          {/* 查找目标选择 */}
+          <select
+            value={store.findTarget}
+            onChange={(e) => store.setFindTarget(e.target.value as "all" | "translated" | "original")}
+            className="h-7 rounded border border-input bg-transparent px-1 text-xs"
+          >
+            <option value="all">{t("subtitle.findTargetAll", "全部")}</option>
+            <option value="translated">{t("subtitle.findTargetTranslated", "译文")}</option>
+            <option value="original">{t("subtitle.findTargetOriginal", "原文")}</option>
+          </select>
+          {/* 查找按钮 */}
+          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => store.findNext()}>
+            {t("subtitle.findBtn", "查找")}
+          </Button>
+          {/* 替换按钮 */}
+          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => store.replaceCurrent()} disabled={store.findMatchEntryIndex == null}>
             {t("subtitle.replaceOne", "替换")}
           </Button>
-          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => store.findReplace(store.findQuery, store.replaceQuery, true)}>
-            {t("subtitle.replaceAll", "全部")}
+          {/* 全部替换 */}
+          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => {
+            const n = store.replaceAll();
+            toast.success(t("subtitle.replacedCount", "已替换 {{count}} 条", { count: n }));
+          }}>
+            {t("subtitle.replaceAll", "全部替换")}
           </Button>
+          {/* 匹配计数 */}
+          {store.findMatchCount > 0 && (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {store.findCurrentMatch + 1}/{store.findMatchCount}
+            </span>
+          )}
+          {/* 上一个/下一个 */}
+          {store.findMatchCount > 1 && (
+            <div className="flex gap-0.5">
+              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => store.findPrev()} title={t("subtitle.findPrev", "上一个")}>
+                <ChevronUp className="h-3.5 w-3.5" />
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => store.findNext()} title={t("subtitle.findNext", "下一个")}>
+                <ChevronDown className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
           <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setShowFindReplace(false)}>
             <X className="h-3.5 w-3.5" />
           </Button>
         </div>
       )}
 
-      {/* 时间轴偏移 */}
-      {showOffset && (
-        <div className="flex items-center gap-2 border-b px-3 py-1.5 bg-muted/30 flex-shrink-0">
-          <span className="text-xs">{t("subtitle.timeOffset", "时间轴偏移")} (ms):</span>
-          <Input
-            type="number"
-            value={offsetInput}
-            onChange={(e) => setOffsetInput(e.target.value)}
-            placeholder="±1000"
-            className="h-7 w-24 text-xs"
-          />
-          <Button size="sm" className="h-7 text-xs" onClick={handleApplyOffset}>{t("common.apply", "应用")}</Button>
-          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setShowOffset(false)}>
-            <X className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      )}
-
       {/* 字幕对比预览列表（虚拟滚动） */}
-      <div ref={parentRef} className="flex-1 min-h-0 overflow-auto">
+      <div
+        ref={parentRef}
+        className="flex-1 min-h-0 overflow-auto"
+        onMouseEnter={() => { isMouseOverPanelRef.current = true; uiState.mouseInSubtitleEditor = true; }}
+        onMouseLeave={() => { isMouseOverPanelRef.current = false; uiState.mouseInSubtitleEditor = false; }}
+      >
         <div
           style={{
             height: `${rowVirtualizer.getTotalSize()}px`,
@@ -485,6 +734,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             const isEditing = editingIndex === entry.index;
             const hasTranslation = entry.translated && entry.translated.length > 0;
             const isActive = virtualRow.index === activeEntryIndex;
+            const isFindMatch = store.findMatchEntryIndex === entry.index;
             return (
               <div
                 key={entry.index}
@@ -497,7 +747,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                   width: "100%",
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
-                className={`group border-b px-3 py-1.5 hover:bg-accent/30 ${isActive ? "bg-primary/10 border-l-2 border-l-primary" : ""}`}
+                className={`group border-b px-3 py-1.5 hover:bg-accent/30 ${isActive ? "bg-primary/10 border-l-2 border-l-primary" : ""} ${isFindMatch ? "bg-yellow-200/50 border-l-2 border-l-yellow-500" : ""}`}
                 onContextMenu={(e) => handleContextMenu(e, entry.index)}
               >
                 {/* 时间码行 */}
@@ -514,6 +764,30 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     >
                       <Play className="h-3 w-3 translate-x-[0.5px]" />
                     </button>
+                    {/* 时间轴偏移（仅 hover 显示） */}
+                    {!entry._deleted && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (offsetRowIndex === entry.index) closeOffsetPanel();
+                          else openOffsetPanel(entry.index);
+                        }}
+                        className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-opacity hover:bg-primary hover:text-primary-foreground ${offsetRowIndex === entry.index ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
+                        title={t("subtitle.timeOffset", "时间轴偏移")}
+                      >
+                        <Clock className="h-3 w-3" />
+                      </button>
+                    )}
+                    {/* 在下方新增字幕（仅 hover 显示） */}
+                    {!entry._deleted && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleInsertEntry(entry.index); }}
+                        className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary hover:text-primary-foreground"
+                        title={t("subtitle.insertBelow", "在下方新增字幕")}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    )}
                   </div>
                   {isEditing ? (
                     /* 编辑态：完成、取消、删除按钮 */
@@ -570,6 +844,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       className="text-xs py-1 flex-1 resize-none"
                       placeholder={t("subtitle.translated", "译文")}
                       onClick={(e) => e.stopPropagation()}
+                      onContextMenu={(e) => e.stopPropagation()}
                       onKeyDown={(e) => {
                         if (e.key === "Escape") {
                           e.preventDefault();
@@ -617,6 +892,161 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     )}
                   </div>
                 )}
+                {/* 行内时间轴偏移面板：当前编辑行显示完整面板 */}
+                {offsetRowIndex === entry.index && (
+                  <div
+                    className="mt-1.5 flex items-center gap-2 rounded bg-muted/40 px-2 py-1.5"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span className="text-xs text-muted-foreground flex-shrink-0">偏移(秒)</span>
+                    <Input
+                      type="number"
+                      value={offsetValue}
+                      onChange={(e) => { setOffsetValue(e.target.value); setOffsetAppliedMsg(null); }}
+                      placeholder="±5.0"
+                      className="h-6 w-20 text-xs"
+                      onKeyDown={(e) => { if (e.key === "Enter") handleApplyOffset(); }}
+                    />
+                    <span className="text-xs text-muted-foreground flex-shrink-0">至编号</span>
+                    <Input
+                      type="number"
+                      value={offsetEndIndex}
+                      onChange={(e) => { setOffsetEndIndex(e.target.value); setOffsetAppliedMsg(null); }}
+                      className="h-6 w-16 text-xs"
+                    />
+                    <Button size="sm" className="h-6 text-xs" onClick={handleApplyOffset} disabled={!offsetValue}>
+                      {t("subtitle.applyOffset", "应用偏移")}
+                    </Button>
+                    {offsetAppliedMsg && (
+                      <span className={`text-xs ${offsetAppliedMsg.includes("裁剪") || offsetAppliedMsg.includes("早于") ? "text-orange-600" : "text-green-600"}`}>{offsetAppliedMsg}</span>
+                    )}
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 ml-auto" onClick={closeOffsetPanel}>
+                      <X className="h-3 w-3" />
+                    </Button>
+                  </div>
+                )}
+                {/* 已偏移行（非当前编辑）的永久提示 */}
+                {offsetRowIndex !== entry.index && offsetAppliedRows.has(entry.index) && (
+                  <div
+                    className="mt-1 flex items-center gap-1.5 text-xs"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Clock className="h-3 w-3 text-muted-foreground" />
+                    <span className={offsetAppliedRows.get(entry.index)?.includes("裁剪") || offsetAppliedRows.get(entry.index)?.includes("早于") ? "text-orange-600" : "text-green-600"}>
+                      {offsetAppliedRows.get(entry.index)}
+                    </span>
+                  </div>
+                )}
+                {/* 新增字幕：时间编辑面板（当前正在编辑的行） */}
+                {insertEditingIndex === entry.index && (() => {
+                  // 计算滑块约束范围
+                  const curIdx = file.entries.findIndex((e) => e.index === entry.index);
+                  // 上一条非删除条目（用于 start 滑块下限）
+                  let prevEntry: SubtitleEntry | null = null;
+                  for (let i = curIdx - 1; i >= 0; i--) {
+                    if (!file.entries[i]._deleted) { prevEntry = file.entries[i]; break; }
+                  }
+                  // 下一条非删除条目（用于 end 滑块上限）
+                  let nextEntry: SubtitleEntry | null = null;
+                  for (let i = curIdx + 1; i < file.entries.length; i++) {
+                    if (!file.entries[i]._deleted) { nextEntry = file.entries[i]; break; }
+                  }
+                  const startMin = prevEntry ? prevEntry.start_ms : 0;
+                  const startMax = insertEndMs; // 不能晚于自己的结束时间
+                  const endMin = insertStartMs; // 不能早于自己的开始时间
+                  const endMax = nextEntry ? nextEntry.end_ms : (videoStore.probeResult?.format?.duration ? videoStore.probeResult.format.duration * 1000 : insertStartMs + 10000);
+                  return (
+                    <div
+                      className="mt-1.5 rounded bg-blue-50/50 px-2 py-1.5 space-y-1.5"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* 开始时间滑块 */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16">开始时间</span>
+                        <input
+                          type="range"
+                          min={startMin}
+                          max={startMax}
+                          step={10}
+                          value={insertStartMs}
+                          onChange={(e) => {
+                            const v = Math.min(Number(e.target.value), insertEndMs);
+                            setInsertStartMs(v);
+                          }}
+                          className="flex-1 h-1.5"
+                        />
+                        <span className="font-mono text-xs w-24 text-right">{formatTimecode(insertStartMs)}</span>
+                      </div>
+                      {/* 结束时间滑块 */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16">结束时间</span>
+                        <input
+                          type="range"
+                          min={endMin}
+                          max={endMax}
+                          step={10}
+                          value={insertEndMs}
+                          onChange={(e) => {
+                            const v = Math.max(Number(e.target.value), insertStartMs);
+                            setInsertEndMs(v);
+                          }}
+                          className="flex-1 h-1.5"
+                        />
+                        <span className="font-mono text-xs w-24 text-right">{formatTimecode(insertEndMs)}</span>
+                      </div>
+                      {/* 操作按钮 */}
+                      <div className="flex items-center gap-2">
+                        <Button size="sm" className="h-6 text-xs bg-green-600 hover:bg-green-700" onClick={handleInsertDone}>
+                          <Check className="h-3 w-3 mr-0.5" />
+                          {t("common.done", "完成")}
+                        </Button>
+                        <Button size="sm" variant="outline" className="h-6 text-xs" onClick={handleInsertCancel}>
+                          {t("common.cancel", "取消")}
+                        </Button>
+                      </div>
+                      {/* 原文编辑 */}
+                      <div className="flex items-start gap-2">
+                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16 pt-1">原文</span>
+                        <AutoTextarea
+                          value={insertText}
+                          onChange={setInsertText}
+                          className="text-xs py-1 flex-1 resize-none"
+                          placeholder={t("subtitle.original", "原文")}
+                          onClick={(e) => e.stopPropagation()}
+                          onContextMenu={(e) => e.stopPropagation()}
+                        />
+                      </div>
+                      {/* 译文编辑 */}
+                      <div className="flex items-start gap-2">
+                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16 pt-1">译文</span>
+                        <AutoTextarea
+                          value={insertTranslated}
+                          onChange={setInsertTranslated}
+                          className="text-xs py-1 flex-1 resize-none"
+                          placeholder={t("subtitle.translated", "译文")}
+                          onClick={(e) => e.stopPropagation()}
+                          onContextMenu={(e) => e.stopPropagation()}
+                        />
+                      </div>
+                    </div>
+                  );
+                })()}
+                {/* 新增字幕：已完成编辑的永久提示（非当前编辑行） */}
+                {insertEditingIndex !== entry.index && insertDoneRows.has(entry.index) && (() => {
+                  const saved = insertDoneRows.get(entry.index)!;
+                  return (
+                    <div
+                      className="mt-1 flex items-center gap-1.5 text-xs cursor-pointer hover:bg-blue-100/40 rounded px-1 -mx-1"
+                      onClick={(e) => { e.stopPropagation(); reopenInsertEdit(entry.index); }}
+                    >
+                      <Plus className="h-3 w-3 text-blue-500" />
+                      <span className="text-green-600">
+                        已新增 · {formatTimecode(saved.start_ms)} → {formatTimecode(saved.end_ms)}
+                      </span>
+                      <span className="text-muted-foreground/50">点击重新编辑</span>
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
@@ -693,6 +1123,49 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
 
       {/* 导出弹层（file 非空才挂载，避免 Props 类型不匹配） */}
       {file && <ExportDialog open={exportOpen} onOpenChange={setExportOpen} file={file} />}
+
+      {/* 时间轴偏移超出视频时长确认弹窗 */}
+      {offsetExceedDialog && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
+          <div className="rounded-lg border bg-popover p-5 shadow-lg max-w-sm">
+            <p className="text-sm font-medium mb-2">{t("subtitle.offsetExceedTitle", "字幕超出视频时长")}</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              {t("subtitle.offsetExceedMsg", "{{count}} 条字幕的结束时间超出视频时长 {{seconds}} 秒，是否仍然应用？", { count: offsetExceedDialog.count, seconds: offsetExceedDialog.maxExceedSec.toFixed(1) })}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => {
+                // 取消：不应用偏移，直接关闭弹窗
+                setOffsetExceedDialog(null);
+              }}>
+                {t("common.cancel", "取消")}
+              </Button>
+              <Button size="sm" onClick={handleForceApplyOffset}>
+                {t("subtitle.forceApply", "仍然应用")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 重置确认弹窗 */}
+      {resetDialogOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
+          <div className="rounded-lg border bg-popover p-5 shadow-lg max-w-sm">
+            <p className="text-sm font-medium mb-2">{t("subtitle.resetTitle", "重置字幕")}</p>
+            <p className="text-xs text-muted-foreground mb-4">
+              {t("subtitle.resetConfirm", "已执行的 {{count}} 步操作将被撤销，字幕将恢复为初始加载状态。确定要重置吗？", { count: resetSteps })}
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setResetDialogOpen(false)}>
+                {t("common.cancel", "取消")}
+              </Button>
+              <Button size="sm" variant="destructive" onClick={handleResetConfirm}>
+                {t("subtitle.resetConfirmBtn", "确认重置")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

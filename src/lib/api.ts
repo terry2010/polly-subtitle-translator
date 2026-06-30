@@ -13,6 +13,8 @@ import type {
   HistoryRecord,
   SubtitleSearchResult,
   LibmpvStatus,
+  InstalledPlayer,
+  PlayerIcon,
   SubtitleEntry,
   IpcResponse,
   IpcError,
@@ -169,6 +171,15 @@ export const api = {
   getProxy: () =>
     callIpc<{ mode: string; host: string; port: string; username: string; hasPassword: boolean }>("get_proxy"),
 
+  getTranslateUseProxy: (provider: string) =>
+    callIpc<boolean | null>("get_translate_use_proxy", { provider }),
+
+  setTranslateUseProxy: (provider: string, value: boolean | null) =>
+    callIpc<void>("set_translate_use_proxy", { provider, value }),
+
+  testProxy: (url: string) =>
+    callIpc<{ success: boolean; status: number; elapsed_ms: number; url: string }>("test_proxy", { url }),
+
   // === 系统语言探测 ===
   getSystemLang: () =>
     callIpc<string>("get_system_lang"),
@@ -209,8 +220,8 @@ export const api = {
   searchSubtitlesOnline: (query: string, language: string, apiKey: string, source?: string) =>
     callIpc<SubtitleSearchResult[]>("search_subtitles_online", { query, language, apiKey, source }),
 
-  searchSubtitlesWithCaptcha: (query: string, source: string, captcha: string, sessionCookie: string) =>
-    callIpc<SubtitleSearchResult[]>("search_subtitles_with_captcha", { query, source, captcha, sessionCookie }),
+  searchSubtitlesWithCaptcha: (query: string, source: string, captcha: string, sessionCookie: string, verifyPath: string) =>
+    callIpc<SubtitleSearchResult[]>("search_subtitles_with_captcha", { query, source, captcha, sessionCookie, verifyPath }),
 
   downloadSubtitleOnline: (subtitleId: string, apiKey: string, outputPath: string) =>
     callIpc<void>("download_subtitle_online", { subtitleId, apiKey, outputPath }),
@@ -249,6 +260,21 @@ export const api = {
 
   openInSystemPlayer: (videoPath: string) =>
     callIpc<void>("open_in_system_player_cmd", { videoPath }),
+
+  listInstalledPlayers: (videoPath: string) =>
+    callIpc<InstalledPlayer[]>("list_installed_players_cmd", { videoPath }),
+
+  openWithPlayer: (exePath: string, videoPath: string) =>
+    callIpc<void>("open_with_player_cmd", { exePath, videoPath }),
+
+  revealInExplorer: (filePath: string) =>
+    callIpc<void>("reveal_in_explorer_cmd", { filePath }),
+
+  extractPlayerIcons: (videoPath: string) =>
+    callIpc<PlayerIcon[]>("extract_player_icons_cmd", { videoPath }),
+
+  clearPlayerIconsCache: () =>
+    callIpc<number>("clear_player_icons_cache_cmd"),
 
   // === libmpv 内嵌播放命令 ===
   // player_* 命令返回 Result<T, ()>，invoke 对 Err 直接 reject

@@ -117,7 +117,7 @@ export function FfmpegDownloadDialog({ open, onDownloaded, onCancel }: FfmpegDow
                   />
                 </div>
                 <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
-                  <span>{message}</span>
+                  <span>{stage === "downloading" ? t("subtitle.ffmpegRequired.downloading") : t("subtitle.ffmpegRequired.extracting")}</span>
                   {stage === "downloading" && speedMbps > 0 && (
                     <span>{speedMbps.toFixed(1)} MB/s · {formatEta(etaSecs)}</span>
                   )}
@@ -125,7 +125,7 @@ export function FfmpegDownloadDialog({ open, onDownloaded, onCancel }: FfmpegDow
               </>
             )}
             {stage === "extracting" && progress < 0 && (
-              <p className="text-xs text-muted-foreground">{message}</p>
+              <p className="text-xs text-muted-foreground">{t("subtitle.ffmpegRequired.extracting")}</p>
             )}
           </div>
         )}
@@ -153,16 +153,16 @@ export function FfmpegDownloadDialog({ open, onDownloaded, onCancel }: FfmpegDow
         <div className="flex justify-end gap-2 pt-2">
           {stage === "idle" && (
             <>
-              <Button variant="outline" onClick={onCancel}>取消</Button>
+              <Button variant="outline" onClick={onCancel}>{t("common.cancel", "取消")}</Button>
               <Button onClick={handleDownload}>
                 <Download className="h-4 w-4 mr-1" />
-                下载
+                {t("common.download", "下载")}
               </Button>
             </>
           )}
           {stage === "failed" && (
             <>
-              <Button variant="outline" onClick={onCancel}>取消</Button>
+              <Button variant="outline" onClick={onCancel}>{t("common.cancel", "取消")}</Button>
               <Button onClick={handleRetry}>
                 {t("subtitle.ffmpegRequired.retry")}
               </Button>

@@ -81,13 +81,21 @@ AI-SubTrans（内部代号 `zimufan`）是一款基于 **Tauri 2 + React 18 + Ru
 
 ### 合并回视频
 
-- 翻译或提取后可将字幕软合并回视频，生成同目录 `<videoname>.merged.<ext>` 新文件。
-- 同名冲突自动递增命名（`.merged.1.<ext>`、`.merged.2.<ext>`……）——**暂未实现**，当前固定输出 `.merged.<ext>`，重复合并会覆盖。
+- 在导出对话框中点击「合并到视频」，将字幕软合并回视频，生成同目录 `<videoname>.merged.mkv` 新文件（固定输出 mkv 容器，不保留原容器扩展名）。
+- 合并为手动触发（导出对话框按钮），不采用"翻译后自动合并 checkbox"方案；固定输出 `.merged.mkv`，重复合并会覆盖。
 
 ### 在线搜索下载
 
-- 接入 **OpenSubtitles** 官方 API（用户自注册 API Key）。
-- 按文件名关键词搜索字幕（moviehash / 文件时长精确匹配暂未实现），显示评分与下载次数，用户选择下载。
+- 接入三个搜索来源，前端可在搜索弹窗中切换：
+  - **OpenSubtitles** 官方 REST API（用户自注册 API Key，凭据存 keyring）。
+  - **SubHD**（`subhd.tv`，无需 Key，HTML 爬虫，使用 `scraper` crate 解析）。
+  - **zimuku**（字幕库，无需 Key，HTML 爬虫）。
+- 按文件名关键词搜索字幕，显示评分与下载次数，用户选择下载。
+- **关键词简化**：`simplify_search_keyword` 命令自动剥离文件名中的画质/编码/组名等噪声（如 `The.Big.Bang.Theory.S12E24.1080p.WEB-DL.x264-RARBG` → `The Big Bang Theory S12E24`），提升搜索命中率。
+- **验证码流程**：SubHD / zimuku 触发验证码时后端返回 `search.captchaRequired` 错误（含验证码图片 URL 和 session cookie），前端展示验证码图片与输入框，用户输入后调用 `search_subtitles_with_captcha` 续搜。
+- **下载行为差异**：
+  - OpenSubtitles：应用内直接下载到本地。
+  - SubHD / zimuku：在系统浏览器中打开详情页由用户手动下载（站点下载链路复杂且多变，故采用半自动方式）。
 - 下载的字幕若非目标语言可继续翻译。
 
 ### 组件按需下载
@@ -123,7 +131,7 @@ AI-SubTrans（内部代号 `zimufan`）是一款基于 **Tauri 2 + React 18 + Ru
 | 应用框架 | Tauri 2 |
 | 异步运行时 | tokio（full features） |
 | 数据库 | rusqlite 0.32（bundled SQLite） |
-| HTTP 客户端 | reqwest 0.12（rustls-tls） |
+| HTTP 客户端 | reqwest 0.12（default-tls / native-tls，Windows 用 SChannel） |
 | 凭据存储 | keyring 3（系统密钥环） |
 | 字幕解析 | srt/vtt 自写解析器；ass 使用 ass-core + ass-editor |
 | 编码探测 | chardetng + encoding_rs |
@@ -131,6 +139,7 @@ AI-SubTrans（内部代号 `zimufan`）是一款基于 **Tauri 2 + React 18 + Ru
 | 错误处理 | thiserror + anyhow，自定义 AppError / IpcError（含 severity 分级） |
 | 哈希 | sha2 / md-5 / hex |
 | 解压 | sevenz-rust（libmpv 7z 包）+ zip（FFmpeg zip 包） |
+| HTML 解析 | scraper 0.22（SubHD / zimuku 搜索结果爬取） |
 | 自动更新 | tauri-plugin-updater 2（Ed25519 签名验证） |
 | Windows API | windows 0.61 + winreg 0.55 + libloading 0.8 |
 
@@ -145,7 +154,7 @@ AI-SubTrans（内部代号 `zimufan`）是一款基于 **Tauri 2 + React 18 + Ru
 | 表格 / 虚拟滚动 | @tanstack/react-table + @tanstack/react-virtual |
 | 拖拽 | react-dropzone + @dnd-kit/sortable（字幕流排序） |
 | 图标 | lucide-react |
-| 国际化 | i18next + react-i18next（中/英双语，433 个 key） |
+| 国际化 | i18next + react-i18next（中/英双语，408 个 key） |
 | 通知 | sonner |
 | Tauri 插件 | dialog / fs / shell / os / notification / process / updater / single-instance |
 
@@ -200,8 +209,8 @@ ai-subtrans/
 │   │   ├── i18n.ts                    # i18next 初始化
 │   │   └── utils.ts                   # cn / 时间 / 字节格式化
 │   ├── locales/
-│   │   ├── zh.json                    # 中文翻译（433 key）
-│   │   └── en.json                    # 英文翻译（433 key）
+│   │   ├── zh.json                    # 中文翻译（408 key）
+│   │   └── en.json                    # 英文翻译（408 key）
 │   └── styles/globals.css             # Tailwind + 主题变量
 ├── src-tauri/                         # Rust 后端源码
 │   ├── Cargo.toml
@@ -211,7 +220,7 @@ ai-subtrans/
 │   └── src/
 │       ├── main.rs                    # 入口（调用 lib::run）
 │       ├── lib.rs                     # 应用初始化、日志、CLI 解析、单实例
-│       ├── ipc.rs                     # 61 个 Tauri 命令 handler
+│       ├── ipc.rs                     # 72 个 Tauri 命令 handler
 │       ├── translate.rs               # 翻译模块（占位符/分段/缓存/三家 provider）
 │       ├── subtitle.rs                # 字幕解析（srt/vtt/ass）+ 双语检测
 │       ├── ffmpeg.rs                  # FFmpeg 封装（probe/提取/合并/HDR 检测/按需下载）
@@ -343,7 +352,7 @@ npm run preview  # 预览构建产物
 | OpenSubtitles API Key | 系统密钥环 |
 | 翻译缓存 | SQLite `translate_cache` 表 |
 | 历史记录 | SQLite `history` 表 |
-| 最近文件 | SQLite `recent_files` 表（保留 50 条） |
+| 最近文件 | SQLite `recent_files` 表（保留 20 条） |
 | API provider 元信息 | SQLite `api_provider` 表 |
 | 搜索 provider 元信息 | SQLite `search_provider` 表 |
 
@@ -351,20 +360,29 @@ npm run preview  # 预览构建产物
 
 ### 核心 config 表 key 清单
 
+> 以下为代码中实际读写的 key（前端 `api.getConfig/setConfig` + 后端 `db.get_config/set_config`）。
+> `config.rs` 中的 `GeneralSettings`/`PlayerSettings` 结构体为预留封装，当前未被主流程使用。
+
 | key | 说明 | 默认值 |
 | --- | --- | --- |
 | `default_target_lang` | 默认目标翻译语言（ISO 639-1） | 跟随系统语言 |
 | `default_target_lang_follow_system` | 是否跟随系统语言 | `true` |
-| `default_api_provider` | 默认翻译 API | `baidu` |
-| `source_lang_priority` | 源语言优先级列表（JSON 数组） | `["en-sdh","en"]` |
-| `auto_merge` | 翻译完成后默认是否合并到视频 | `false` |
-| `subtitle_name_template` | 字幕文件命名模板 | `<videoname>.<targetlang>.srt` |
-| `player_subtitle_mode` | 播放器下方字幕区显示模式 | `bilingual` |
-| `hdr_dolby_prompt` | HDR/杜比提示开关 | `true` |
-| `enabled_search_providers` | 启用的字幕站 | `["opensubtitles"]` |
-| `theme` | 主题 | `system` |
-| `log_level` | 日志级别 | `info` |
-| `proxy_*` | 网络代理配置 | — |
+| `default_source_lang` | 默认源语言 | `en` |
+| `default_api_provider` | 默认翻译 API（启动时回退用） | `baidu` |
+| `translate_provider` | 当前设置的翻译 API | `baidu` |
+| `translate_<provider>_app_id` | 各 provider 的 appid/账号（`<provider>` = baidu/bing/google） | — |
+| `translate_<provider>_secret` | 各 provider 的 secret/key（baidu/google） | — |
+| `translate_<provider>_region` | Bing 翻译的 region | — |
+| `translate_concurrency` | 翻译并发数（实际并发 = `min(用户配置, QPS 上限)`） | `3` |
+| `dev_mode` | 开发者模式开关 | `false` |
+| `dev_mode_restart_count` | 开发者模式启用后的重启计数（用于自动关闭） | `0` |
+| `proxy_mode` | 代理模式（`none` / `http` / `socks5`） | `none` |
+| `proxy_host` / `proxy_port` / `proxy_user` | 代理主机/端口/用户名 | — |
+| `theme` | 主题（前端 themeStore 持久化，未走 config 表） | `system` |
+| `log_level` | 日志级别（由 `RUST_LOG` 环境变量覆盖） | `info` |
+
+代理密码通过 keyring 存储（provider=`proxy`, key=`pass`），不写入 config 表。
+翻译 API 凭据（appid/secret/key/region）也通过 keyring 存储，详见下表。
 
 ### 翻译 API 配置
 
@@ -454,20 +472,21 @@ npm run preview  # 预览构建产物
 
 ### IPC 通信
 
-后端注册了 61 个 Tauri 命令（`src-tauri/src/ipc.rs`），覆盖：
+后端注册了 72 个 Tauri 命令（`src-tauri/src/ipc.rs`），覆盖：
 
 - 视频探测与字幕提取（`probe_video` / `extract_subtitle` / `cancel_extract_subtitle`）
 - 字幕解析与编辑（`parse_subtitle_file` / `save_subtitle_file_cmd` / `export_subtitle_cmd` / `detect_bilingual` / `split_bilingual_subtitle` / `edit_subtitle_streams_cmd`）
-- 翻译（`translate_subtitle` / `cancel_translate` / `test_translate_connection` / `get_supported_target_langs`）
-- 配置与凭据（`get_config` / `set_config` / `save_credential` / `get_credential`）
-- 播放器控制（`player_init` / `player_load_cmd` / `player_play_cmd` / `player_seek_cmd` / `player_set_volume_cmd` / `player_set_speed_cmd` / `player_set_audio_track_cmd` 等）
-- 字幕搜索（`search_subtitles_online` / `download_subtitle_online`）
+- 翻译（`translate_subtitle` / `cancel_translate` / `test_translate_connection` / `get_supported_target_langs` / `get_cached_translations` / `clear_translate_cache`）
+- 配置与凭据（`get_config` / `set_config` / `get_all_config` / `save_credential` / `get_credential` / `delete_credential`）
+- 播放器控制（`player_init` / `player_load_cmd` / `player_play_cmd` / `player_pause_cmd` / `player_seek_cmd` / `player_set_volume_cmd` / `player_set_speed_cmd` / `player_set_audio_track_cmd` / `player_get_position_cmd` / `player_resize_cmd` / `player_show_cmd` / `player_hide_cmd` / `player_destroy_cmd` / `open_in_system_player_cmd`）
+- 字幕搜索（`search_subtitles_online` / `search_subtitles_with_captcha` / `download_subtitle_online` / `simplify_search_keyword`）
 - 合并（`merge_subtitle` / `check_merge_space`）
-- 右键菜单（`register_video_menu` / `register_subtitle_menu` / `is_video_menu_registered` 等）
+- 右键菜单（`register_video_menu` / `unregister_video_menu` / `register_subtitle_menu` / `unregister_subtitle_menu` / `is_video_menu_registered` / `is_subtitle_menu_registered`）
 - libmpv 管理（`get_libmpv_status_cmd` / `download_libmpv_cmd` / `delete_libmpv_cmd`）
 - FFmpeg 管理（`get_ffmpeg_status_cmd` / `download_ffmpeg_cmd` / `delete_ffmpeg_cmd`）
 - 自动更新（`check_for_update` / `download_and_install_update`）
-- 代理与系统（`set_proxy` / `get_proxy` / `get_system_lang` / `toggle_devtools`）
+- 最近文件与历史（`get_recent_files` / `add_recent_file` / `get_history` / `add_history_record`）
+- 代理与系统（`set_proxy` / `get_proxy` / `get_system_lang` / `get_work_area` / `toggle_devtools`）
 
 事件流（后端 → 前端）：
 
@@ -534,12 +553,14 @@ subtitle.rs
 | 三引擎翻译 | ✅ | 百度/Bing/Google 完整实现，含签名/分段/缓存/重试/并发控制 |
 | 占位符保护 | ✅ | 私用区字符方案（U+E000~U+E0FF） |
 | 单条翻译 | ✅ | 字幕预览区右键单条翻译 |
+| 翻译失败标记 | ✅ | `failed` 布尔字段标记单条翻译失败（不插入 `[翻译失败]` 文本） |
 | 字幕编辑器 | ⚠️ | 虚拟滚动、增删行、查找替换、时间轴偏移（手动输入）、撤销重做；时间码编辑/复制行/快捷键偏移暂未实现 |
 | 导出对话框 | ✅ | srt/ass/vtt 多格式，ASS 样式实时预览，双语配置 |
 | 播放预览 | ✅ | libmpv 悬浮窗叠加、播放控制、音轨切换、字幕联动高亮 |
 | 对比预览 | ✅ | 原文/译文/双语三种模式 |
-| 合并回视频 | ⚠️ | FFmpeg 软合并；同名递增命名暂未实现（固定 `.merged.<ext>`） |
-| OpenSubtitles 搜索 | ⚠️ | REST API 搜索与下载；moviehash/时长精确匹配暂未实现 |
+| 合并回视频 | ✅ | FFmpeg 软合并（导出对话框手动触发），固定输出 `.merged.mkv` |
+| 系统播放器降级 | ✅ | 枚举已安装播放器（含图标）、用指定播放器打开、在资源管理器定位 |
+| OpenSubtitles 搜索 | ✅ | REST API 关键词搜索与下载（不做 moviehash/时长精确匹配） |
 | 系统右键菜单 | ✅ | Windows 注册表注册/注销/状态检测 |
 | 单实例转发 | ✅ | Windows argv 解析与事件转发 |
 | 配置与凭据 | ✅ | SQLite + keyring |
@@ -547,7 +568,7 @@ subtitle.rs
 | libmpv 按需下载 | ✅ | zhongfly/mpv-winbuild GitHub，进度显示速度/ETA |
 | 自动更新 | ✅ | Tauri Updater，启动检查 + 手动检查，签名验证静默安装 |
 | 错误处理 | ✅ | AppError + IpcError（severity 三级） |
-| 国际化 | ✅ | 中/英双语，433 key |
+| 国际化 | ✅ | 中/英双语，408 key |
 | 主题 | ✅ | 浅色/深色/跟随系统 |
 | 日志 | ✅ | tracing 按天滚动，保留 7 天（启动时清理旧日志） |
 | 开发者模式 | ✅ | 关于页点击版本号 7 次开启 |
@@ -559,12 +580,8 @@ subtitle.rs
 | 字幕时间码编辑 | P1 | 当前表格编辑器仅支持原文/译文编辑，时间码只读 |
 | 时间轴偏移快捷键 | P1 | ±0.1s / ±1s 步进快捷键暂未实现，当前仅手动输入毫秒数 |
 | 复制行 | P1 | 表格编辑器复制整行功能暂未实现 |
-| 合并同名递增 | P1 | 当前固定 `.merged.<ext>`，重复合并会覆盖 |
-| OpenSubtitles 精确匹配 | P2 | moviehash / 文件时长搜索暂未实现，当前仅关键词搜索 |
-| 翻译失败文本标记 | P2 | 当前仅 `failed` 布尔字段，未在译文文本中插入 `[翻译失败]` |
 | macOS 支持 | P1 | 当前仅 Windows，FFmpeg/libmpv 下载为 Windows 专用 |
 | 软件帧流方案 | P1 | 1080p 优先的帧流渲染（方案 A） |
-| 系统播放器降级路径 | P1 | 方案 A/B 均不达标时的降级 |
 | TitleBar 自绘 | P1 | 当前使用 Tauri 默认标题栏 |
 | 历史记录面板 | P1 | 主界面缺少历史记录查看入口 |
 | 最近文件快速访问 | P1 | 菜单栏「最近文件」子菜单 |

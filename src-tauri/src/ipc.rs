@@ -65,6 +65,11 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         download_ffmpeg_cmd,
         delete_ffmpeg_cmd,
         open_in_system_player_cmd,
+        list_installed_players_cmd,
+        open_with_player_cmd,
+        reveal_in_explorer_cmd,
+        extract_player_icons_cmd,
+        clear_player_icons_cache_cmd,
         player_init,
         player_load_cmd,
         player_play_cmd,
@@ -80,6 +85,9 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         player_destroy_cmd,
         set_proxy,
         get_proxy,
+        get_translate_use_proxy,
+        set_translate_use_proxy,
+        test_proxy,
         get_system_lang,
         get_work_area,
         toggle_devtools,
@@ -416,7 +424,17 @@ pub async fn translate_subtitle(
         region,
     };
 
-    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &ProxyConfig::load_from_db(&db)).map_err(to_ipc_err)?;
+    // 读取该 provider 的代理开关：默认跟随软件代理（proxy_mode != none 时用代理）
+    let proxy_config = ProxyConfig::load_from_db(&db);
+    let use_proxy_key = format!("translate_{}_use_proxy", provider);
+    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
+    let effective_proxy = match use_proxy.as_deref() {
+        Some("false") => ProxyConfig::default(), // 用户明确取消代理
+        _ => proxy_config, // 默认或 "true"：使用软件代理
+    };
+    tracing::info!("translate_subtitle proxy: use_proxy={:?}, mode={}", use_proxy, effective_proxy.mode);
+
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy).map_err(to_ipc_err)?;
 
     // 读取用户配置的并发数，计算实际并发 = min(用户配置, QPS 上限)
     let user_concurrency = db.get_config("translate_concurrency")
@@ -530,6 +548,7 @@ pub async fn test_translate_connection(
     app_id: Option<String>,
     secret_key: Option<String>,
     region: Option<String>,
+    db: State<'_, Database>,
 ) -> Result<(), IpcError> {
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
         AppError::TranslateUnknownProvider { provider: provider.clone() }
@@ -541,7 +560,16 @@ pub async fn test_translate_connection(
         region,
     };
 
-    let prov_instance = translate::create_provider(&prov, &credentials).map_err(to_ipc_err)?;
+    // 测试连接也按 per-provider 代理开关决定是否用代理
+    let proxy_config = ProxyConfig::load_from_db(&db);
+    let use_proxy_key = format!("translate_{}_use_proxy", provider);
+    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
+    let effective_proxy = match use_proxy.as_deref() {
+        Some("false") => ProxyConfig::default(),
+        _ => proxy_config,
+    };
+
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy).map_err(to_ipc_err)?;
     prov_instance.test_connection().await.map_err(to_ipc_err)
 }
 
@@ -699,11 +727,12 @@ pub async fn search_subtitles_with_captcha(
     source: String,
     captcha: String,
     session_cookie: String,
+    verify_path: String,
     db: State<'_, Database>,
 ) -> Result<IpcResult<Vec<crate::search::SubtitleSearchResult>>, ()> {
     let proxy = crate::translate::ProxyConfig::load_from_db(&db);
     let result = tokio::task::spawn_blocking(move || {
-        crate::search::search_subtitles_with_captcha(&query, &source, &captcha, &session_cookie, &proxy)
+        crate::search::search_subtitles_with_captcha(&query, &source, &captcha, &session_cookie, &verify_path, &proxy)
     })
     .await
     .map_err(|e| crate::error::AppError::SearchNetworkError {
@@ -835,6 +864,50 @@ pub fn delete_ffmpeg_cmd() -> IpcResult<()> {
 #[tauri::command]
 pub fn open_in_system_player_cmd(video_path: String) -> IpcResult<()> {
     ipc_result(crate::player::open_in_system_player(&video_path))
+}
+
+/// list_installed_players_cmd：列出已安装的视频播放器（按最近使用顺序）
+#[tauri::command]
+pub fn list_installed_players_cmd(video_path: String) -> IpcResult<Vec<crate::player::InstalledPlayer>> {
+    ipc_result(crate::player::list_installed_players(&video_path))
+}
+
+/// open_with_player_cmd：用指定播放器打开视频
+#[tauri::command]
+pub fn open_with_player_cmd(exe_path: String, video_path: String) -> IpcResult<()> {
+    ipc_result(crate::player::open_with_player(&exe_path, &video_path))
+}
+
+/// reveal_in_explorer_cmd：在资源管理器中定位文件
+#[tauri::command]
+pub fn reveal_in_explorer_cmd(file_path: String) -> IpcResult<()> {
+    ipc_result(crate::player::reveal_in_explorer(&file_path))
+}
+
+/// extract_player_icons_cmd：提取播放器图标（异步，已存在的跳过）
+/// 在加载视频时调用，后台提取所有播放器的图标到 app_data_dir/player_icons/ 目录
+#[tauri::command]
+pub async fn extract_player_icons_cmd(
+    video_path: String,
+    app: tauri::AppHandle,
+) -> Result<Vec<crate::player::PlayerIcon>, IpcError> {
+    let app_data_dir = app.path().app_data_dir().map_err(|_| {
+        IpcError::new("PLAYER_ICON_FAILED", Severity::Recoverable)
+    })?;
+    let icons_dir = app_data_dir.join("player_icons");
+    crate::player::extract_player_icons(&video_path, &icons_dir).map_err(to_ipc_err)
+}
+
+/// clear_player_icons_cache_cmd：清除播放器图标缓存
+#[tauri::command]
+pub async fn clear_player_icons_cache_cmd(
+    app: tauri::AppHandle,
+) -> Result<usize, IpcError> {
+    let app_data_dir = app.path().app_data_dir().map_err(|_| {
+        IpcError::new("PLAYER_ICON_FAILED", Severity::Recoverable)
+    })?;
+    let icons_dir = app_data_dir.join("player_icons");
+    crate::player::clear_player_icons_cache(&icons_dir).map_err(to_ipc_err)
 }
 
 // === SECTION 4 END ===
@@ -1072,6 +1145,66 @@ pub fn get_proxy(db: State<'_, Database>) -> IpcResult<serde_json::Value> {
         "username": user,
         "hasPassword": has_password,
     })))
+}
+
+/// get_translate_use_proxy：读取某 provider 的"使用软件代理"开关
+/// 返回三态：null=未设置（默认跟随代理），true=强制使用代理，false=强制不使用代理
+#[tauri::command]
+pub fn get_translate_use_proxy(provider: String, db: State<'_, Database>) -> IpcResult<Option<bool>> {
+    let key = format!("translate_{}_use_proxy", provider);
+    let val = db.get_config(&key).ok().flatten();
+    let result = match val.as_deref() {
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        _ => None, // 未设置 = 默认跟随软件代理
+    };
+    ipc_result(Ok(result))
+}
+
+/// set_translate_use_proxy：设置某 provider 的"使用软件代理"开关
+/// value: null=清除设置（恢复默认），true/false=显式设置
+#[tauri::command]
+pub fn set_translate_use_proxy(provider: String, value: Option<bool>, db: State<'_, Database>) -> IpcResult<()> {
+    let key = format!("translate_{}_use_proxy", provider);
+    match value {
+        None => { let _ = db.delete_config(&key); }
+        Some(v) => { let _ = db.set_config(&key, if v { "true" } else { "false" }); }
+    }
+    tracing::info!("translate_use_proxy: provider={}, value={:?}", provider, value);
+    ipc_result(Ok(()))
+}
+
+/// test_proxy：通过当前代理配置访问指定 URL，测试代理是否可用
+/// 返回 Ok(响应耗时ms) 或错误信息
+#[tauri::command]
+pub async fn test_proxy(url: String, db: State<'_, Database>) -> Result<serde_json::Value, IpcError> {
+    let proxy_config = ProxyConfig::load_from_db(&db);
+    if proxy_config.mode == "none" || proxy_config.host.is_empty() || proxy_config.port == 0 {
+        return Err(AppError::Unknown { detail: "代理未配置".to_string() }.to_ipc_error());
+    }
+
+    let client = proxy_config.build_client();
+    let test_url = if url.is_empty() { "https://www.google.com".to_string() } else { url };
+
+    let start = std::time::Instant::now();
+    match client.get(&test_url).timeout(std::time::Duration::from_secs(15)).send().await {
+        Ok(resp) => {
+            let elapsed = start.elapsed().as_millis();
+            let status = resp.status().as_u16();
+            tracing::info!("代理测试: url={}, status={}, elapsed={}ms", test_url, status, elapsed);
+            Ok(serde_json::json!({
+                "success": true,
+                "status": status,
+                "elapsed_ms": elapsed,
+                "url": test_url,
+            }))
+        }
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis();
+            tracing::warn!("代理测试失败: url={}, error={}, elapsed={}ms", test_url, e, elapsed);
+            Err(AppError::Unknown { detail: format!("代理连接失败: {}", e) }.to_ipc_error())
+        }
+    }
 }
 
 /// get_system_lang：探测系统语言，返回归一化后的 ISO 639-1 码

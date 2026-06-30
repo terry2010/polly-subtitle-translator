@@ -170,6 +170,19 @@ export interface LibmpvStatus {
   version: string | null;
 }
 
+// === 已安装播放器（右键菜单"用播放器打开"用） ===
+export interface InstalledPlayer {
+  name: string;
+  exe_path: string;
+  is_default: boolean;
+}
+
+// === 播放器图标（前端用 convertFileSrc 加载） ===
+export interface PlayerIcon {
+  exe_path: string;
+  icon_path: string;
+}
+
 // === IPC 错误 ===
 export type Severity = "recoverable" | "restart" | "reinstall";
 

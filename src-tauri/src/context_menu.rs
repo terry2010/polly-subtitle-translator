@@ -12,7 +12,7 @@ use crate::error::AppError;
 const VIDEO_EXTENSIONS: &[&str] = &[".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".ts", ".m2ts"];
 
 /// 字幕文件扩展名列表
-const SUBTITLE_EXTENSIONS: &[&str] = &[".srt", ".ass", ".ssa", ".vtt"];
+const SUBTITLE_EXTENSIONS: &[&str] = &[".srt", ".ass", ".ssa", ".vtt", ".sub"];
 
 /// 右键菜单在注册表中的子键名
 const SHELL_KEY: &str = "shell\\zimufan";
@@ -204,11 +204,12 @@ mod tests {
         assert!(SUBTITLE_EXTENSIONS.contains(&".ass"));
         assert!(SUBTITLE_EXTENSIONS.contains(&".ssa"));
         assert!(SUBTITLE_EXTENSIONS.contains(&".vtt"));
+        assert!(SUBTITLE_EXTENSIONS.contains(&".sub"));
     }
 
     #[test]
     fn subtitle_extensions_count() {
-        assert_eq!(SUBTITLE_EXTENSIONS.len(), 4);
+        assert_eq!(SUBTITLE_EXTENSIONS.len(), 5);
     }
 
     #[test]
