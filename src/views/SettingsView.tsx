@@ -2,7 +2,9 @@ import { useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Search, Film, Wrench, Info } from "lucide-react";
+import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
+import { setWindowSizeInitialized } from "./MainView";
+import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Search, Film, Wrench, Info, RefreshCw } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -11,6 +13,7 @@ import { useThemeStore } from "../stores/themeStore";
 import { useDevModeStore } from "../stores/devModeStore";
 import { useLibmpvStore } from "../stores/libmpvStore";
 import { useFfmpegStore } from "../stores/ffmpegStore";
+import { useUpdateStore } from "../stores/updateStore";
 import { api, formatIpcError } from "../lib/api";
 
 type SettingsTab = "general" | "translate" | "search" | "player" | "advanced" | "about";
@@ -20,8 +23,75 @@ export default function SettingsView() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { theme, setTheme, language, setLanguage } = useThemeStore();
+
+  // 设置页内容较多，进入时放大窗口（返回 MainView 时由其 useEffect 恢复）
+  // 同时调整位置保持窗口中心点不变
+  // 卸载时通知 MainView 当前是大窗口状态，使其能正确缩回
+  useEffect(() => {
+    const win = getCurrentWindow();
+    const newW = 1280, newH = 800;
+    (async () => {
+      try {
+        const scaleFactor = await win.scaleFactor();
+        // setSize 设置的是 inner size（客户区），所以用 innerSize 比较
+        const inner = await win.innerSize();
+        const curW = inner.width / scaleFactor;
+        const curH = inner.height / scaleFactor;
+        // 尺寸已匹配则跳过，避免 setPosition 的亚像素舍入导致窗口闪烁
+        if (Math.abs(curW - newW) < 1 && Math.abs(curH - newH) < 1) return;
+
+        // 获取原窗口中心点（setSize 之前），用于保持窗口大致在原位置
+        const pos = await win.outerPosition();
+        const outer = await win.outerSize();
+        let cx = pos.x + outer.width / 2;
+        let cy = pos.y + outer.height / 2;
+
+        // 目标窗口物理尺寸（inner → physical）
+        let winPhysW = Math.round(newW * scaleFactor);
+        let winPhysH = Math.round(newH * scaleFactor);
+        let finalW = newW;
+        let finalH = newH;
+
+        // 用工作区（排除任务栏）约束窗口尺寸和位置
+        try {
+          const wa = await api.getWorkArea();
+          // 如果目标窗口物理尺寸超过工作区，缩小窗口以适应
+          if (winPhysW > wa.width) {
+            winPhysW = wa.width;
+            finalW = Math.floor(wa.width / scaleFactor);
+          }
+          if (winPhysH > wa.height) {
+            winPhysH = wa.height;
+            finalH = Math.floor(wa.height / scaleFactor);
+          }
+          // 约束中心点在工作区内
+          cx = Math.min(Math.max(cx, wa.x + winPhysW / 2), wa.x + wa.width - winPhysW / 2);
+          cy = Math.min(Math.max(cy, wa.y + winPhysH / 2), wa.y + wa.height - winPhysH / 2);
+        } catch {
+          cx = Math.max(cx, winPhysW / 2);
+          cy = Math.max(cy, winPhysH / 2);
+        }
+
+        const newX = Math.round(cx - winPhysW / 2);
+        const newY = Math.round(cy - winPhysH / 2);
+        // 先 setPosition 再 setSize：先移动到目标位置（保持旧尺寸），再设置新尺寸
+        await win.setPosition(new LogicalPosition(newX / scaleFactor, newY / scaleFactor));
+        await win.setSize(new LogicalSize(finalW, finalH));
+      } catch {
+        win.setSize(new LogicalSize(newW, newH)).catch(() => {});
+      }
+    })();
+
+    // 卸载时标记当前为大窗口，使 MainView 重新挂载时能检测到状态变化并缩回
+    return () => {
+      setWindowSizeInitialized(true);
+    };
+  }, []);
+
   const [activeTab, setActiveTab] = useState<SettingsTab>(
-    searchParams.get("provider") ? "translate" : "general"
+    searchParams.get("provider") ? "translate"
+    : searchParams.get("tab") === "advanced" ? "advanced"
+    : "general"
   );
 
   const navItems: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
@@ -305,12 +375,11 @@ function TranslateApiSettings() {
       api.getConfig(`translate_${provider}_app_id`).catch(() => null),
       api.getConfig(`translate_${provider}_region`).catch(() => null),
       api.getCredential(provider, "secret").catch(() => null),
-      api.getConfig(`translate_${provider}_secret`).catch(() => null),
-    ]).then(([savedAppId, savedRegion, savedSecretKeyring, savedSecretConfig]) => {
+    ]).then(([savedAppId, savedRegion, savedSecretKeyring]) => {
       if (savedAppId) setAppId(savedAppId);
       if (savedRegion) setRegion(savedRegion);
-      // keyring 或 config 表任一有值就显示掩码
-      if (savedSecretKeyring || savedSecretConfig) setSecretKey("••••••••");
+      // 凭据仅从 keyring 读取（不降级到明文数据库）
+      if (savedSecretKeyring) setSecretKey("••••••••");
       setLoading(false);
     });
   }, [provider]);
@@ -321,13 +390,13 @@ function TranslateApiSettings() {
       await api.setConfig(`translate_${provider}_app_id`, appId);
       await api.setConfig(`translate_${provider}_region`, region);
       if (secretKey && secretKey !== "••••••••") {
-        // 同时存 keyring 和 config 表，keyring 失败时 config 表作为 fallback
+        // 凭据仅存 keyring（系统密钥环），不写入明文数据库
         try {
           await api.saveCredential(provider, "secret", secretKey);
         } catch (e) {
-          console.warn("keyring 保存失败，仅存 config 表:", e);
+          console.error("keyring 保存失败:", e);
+          throw e;
         }
-        await api.setConfig(`translate_${provider}_secret`, secretKey);
       }
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -969,6 +1038,18 @@ function AboutSettings() {
   const devMode = useDevModeStore((s) => s.devMode);
   const toggleDevMode = useDevModeStore((s) => s.toggle);
   const [clickCount, setClickCount] = useState(0);
+  const checkManually = useUpdateStore((s) => s.checkManually);
+  const updateChecking = useUpdateStore((s) => s.checking);
+  const [updateResult, setUpdateResult] = useState<"latest" | "failed" | null>(null);
+
+  const handleCheckUpdate = useCallback(async () => {
+    setUpdateResult(null);
+    const result = await checkManually();
+    if (result === "latest") setUpdateResult("latest");
+    else if (result === "failed") setUpdateResult("failed");
+    // available 时弹窗会自动打开，不需要在这里处理
+    setTimeout(() => setUpdateResult(null), 3000);
+  }, [checkManually]);
 
   const handleVersionClick = useCallback(() => {
     const next = clickCount + 1;
@@ -1009,6 +1090,19 @@ function AboutSettings() {
           <div className="border-t pt-3 text-xs text-muted-foreground space-y-1">
             <p>Powered by Tauri + React + ass-rs</p>
             <p>FFmpeg · libmpv · OpenSubtitles</p>
+          </div>
+          {/* 检查更新 */}
+          <div className="border-t pt-3 flex flex-col items-center gap-2">
+            <Button size="sm" variant="outline" onClick={handleCheckUpdate} disabled={updateChecking}>
+              {updateChecking ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+              {t("update.checkButton")}
+            </Button>
+            {updateResult === "latest" && (
+              <p className="text-xs text-green-600">{t("update.alreadyLatest")}</p>
+            )}
+            {updateResult === "failed" && (
+              <p className="text-xs text-red-500">{t("update.checkFailed")}</p>
+            )}
           </div>
           {devMode && (
             <p className="text-xs text-amber-600 font-medium pt-2 border-t">

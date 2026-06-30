@@ -57,9 +57,33 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   ) ?? -1;
 
   // 鼠标是否悬停在字幕编辑器区域内（用 ref 避免 re-render）
+  // 同时同步到全局 uiState.mouseInSubtitleEditor，供 VideoPlayer 判断空格键是否响应
   const isMouseOverPanelRef = useRef(false);
   // 是否正在执行自动滚动（防止 scroll 事件监听器与自身平滑滚动形成循环）
   const isAutoScrollingRef = useRef(false);
+
+  // 编辑取消支持：进入编辑时记录原始译文值和 undoStack 长度。
+  // ESC 或"取消"按钮调用 store.cancelEditEntry 恢复，让 undo 回到编辑前状态。
+  const editingOriginalRef = useRef<string>("");
+  const editingUndoStackLenRef = useRef<number>(0);
+
+  // 进入编辑态：记录原始译文和 undoStack 长度，用于 ESC/取消时恢复
+  const beginEdit = useCallback((entryIndex: number, originalTranslated: string) => {
+    editingOriginalRef.current = originalTranslated;
+    editingUndoStackLenRef.current = store.undoStack.length;
+    setEditingIndex(entryIndex);
+  }, [store]);
+
+  // 退出编辑态：不保存（恢复原始译文，截断 undoStack 到编辑前）
+  const cancelEdit = useCallback((entryIndex: number) => {
+    store.cancelEditEntry(entryIndex, editingOriginalRef.current, editingUndoStackLenRef.current);
+    setEditingIndex(null);
+  }, [store]);
+
+  // 退出编辑态：保存（仅退出，编辑过程中的 onChange 已实时写入 store）
+  const commitEdit = useCallback(() => {
+    setEditingIndex(null);
+  }, []);
 
   // 检查当前播放字幕是否在可见区域外，若是且鼠标不在面板上，则平滑滚动到第三排
   const maybeScrollToActive = useCallback(() => {
@@ -184,9 +208,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
     try {
       const result = await translateStore.startTranslate(
         [entry],
-        (index, translated) => {
-          // 单条翻译完成，立即更新
-          store.updateEntry(index, { translated });
+        (index, translated, failed) => {
+          // 单条翻译完成，立即更新（含翻译失败标记）
+          store.updateEntry(index, { translated, failed });
         }
       );
     } catch (e) {
@@ -309,8 +333,8 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   return (
     <div
       className="flex h-full flex-col overflow-hidden"
-      onMouseEnter={() => { isMouseOverPanelRef.current = true; }}
-      onMouseLeave={() => { isMouseOverPanelRef.current = false; }}
+      onMouseEnter={() => { isMouseOverPanelRef.current = true; uiState.mouseInSubtitleEditor = true; }}
+      onMouseLeave={() => { isMouseOverPanelRef.current = false; uiState.mouseInSubtitleEditor = false; }}
     >
       {/* 工具栏 */}
       <div className="flex items-center gap-1 border-b px-2 py-1 flex-shrink-0">
@@ -497,7 +521,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       <Button
                         size="sm"
                         className="h-5 px-2 text-xs bg-green-600 hover:bg-green-700"
-                        onClick={(e) => { e.stopPropagation(); setEditingIndex(null); }}
+                        onClick={(e) => { e.stopPropagation(); commitEdit(); }}
                       >
                         <Check className="h-3 w-3 mr-0.5" />
                         {t("common.done", "完成")}
@@ -506,7 +530,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                         size="sm"
                         variant="outline"
                         className="h-5 px-2 text-xs"
-                        onClick={(e) => { e.stopPropagation(); setEditingIndex(null); toast.warning(t("subtitle.editCancelled", "编辑已取消")); }}
+                        onClick={(e) => { e.stopPropagation(); cancelEdit(entry.index); toast.warning(t("subtitle.editCancelled", "编辑已取消")); }}
                       >
                         {t("common.cancel", "取消")}
                       </Button>
@@ -546,6 +570,13 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       className="text-xs py-1 flex-1 resize-none"
                       placeholder={t("subtitle.translated", "译文")}
                       onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          cancelEdit(entry.index);
+                        }
+                      }}
                       autoFocus
                     />
                   </div>
@@ -575,7 +606,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     {(previewMode === "translated" || previewMode === "bilingual") && hasTranslation && (
                       <p
                         className="text-xs text-primary line-clamp-1 cursor-text hover:bg-primary/10 rounded px-1 -mx-1"
-                        onClick={(e) => { e.stopPropagation(); setEditingIndex(entry.index); }}
+                        onClick={(e) => { e.stopPropagation(); beginEdit(entry.index, entry.translated); }}
                       >
                         {entry.translated}
                       </p>
@@ -618,7 +649,11 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           </button>
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent"
-            onClick={() => { setEditingIndex(contextMenu.entryIndex); closeContextMenu(); }}
+            onClick={() => {
+              const e = file?.entries.find((x) => x.index === contextMenu.entryIndex);
+              beginEdit(contextMenu.entryIndex, e?.translated ?? "");
+              closeContextMenu();
+            }}
           >
             <Edit3 className="h-3.5 w-3.5" />
             {t("subtitle.editTranslation", "编辑译文")}

@@ -693,7 +693,6 @@ impl Player {
             // 悬浮窗口：将父窗口客户区坐标转为屏幕坐标
             let mut point = windows::Win32::Foundation::POINT { x, y };
             let _ = windows::Win32::Graphics::Gdi::ClientToScreen(self.parent_hwnd, &mut point);
-            tracing::info!("player_resize: 屏幕坐标=({},{}), 大小={}x{}", point.x, point.y, w, h);
             // 子窗口被主动隐藏时（弹窗层级处理），只更新位置不恢复显示，
             // 避免 SWP_SHOWWINDOW 把刚 hide 的窗口又拉回。show() 恢复时窗口已在正确位置。
             let flags = if HOOK_HIDDEN.load(std::sync::atomic::Ordering::Relaxed) {
@@ -729,6 +728,14 @@ impl Player {
     pub fn destroy(&mut self) {
         let tid = unsafe { GetCurrentThreadId() };
         tracing::info!("Player::destroy 开始, child_hwnd={:?}, 销毁线程={}", self.child_hwnd, tid);
+        // 在 join 线程之前先隐藏窗口并设置 HOOK_HIDDEN，
+        // 防止 position_sync_loop 的钩子回调在销毁过程中用 SWP_SHOWWINDOW
+        // 把子窗口移动到错误位置（导航切换时 DOM 变化触发 LOCATIONCHANGE 事件）。
+        #[cfg(windows)]
+        {
+            HOOK_HIDDEN.store(true, std::sync::atomic::Ordering::Relaxed);
+            unsafe { let _ = ShowWindow(self.child_hwnd, SW_HIDE); }
+        }
         self.stop_flag.store(true, Ordering::Relaxed);
         unsafe { (self.api.wakeup)(self.mpv); }
         if let Some(t) = self.poll_thread.take() {

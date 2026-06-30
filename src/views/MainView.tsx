@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload } from "lucide-react";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { Button } from "../components/ui/button";
@@ -20,6 +21,15 @@ import { SearchDialog } from "../components/SearchDialog";
 import { HdrNotice } from "../components/HdrNotice";
 import { SubtitleStreamEditorDialog } from "../components/SubtitleStreamEditorDialog";
 import { FfmpegDownloadDialog } from "../components/FfmpegDownloadDialog";
+
+// 跟踪窗口大小状态，避免组件卸载重载时丢失（如从设置页返回）
+// null = 尚未初始化，true = 大窗口（有文件），false = 小窗口（空状态）
+const windowSizeState = { initialized: null as boolean | null };
+
+// 供 SettingsView 卸载时设置
+export function setWindowSizeInitialized(v: boolean) {
+  windowSizeState.initialized = v;
+}
 
 export default function MainView() {
   const { t } = useTranslation();
@@ -186,7 +196,12 @@ export default function MainView() {
       const lang = selectedSubtitleStream.language ?? "sub";
       // 写到系统临时目录，避免 Vite 监听项目目录变化触发页面刷新
       const tempDir = await import("@tauri-apps/api/path").then(m => m.tempDir());
-      const outputPath = `${tempDir}${baseName}.${lang}.srt`;
+      // 原流为 ass/vtt 时保留原格式，避免样式信息丢失；其余默认 srt
+      const codec = selectedSubtitleStream.codec_name?.toLowerCase() ?? "";
+      const ext = codec === "ass" || codec === "ssa" ? "ass"
+        : codec === "webvtt" || codec === "vtt" ? "vtt"
+        : "srt";
+      const outputPath = `${tempDir}${baseName}.${lang}.${ext}`;
       // 传入视频时长（秒）用于计算提取进度百分比
       const durationSec = probeResult.format?.duration ?? undefined;
       await api.extractSubtitle(probeResult.video_path, selectedSubtitleStream.index, outputPath, undefined, durationSec);
@@ -204,7 +219,7 @@ export default function MainView() {
       });
       setExtractedFiles((prev) => [
         ...prev,
-        { name: `${baseName}.${lang}.srt`, path: outputPath, status: "已提取" },
+        { name: `${baseName}.${lang}.${ext}`, path: outputPath, status: "已提取" },
       ]);
 
       // 提取完成后查询翻译缓存，自动填充已翻译的条目
@@ -306,6 +321,76 @@ export default function MainView() {
 
   // === SECTION 1 END ===
 
+  // 窗口大小自动调整：空状态用小窗口，打开文件后放大
+  // 同时调整位置保持窗口中心点不变，避免放大后窗口跑出屏幕
+  // 首次渲染跳过：Rust setup 已完成初始居中，避免二次定位导致抖动
+  // 使用模块级变量，避免组件卸载重载（如从设置页返回）时丢失状态
+  const hasFile = !!(probeResult || subtitleStore.file || loading || error);
+  useEffect(() => {
+    if (windowSizeState.initialized === null) {
+      windowSizeState.initialized = hasFile;
+      return;
+    }
+    if (windowSizeState.initialized === hasFile) return;
+    windowSizeState.initialized = hasFile;
+
+    const win = getCurrentWindow();
+    const newW = hasFile ? 1280 : 520;
+    const newH = hasFile ? 800 : 325;
+    (async () => {
+      try {
+        const scaleFactor = await win.scaleFactor();
+        // setSize 设置的是 inner size（客户区），所以用 innerSize 比较
+        const inner = await win.innerSize();
+        const curW = inner.width / scaleFactor;
+        const curH = inner.height / scaleFactor;
+        // 尺寸已匹配则跳过，避免亚像素舍入导致窗口闪烁
+        if (Math.abs(curW - newW) < 1 && Math.abs(curH - newH) < 1) return;
+
+        // 获取原窗口中心点（setSize 之前），用于保持窗口大致在原位置
+        const pos = await win.outerPosition();
+        const outer = await win.outerSize();
+        let cx = pos.x + outer.width / 2;
+        let cy = pos.y + outer.height / 2;
+
+        // 目标窗口物理尺寸（inner → physical）
+        let winPhysW = Math.round(newW * scaleFactor);
+        let winPhysH = Math.round(newH * scaleFactor);
+        let finalW = newW;
+        let finalH = newH;
+
+        // 用工作区（排除任务栏）约束窗口尺寸和位置
+        try {
+          const wa = await api.getWorkArea();
+          // 如果目标窗口物理尺寸超过工作区，缩小窗口以适应
+          if (winPhysW > wa.width) {
+            winPhysW = wa.width;
+            finalW = Math.floor(wa.width / scaleFactor);
+          }
+          if (winPhysH > wa.height) {
+            winPhysH = wa.height;
+            finalH = Math.floor(wa.height / scaleFactor);
+          }
+          // 约束中心点在工作区内
+          cx = Math.min(Math.max(cx, wa.x + winPhysW / 2), wa.x + wa.width - winPhysW / 2);
+          cy = Math.min(Math.max(cy, wa.y + winPhysH / 2), wa.y + wa.height - winPhysH / 2);
+        } catch {
+          // 获取工作区失败：至少保证中心点不导致窗口跑到负坐标
+          cx = Math.max(cx, winPhysW / 2);
+          cy = Math.max(cy, winPhysH / 2);
+        }
+
+        const newX = Math.round(cx - winPhysW / 2);
+        const newY = Math.round(cy - winPhysH / 2);
+        // 先 setPosition 再 setSize：先移动到目标位置（保持旧尺寸），再设置新尺寸
+        await win.setPosition(new LogicalPosition(newX / scaleFactor, newY / scaleFactor));
+        await win.setSize(new LogicalSize(finalW, finalH));
+      } catch {
+        win.setSize(new LogicalSize(newW, newH)).catch(() => {});
+      }
+    })();
+  }, [hasFile]);
+
   const handlePlayVideo = useCallback(async () => {
     if (!probeResult) return;
     // 降级路径：使用系统默认播放器打开视频
@@ -327,16 +412,19 @@ export default function MainView() {
     // 逐条翻译、逐条填充
     const result = await translateStore.startTranslate(
       subtitleStore.file.entries,
-      (index, translated) => {
-        // 每条翻译完成后立即更新字幕预览区
-        subtitleStore.updateEntry(index, { translated });
+      (index, translated, failed) => {
+        // 每条翻译完成后立即更新字幕预览区（含翻译失败标记）
+        subtitleStore.updateEntry(index, { translated, failed });
       }
     );
     if (result && result.translations.length > 0) {
-      // 确保所有结果都更新（包括可能遗漏的）
+      // 确保所有结果都更新（包括可能遗漏的），同步 failed 标记
       const entries = subtitleStore.file.entries.map((e) => {
         const tr = result.translations.find((r) => r.index === e.index);
-        return tr && !e.translated ? { ...e, translated: tr.translated } : e;
+        if (!tr) return e;
+        // 已有译文且非失败的保留，否则用结果覆盖（含 failed）
+        if (e.translated && !e.failed) return e;
+        return { ...e, translated: tr.translated, failed: tr.failed };
       });
       subtitleStore.setFile({ ...subtitleStore.file, entries });
     }

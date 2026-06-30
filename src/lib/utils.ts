@@ -40,6 +40,9 @@ export function formatDuration(ms: number): string {
 export const uiState = {
   /** 是否有下拉框（select）当前处于展开态 */
   selectOpen: false,
+  /** 鼠标是否悬停在字幕编辑器区域内（SubtitlePreviewPanel 设置）。
+   *  VideoPlayer 据此判断空格键是否触发播放/暂停：在编辑区内不响应，避免影响文本编辑。 */
+  mouseInSubtitleEditor: false,
 };
 
 /**

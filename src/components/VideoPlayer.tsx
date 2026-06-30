@@ -147,12 +147,25 @@ export function VideoPlayer({ probeResult, onPositionUpdate }: VideoPlayerProps)
   }, [probeResult, libmpvStatus, initAndLoad]);
 
   // 监听位置事件
+  // 仅在播放状态变化（开始/暂停/恢复）时记录日志，避免高频刷屏
+  const lastPausedRef = useRef<boolean | null>(null);
   useEffect(() => {
     const unlisten = listen<{ position: number; duration: number; paused: boolean }>(
       "player_position",
       (event) => {
         const { position: pos, duration: dur, paused } = event.payload;
-        console.log("[VideoPlayer] player_position:", { pos, dur, paused });
+        // 仅在 paused 状态变化时记录日志
+        if (lastPausedRef.current !== paused) {
+          const prev = lastPausedRef.current;
+          if (prev === null) {
+            console.log("[VideoPlayer] 播放开始", { pos, dur });
+          } else if (paused) {
+            console.log("[VideoPlayer] 暂停", { pos, dur });
+          } else {
+            console.log("[VideoPlayer] 恢复播放", { pos, dur });
+          }
+          lastPausedRef.current = paused;
+        }
         setPosition(pos);
         setDuration(dur);
         setPlaying(!paused);
@@ -193,8 +206,13 @@ export function VideoPlayer({ probeResult, onPositionUpdate }: VideoPlayerProps)
   }, [playerReady]);
 
   // 组件卸载时销毁播放器
+  // 先 hide 再 destroy：hide 立即设置 HOOK_HIDDEN 并隐藏子窗口，
+  // 防止导航切换时 DOM 变化触发位置同步钩子把子窗口闪到错误位置。
   useEffect(() => {
-    return () => { api.playerDestroy().catch(() => {}); };
+    return () => {
+      api.playerHide().catch(() => {});
+      api.playerDestroy().catch(() => {});
+    };
   }, []);
 
   // 播控操作
@@ -207,6 +225,41 @@ export function VideoPlayer({ probeResult, onPositionUpdate }: VideoPlayerProps)
       setPlaying(true);
     }
   }, [playing]);
+
+  // 空格键播放/暂停：仅当鼠标在程序窗口内且不在字幕编辑区时响应。
+  // - 鼠标在字幕编辑区：让用户在文本框内正常输入空格
+  // - 鼠标在程序窗口外：不响应（避免后台误触发）
+  // 用 ref 跟踪鼠标是否离开窗口（mouseleave on document.documentElement）
+  const mouseOutsideWindowRef = useRef(false);
+  useEffect(() => {
+    const onMouseLeave = () => { mouseOutsideWindowRef.current = true; };
+    const onMouseEnter = () => { mouseOutsideWindowRef.current = false; };
+    document.documentElement.addEventListener("mouseleave", onMouseLeave);
+    document.documentElement.addEventListener("mouseenter", onMouseEnter);
+    return () => {
+      document.documentElement.removeEventListener("mouseleave", onMouseLeave);
+      document.documentElement.removeEventListener("mouseenter", onMouseEnter);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== " " && e.code !== "Space") return;
+      // 鼠标在字幕编辑区内：不响应，保留给文本编辑
+      if (uiState.mouseInSubtitleEditor) return;
+      // 鼠标在程序窗口外：不响应
+      if (mouseOutsideWindowRef.current) return;
+      // 焦点在 input/textarea/contenteditable：让用户正常输入空格
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      if (!playerReady) return;
+      e.preventDefault();
+      void togglePlay();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [playerReady, togglePlay]);
 
   // 监听子窗口点击事件（WS_EX_TRANSPARENT 穿透不可靠，
   // 改由后端 child_wnd_proc 捕获 WM_LBUTTONDOWN 并 emit "player-click"）

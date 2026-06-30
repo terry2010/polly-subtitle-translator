@@ -26,6 +26,9 @@ interface SubtitleState {
 
   loadSubtitle: (path: string) => Promise<void>;
   updateEntry: (index: number, patch: Partial<SubtitleEntry>) => void;
+  /** 取消编辑：恢复 entry 的 translated 到原始值，并截断 undoStack 到编辑前长度。
+   *  这样用户按 undo 会回到编辑前状态，而非编辑过程中的中间态。 */
+  cancelEditEntry: (index: number, originalTranslated: string, undoStackLength: number) => void;
   addEntry: (entry: SubtitleEntry) => void;
   deleteEntry: (index: number) => void;
   undoDelete: (index: number) => void;
@@ -109,6 +112,19 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       e.index === index ? { ...e, ...patch } : e
     );
     set({ ...undoPatch, file: { ...state.file, entries } });
+  },
+
+  cancelEditEntry: (index, originalTranslated, undoStackLength) => {
+    const state = get();
+    if (!state.file) return;
+    const entries = state.file.entries.map((e) =>
+      e.index === index ? { ...e, translated: originalTranslated } : e
+    );
+    set({
+      file: { ...state.file, entries },
+      undoStack: state.undoStack.slice(0, undoStackLength),
+      redoStack: [],
+    });
   },
 
   addEntry: (entry) => {

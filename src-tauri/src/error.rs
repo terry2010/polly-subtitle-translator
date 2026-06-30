@@ -273,14 +273,22 @@ pub enum AppError {
     #[error("Search auth failed for {provider}")]
     SearchAuthFailed { provider: String },
 
-    #[error("Search network error for {provider}")]
-    SearchNetworkError { provider: String },
+    #[error("Search network error for {provider}: {detail}")]
+    SearchNetworkError { provider: String, detail: String },
 
     #[error("Search provider not configured")]
     SearchNotConfigured,
 
     #[error("Search download failed from {provider}")]
     SearchDownloadFailed { provider: String },
+
+    #[error("Search captcha required from {provider}")]
+    SearchCaptchaRequired {
+        provider: String,
+        captcha_image: String,
+        session_cookie: String,
+        original_url: String,
+    },
 
     // === Subtitle ===
     #[error("Subtitle parse failed: {path}")]
@@ -571,13 +579,21 @@ impl AppError {
             SearchAuthFailed { provider } => IpcError::new("search.authFailed", Severity::Recoverable)
                 .with_args(serde_json::json!({ "provider": provider })),
 
-            SearchNetworkError { provider } => IpcError::new("search.networkError", Severity::Recoverable)
-                .with_args(serde_json::json!({ "provider": provider })),
+            SearchNetworkError { provider, detail } => IpcError::new("search.networkError", Severity::Recoverable)
+                .with_args(serde_json::json!({ "provider": provider, "detail": detail })),
 
             SearchNotConfigured => IpcError::new("search.notConfigured", Severity::Recoverable),
 
             SearchDownloadFailed { provider } => IpcError::new("search.downloadFailed", Severity::Recoverable)
                 .with_args(serde_json::json!({ "provider": provider })),
+
+            SearchCaptchaRequired { provider, captcha_image, session_cookie, original_url } => IpcError::new("search.captchaRequired", Severity::Recoverable)
+                .with_args(serde_json::json!({
+                    "provider": provider,
+                    "captchaImage": captcha_image,
+                    "sessionCookie": session_cookie,
+                    "originalUrl": original_url,
+                })),
 
             // === Subtitle ===
             SubtitleParseFailed { path } => IpcError::new("subtitle.parseFailed", Severity::Recoverable)

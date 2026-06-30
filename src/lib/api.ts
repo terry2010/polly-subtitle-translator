@@ -136,9 +136,9 @@ export const api = {
     });
   },
 
-  onTranslateEntryDone: async (callback: (entry: { index: number; original: string; translated: string; from_cache: boolean }) => void) => {
+  onTranslateEntryDone: async (callback: (entry: { index: number; original: string; translated: string; from_cache: boolean; failed: boolean }) => void) => {
     const { listen } = await import("@tauri-apps/api/event");
-    return listen<{ index: number; original: string; translated: string; from_cache: boolean }>("translate-entry-done", (event) => {
+    return listen<{ index: number; original: string; translated: string; from_cache: boolean; failed: boolean }>("translate-entry-done", (event) => {
       callback(event.payload);
     });
   },
@@ -173,6 +173,10 @@ export const api = {
   getSystemLang: () =>
     callIpc<string>("get_system_lang"),
 
+  // === 获取工作区（排除任务栏），物理像素 ===
+  getWorkArea: () =>
+    callIpc<{ x: number; y: number; width: number; height: number }>("get_work_area"),
+
   // === DevTools 控制（开发者模式）===
   toggleDevtools: (open: boolean) =>
     callIpc<void>("toggle_devtools", { open }),
@@ -202,11 +206,17 @@ export const api = {
     callIpc<number>("add_history_record", { record }),
 
   // === 搜索 ===
-  searchSubtitlesOnline: (query: string, language: string, apiKey: string) =>
-    callIpc<SubtitleSearchResult[]>("search_subtitles_online", { query, language, apiKey }),
+  searchSubtitlesOnline: (query: string, language: string, apiKey: string, source?: string) =>
+    callIpc<SubtitleSearchResult[]>("search_subtitles_online", { query, language, apiKey, source }),
+
+  searchSubtitlesWithCaptcha: (query: string, source: string, captcha: string, sessionCookie: string) =>
+    callIpc<SubtitleSearchResult[]>("search_subtitles_with_captcha", { query, source, captcha, sessionCookie }),
 
   downloadSubtitleOnline: (subtitleId: string, apiKey: string, outputPath: string) =>
     callIpc<void>("download_subtitle_online", { subtitleId, apiKey, outputPath }),
+
+  simplifySearchKeyword: (filename: string) =>
+    callIpc<string>("simplify_search_keyword", { filename }),
 
   // === 右键菜单 ===
   registerVideoMenu: (exePath: string) =>
@@ -280,4 +290,11 @@ export const api = {
 
   playerDestroy: () =>
     invoke<void>("player_destroy_cmd"),
+
+  // === 自动更新 ===
+  checkForUpdate: () =>
+    callIpc<{ available: boolean; version: string; notes: string; pub_date: string }>("check_for_update"),
+
+  downloadAndInstallUpdate: () =>
+    callIpc<void>("download_and_install_update"),
 };

@@ -885,6 +885,22 @@ pub fn probe_video(
 
 // === SECTION 4 END ===
 
+/// 根据输出路径扩展名推断 ffmpeg 字幕编码器名称。
+/// 返回 (codec_arg, format_arg?)：format_arg 仅在扩展名与原 codec 不一致时需要显式指定。
+/// 扩展名 → codec：.srt→srt，.ass/.ssa→ass，.vtt→webvtt，其余默认 srt。
+fn subtitle_codec_for_path(output_path: &str) -> &'static str {
+    let ext = Path::new(output_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "ass" | "ssa" => "ass",
+        "vtt" => "webvtt",
+        _ => "srt",
+    }
+}
+
 /// 提取字幕流到文件
 /// stream_index: 字幕流索引
 /// output_path: 输出文件路径（扩展名决定格式：.srt / .ass / .vtt）
@@ -910,6 +926,14 @@ pub fn extract_subtitle_stream(
     let ffmpeg_video_path = normalize_path_for_ffmpeg(video_path);
     let ffmpeg_output_path = normalize_path_for_ffmpeg(output_path);
 
+    // 根据输出扩展名选择字幕编码器，保留 ass/vtt 原格式
+    let subtitle_codec = subtitle_codec_for_path(output_path);
+    tracing::info!(
+        "字幕提取输出格式: ext-based codec={} (output={})",
+        subtitle_codec,
+        output_path
+    );
+
     // 启动 ffmpeg 进程（加 -progress pipe:1 让 ffmpeg 输出进度到 stdout）
     let mut child = no_window(Command::new(&ffmpeg))
         .args([
@@ -920,7 +944,7 @@ pub fn extract_subtitle_stream(
             "-map",
             &format!("0:{}", stream_index),
             "-c:s",
-            "srt", // 文本字幕统一输出为 srt 格式
+            subtitle_codec,
             &ffmpeg_output_path,
         ])
         .stdout(std::process::Stdio::piped())

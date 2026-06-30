@@ -56,6 +56,7 @@
   "subtitle": {
     "original": "原文",
     "translated": "译文",
+    "translateFailed": "翻译失败",
     "edit": "编辑字幕",
     "save": "保存字幕",
     "export": "导出字幕",
@@ -269,7 +270,30 @@
     "authFailed": "{{provider}} 搜索鉴权失败，请检查 API Key",
     "networkError": "{{provider}} 搜索网络错误",
     "notConfigured": "未配置字幕搜索，请在设置中配置 API Key",
-    "downloadFailed": "字幕下载失败（来自 {{provider}}）"
+    "downloadFailed": "字幕下载失败（来自 {{provider}}）",
+    "source": {
+      "opensubtitles": "OpenSubtitles",
+      "subhd": "SubHD",
+      "zimuku": "字幕库"
+    },
+    "goProxySettings": "去设置代理",
+    "captchaPlaceholder": "请输入验证码",
+    "captchaSubmit": "继续"
+  },
+  "update": {
+    "title": "发现新版本",
+    "newVersionAvailable": "发现新版本 v{{version}}，是否立即更新？",
+    "installNow": "立即更新",
+    "later": "稍后",
+    "downloading": "正在下载更新...",
+    "installed": "更新已安装",
+    "relaunchHint": "需要重启应用以完成更新",
+    "relaunch": "立即重启",
+    "failed": "更新失败",
+    "retry": "重试",
+    "checkButton": "检查更新",
+    "alreadyLatest": "当前已是最新版本",
+    "checkFailed": "检查更新失败，请检查网络"
   },
   "player": {
     "notDownloaded": "播放组件未下载，请先点击下载按钮",

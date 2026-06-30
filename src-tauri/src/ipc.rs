@@ -3,7 +3,7 @@
 
 use crate::config;
 use crate::db::{Database, HistoryRecord, RecentFile};
-use crate::error::{ipc_result, AppError, IpcError, IpcResult};
+use crate::error::{ipc_result, AppError, IpcError, IpcResult, Severity};
 use crate::ffmpeg;
 use crate::subtitle;
 use crate::translate::{self, TranslateProvider, ProviderCredentials, ProxyConfig};
@@ -50,6 +50,8 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         check_merge_space,
         search_subtitles_online,
         download_subtitle_online,
+        simplify_search_keyword,
+        search_subtitles_with_captcha,
         register_video_menu,
         unregister_video_menu,
         register_subtitle_menu,
@@ -79,7 +81,10 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         set_proxy,
         get_proxy,
         get_system_lang,
+        get_work_area,
         toggle_devtools,
+        check_for_update,
+        download_and_install_update,
     ])
 }
 
@@ -383,21 +388,19 @@ pub async fn translate_subtitle(
     let region_ref = format!("translate_{}_region", provider);
     let region = db.get_config(&region_ref).map_err(to_ipc_err)?;
 
-    // 尝试从 keyring 读取密钥，如果失败则从 config 表读取
+    // 从 keyring 读取密钥（不降级到明文数据库，凭据仅存系统密钥环）
     let secret = match config::CredentialStore::load(&provider, "secret") {
         Ok(s) => {
             tracing::info!("translate_subtitle secret from keyring: 已获取");
             Some(s)
         }
         Err(AppError::StorageCredentialNotFound { .. }) => {
-            tracing::warn!("translate_subtitle keyring: 凭据未找到, 尝试 config 表");
-            let secret_key_ref = format!("translate_{}_secret", provider);
-            db.get_config(&secret_key_ref).map_err(to_ipc_err)?
+            tracing::info!("translate_subtitle keyring: 凭据未配置");
+            None
         }
         Err(e) => {
-            tracing::warn!("translate_subtitle keyring 读取失败: {}, 尝试 config 表", e);
-            let secret_key_ref = format!("translate_{}_secret", provider);
-            db.get_config(&secret_key_ref).map_err(to_ipc_err)?
+            tracing::warn!("translate_subtitle keyring 读取失败: {}", e);
+            None
         }
     };
     tracing::info!("translate_subtitle secret: {:?}", if secret.is_some() { "Some" } else { "None" });
@@ -414,12 +417,22 @@ pub async fn translate_subtitle(
     };
 
     let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &ProxyConfig::load_from_db(&db)).map_err(to_ipc_err)?;
+
+    // 读取用户配置的并发数，计算实际并发 = min(用户配置, QPS 上限)
+    let user_concurrency = db.get_config("translate_concurrency")
+        .map_err(to_ipc_err)?
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3);
+    let effective_conc = translate::TranslateProvider::effective_concurrency(user_concurrency, &prov);
+    tracing::info!("翻译并发: 用户配置={}, QPS上限={}, 实际并发={}", user_concurrency, prov.qps_limit(), effective_conc);
+
     let scheduler = translate::TranslateScheduler::with_cancel_token(
         &db,
         prov_instance,
         provider.clone(),
         cancel_token.inner().clone(),
-    );
+    )
+    .with_concurrency(effective_conc);
 
     // 进度回调：通过 Tauri 事件推送进度
     let app_handle = app.clone();
@@ -439,6 +452,7 @@ pub async fn translate_subtitle(
             "original": entry.original,
             "translated": entry.translated,
             "from_cache": entry.from_cache,
+            "failed": entry.failed,
         }));
     });
 
@@ -496,7 +510,8 @@ pub async fn get_cached_translations(
     // 获取凭据（缓存查询不需要凭据，但需要 provider_name）
     let scheduler = translate::TranslateScheduler::new(
         &db,
-        Box::new(translate::BaiduProvider::new(String::new(), String::new())) as Box<dyn translate::TranslateProviderTrait>,
+        std::sync::Arc::new(translate::BaiduProvider::new(String::new(), String::new()))
+            as std::sync::Arc<dyn translate::TranslateProviderTrait + Send + Sync>,
         prov.as_str().to_string(),
     );
 
@@ -623,23 +638,82 @@ pub fn check_merge_space(video_path: String) -> Result<serde_json::Value, IpcErr
 // === SECTION 3 END ===
 
 /// search_subtitles_online：在线搜索字幕
+/// source: "opensubtitles" | "subhd" | "zimuku"
 #[tauri::command]
-pub fn search_subtitles_online(
+pub async fn search_subtitles_online(
     query: String,
     language: String,
     api_key: String,
-) -> IpcResult<Vec<crate::search::SubtitleSearchResult>> {
-    ipc_result(crate::search::search_subtitles(&query, &language, &api_key))
+    source: Option<String>,
+    db: State<'_, Database>,
+) -> Result<IpcResult<Vec<crate::search::SubtitleSearchResult>>, ()> {
+    let src = source.unwrap_or_else(|| "opensubtitles".to_string());
+    // 读取代理配置
+    let proxy = crate::translate::ProxyConfig::load_from_db(&db);
+    // SubHD/zimuku 使用 blocking HTTP，放到 spawn_blocking 避免阻塞 UI 线程
+    let result = tokio::task::spawn_blocking(move || {
+        crate::search::search_subtitles_multi(&query, &language, &api_key, &src, &proxy)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::SearchNetworkError {
+        provider: "search".to_string(),
+        detail: format!("spawn_blocking 失败: {}", e),
+    });
+    Ok(match result {
+        Ok(inner) => ipc_result(inner),
+        Err(e) => ipc_result(Err(e)),
+    })
 }
 
 /// download_subtitle_online：下载在线字幕
+/// subtitle_id 中带 provider 前缀（如 "subhd:..." / "zimuku:..."），OpenSubtitles 为纯数字
 #[tauri::command]
-pub fn download_subtitle_online(
+pub async fn download_subtitle_online(
     subtitle_id: String,
     api_key: String,
     output_path: String,
 ) -> IpcResult<()> {
-    ipc_result(crate::search::download_subtitle(&subtitle_id, &api_key, std::path::Path::new(&output_path)))
+    let result = tokio::task::spawn_blocking(move || {
+        crate::search::download_subtitle_multi(&subtitle_id, &api_key, std::path::Path::new(&output_path))
+    })
+    .await
+    .map_err(|_| crate::error::AppError::SearchDownloadFailed {
+        provider: "search".to_string(),
+    });
+    match result {
+        Ok(inner) => ipc_result(inner),
+        Err(e) => ipc_result(Err(e)),
+    }
+}
+
+/// simplify_search_keyword：简化视频文件名为搜索关键词
+#[tauri::command]
+pub fn simplify_search_keyword(filename: String) -> IpcResult<String> {
+    ipc_result(Ok(crate::search::simplify_keyword(&filename)))
+}
+
+/// search_subtitles_with_captcha：带验证码继续搜索（zimuku 云锁验证码）
+#[tauri::command]
+pub async fn search_subtitles_with_captcha(
+    query: String,
+    source: String,
+    captcha: String,
+    session_cookie: String,
+    db: State<'_, Database>,
+) -> Result<IpcResult<Vec<crate::search::SubtitleSearchResult>>, ()> {
+    let proxy = crate::translate::ProxyConfig::load_from_db(&db);
+    let result = tokio::task::spawn_blocking(move || {
+        crate::search::search_subtitles_with_captcha(&query, &source, &captcha, &session_cookie, &proxy)
+    })
+    .await
+    .map_err(|e| crate::error::AppError::SearchNetworkError {
+        provider: "search".to_string(),
+        detail: format!("spawn_blocking 失败: {}", e),
+    });
+    Ok(match result {
+        Ok(inner) => ipc_result(inner),
+        Err(e) => ipc_result(Err(e)),
+    })
 }
 
 /// register_video_menu：注册视频右键菜单
@@ -1057,3 +1131,174 @@ pub fn toggle_devtools(app: tauri::AppHandle, open: bool) {
         }
     }
 }
+
+/// get_work_area：获取当前窗口所在显示器的工作区（排除任务栏），物理像素
+/// 返回 { x, y, width, height }，前端用于约束窗口位置不超出可见区域
+#[tauri::command]
+pub fn get_work_area(app: tauri::AppHandle) -> IpcResult<serde_json::Value> {
+    #[cfg(windows)]
+    {
+        use tauri::Manager;
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITOR_DEFAULTTONEAREST, MONITORINFO,
+        };
+
+        let hwnd = if let Some(window) = app.get_webview_window("main") {
+            // 获取窗口 HWND
+            match window.hwnd() {
+                Ok(h) => h,
+                Err(_) => {
+                    return ipc_result(Err(crate::error::AppError::Unknown {
+                        detail: "无法获取窗口句柄".to_string(),
+                    }))
+                }
+            }
+        } else {
+            // fallback：前台窗口
+            unsafe { GetForegroundWindow() }
+        };
+
+        unsafe {
+            let hmonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            let mut mi = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
+            if GetMonitorInfoW(hmonitor, &mut mi).as_bool() {
+                let rc = mi.rcWork;
+                tracing::info!(
+                    "工作区: x={}, y={}, w={}, h={}",
+                    rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top
+                );
+                return ipc_result(Ok(serde_json::json!({
+                    "x": rc.left,
+                    "y": rc.top,
+                    "width": rc.right - rc.left,
+                    "height": rc.bottom - rc.top,
+                })));
+            }
+        }
+        ipc_result(Err(crate::error::AppError::Unknown {
+            detail: "GetMonitorInfoW 失败".to_string(),
+        }))
+    }
+    #[cfg(not(windows))]
+    {
+        // 非 Windows：返回整个屏幕（无法获取工作区）
+        let _ = app;
+        ipc_result(Ok(serde_json::json!({
+            "x": 0, "y": 0, "width": 1920, "height": 1080,
+        })))
+    }
+}
+
+// === SECTION 7: 自动更新 ===
+
+/// 更新信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UpdateInfo {
+    pub available: bool,
+    pub version: String,
+    pub notes: String,
+    pub pub_date: String,
+}
+
+/// check_for_update：检查是否有新版本
+#[tauri::command]
+pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, IpcError> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| IpcError::new("update.check_failed", Severity::Recoverable).with_args(serde_json::json!({ "detail": e.to_string() })))?;
+    match updater.check().await {
+        Ok(Some(update)) => {
+            tracing::info!("发现新版本: {}", update.version);
+            let pub_date = update.date.map(|d| d.to_string()).unwrap_or_default();
+            Ok(UpdateInfo {
+                available: true,
+                version: update.version.clone(),
+                notes: update.body.clone().unwrap_or_default(),
+                pub_date,
+            })
+        }
+        Ok(None) => {
+            tracing::info!("当前已是最新版本");
+            Ok(UpdateInfo {
+                available: false,
+                version: String::new(),
+                notes: String::new(),
+                pub_date: String::new(),
+            })
+        }
+        Err(e) => {
+            tracing::warn!("检查更新失败: {}", e);
+            Err(IpcError::new("update.check_failed", Severity::Recoverable).with_args(serde_json::json!({ "detail": e.to_string() })))
+        }
+    }
+}
+
+/// download_and_install_update：下载并安装更新
+/// 通过 emit "update_download_progress" 事件推送进度
+#[tauri::command]
+pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), IpcError> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|e| IpcError::new("update.check_failed", Severity::Recoverable).with_args(serde_json::json!({ "detail": e.to_string() })))?;
+    let update = updater.check().await
+        .map_err(|e| IpcError::new("update.check_failed", Severity::Recoverable).with_args(serde_json::json!({ "detail": e.to_string() })))?
+        .ok_or_else(|| IpcError::new("update.no_update", Severity::Recoverable))?;
+
+    let _ = app.emit("update_download_progress", serde_json::json!({
+        "stage": "downloading", "progress": 0, "message": "开始下载更新..."
+    }));
+
+    let app_handle = app.clone();
+    let mut downloaded: u64 = 0;
+    let mut total_size: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
+    let download_start = std::time::Instant::now();
+
+    let result = update.download_and_install(
+        |chunk_len, content_length| {
+            downloaded += chunk_len as u64;
+            if total_size == 0 {
+                if let Some(cl) = content_length { total_size = cl; }
+            }
+            if last_emit.elapsed() > std::time::Duration::from_millis(200) {
+                let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+                let elapsed = download_start.elapsed().as_secs_f64();
+                let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
+                let speed_mb = speed_bps / 1024.0 / 1024.0;
+                let remaining_bytes = total_size.saturating_sub(downloaded);
+                let eta_secs = if speed_bps > 0.0 { remaining_bytes as f64 / speed_bps } else { 0.0 };
+                let _ = app_handle.emit("update_download_progress", serde_json::json!({
+                    "stage": "downloading", "progress": pct,
+                    "speed_mbps": (speed_mb * 10.0).round() / 10.0,
+                    "eta_secs": eta_secs.round() as u64,
+                    "message": format!("下载中 {}% ({} / {} MB)",
+                        pct, downloaded / 1024 / 1024, total_size / 1024 / 1024)
+                }));
+                last_emit = std::time::Instant::now();
+            }
+        },
+        || {
+            let _ = app_handle.emit("update_download_progress", serde_json::json!({
+                "stage": "done", "progress": 100, "message": "下载完成，正在安装..."
+            }));
+        },
+    ).await;
+
+    match result {
+        Ok(_) => {
+            tracing::info!("更新下载安装完成，即将重启");
+            Ok(())
+        }
+        Err(e) => {
+            tracing::error!("更新下载失败: {}", e);
+            let _ = app.emit("update_download_progress", serde_json::json!({
+                "stage": "failed", "progress": 0, "message": e.to_string()
+            }));
+            Err(IpcError::new("update.download_failed", Severity::Recoverable).with_args(serde_json::json!({ "detail": e.to_string() })))
+        }
+    }
+}
+
+// === SECTION 7 END ===

@@ -77,8 +77,11 @@ function ExportPreview({ file, options, assStyle }: {
         color: assColorToCss("&HFFFFFF&"),
         WebkitTextFillColor: assColorToCss("&HFFFFFF&"),
         WebkitTextStroke: `${2 * PREVIEW_SCALE}px rgba(0,0,0,0.9)`,
+        // paint-order: stroke 让描边画在文字填充之下，避免描边盖住中文细笔画导致发黑看不清
+        paintOrder: "stroke",
         textShadow: `1px 1px 0 rgba(0,0,0,0.7)`,
         fontWeight: "bold",
+        whiteSpace: "pre-line",
       };
     }
     const s = assStyle;
@@ -95,17 +98,27 @@ function ExportPreview({ file, options, assStyle }: {
       color: cssColor,
       // WebkitTextStroke 会覆盖文字填充色，必须显式用 WebkitTextFillColor 保留文字颜色
       WebkitTextFillColor: cssColor,
+      // paint-order: stroke 让描边画在文字填充之下（与 ASS 播放器一致），
+      // 否则描边画在填充之上会盖住中文细笔画，使文字发黑看不清
+      paintOrder: "stroke",
       // 默认加粗模拟视频里字笔画的粗壮感（ASS 播放器渲染的笔画比浏览器 CSS 渲染粗）
       fontWeight: (isPrimary ? s.primary_bold : s.secondary_bold) ? "bold" : "500",
       fontStyle: (isPrimary ? s.primary_italic : s.secondary_italic) ? "italic" : "normal",
       textDecoration: (isPrimary ? s.primary_underline : s.secondary_underline) ? "underline" : "none",
       WebkitTextStroke: `${scaledOutline}px ${outlineCss}`,
       textShadow: scaledShadow > 0 ? `${scaledShadow}px ${scaledShadow}px 0 ${shadowCss}` : "none",
+      whiteSpace: "pre-line",
     };
   };
 
-  // strip ASS 覆盖标记 {\...}，避免预览显示原始标记文本
-  const stripAssTags = (s: string) => s.replace(/\{[^}]*\}/g, "");
+  // 清理预览文本：去掉 ASS 覆盖标记 {\...}、HTML 标签 <...>，并把 \N / \n 转为真实换行
+  // 否则预览会显示字面 "\N" 且中英文挤在同一行，与导出/播放效果不符
+  const stripAssTags = (s: string) =>
+    s
+      .replace(/\{[^}]*\}/g, "")
+      .replace(/<[^>]*>/g, "")
+      .replace(/\\[Nn]/g, "\n")
+      .trim();
 
   if (samples.length === 0) {
     return (
@@ -126,15 +139,15 @@ function ExportPreview({ file, options, assStyle }: {
         <div key={i} className="mb-2 w-full">
           {options.mode === "bilingual" ? (
             <>
-              <div style={lineStyle(true)} className="w-full">
+              <div style={lineStyle(true)} className="w-full whitespace-pre-line">
                 {stripAssTags(options.bilingual_translated_first ? entry.translated : entry.text)}
               </div>
-              <div style={lineStyle(false)} className="w-full">
+              <div style={lineStyle(false)} className="w-full whitespace-pre-line">
                 {stripAssTags(options.bilingual_translated_first ? entry.text : entry.translated)}
               </div>
             </>
           ) : (
-            <div style={lineStyle(true)} className="w-full">
+            <div style={lineStyle(true)} className="w-full whitespace-pre-line">
               {stripAssTags(options.monolingual_lang === "source" ? entry.text : entry.translated)}
             </div>
           )}

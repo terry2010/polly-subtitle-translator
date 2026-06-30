@@ -45,7 +45,7 @@ export default defineConfig(async () => ({
     watch: {
       ignored: [
         "**/src-tauri/**",
-        "**/*.srt", "**/*.srt", "**/*.ass", "**/*.ssa", "**/*.vtt",
+        "**/*.srt", "**/*.ass", "**/*.ssa", "**/*.vtt",
         "**/*.mkv", "**/*.mp4", "**/*.avi", "**/*.mov",
       ],
     },

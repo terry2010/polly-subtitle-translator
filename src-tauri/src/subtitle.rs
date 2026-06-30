@@ -24,6 +24,9 @@ pub struct SubtitleEntry {
     pub text: String,        // 原文（含 ass 样式标记或 srt/vtt 纯文本）
     pub translated: String,  // 译文（翻译后填充，初始为空）
     pub style: Option<String>, // ass 样式名（仅 ass 格式）
+    /// 翻译是否失败（仅内存状态，不写入字幕文件）
+    #[serde(default)]
+    pub failed: bool,
 }
 
 /// 字幕文件（解析后的统一结构）
@@ -246,7 +249,7 @@ pub fn detect_bilingual(file: &SubtitleFile) -> BilingualDetectResult {
         let mut first_lang = LangClass::Other;
 
         // 找第一个非Other语言
-        for (i, &cl) in line_langs.iter().enumerate() {
+        for &cl in line_langs.iter() {
             if cl != LangClass::Other {
                 first_lang = cl;
                 break;
@@ -328,10 +331,42 @@ fn lang_class_name(c: LangClass) -> String {
     }
 }
 
+/// 行语言分类：CJK组、非CJK组、Neutral（无字母内容的空行/纯标签行）
+#[derive(Clone, Copy, PartialEq)]
+enum LineLang {
+    Cjk,
+    NonCjk,
+    Neutral,
+}
+
+/// 判断一行的语言分类
+fn classify_line(line: &str) -> LineLang {
+    let stripped = strip_ass_tags(line);
+    let mut has_cjk = false;
+    let mut has_non_cjk = false;
+    for c in stripped.chars() {
+        if !c.is_alphabetic() {
+            continue;
+        }
+        match classify_char(c) {
+            LangClass::Cjk | LangClass::Hiragana | LangClass::Katakana | LangClass::Hangul => has_cjk = true,
+            LangClass::Latin | LangClass::Cyrillic | LangClass::Arabic => has_non_cjk = true,
+            _ => {}
+        }
+    }
+    if has_cjk {
+        LineLang::Cjk
+    } else if has_non_cjk {
+        LineLang::NonCjk
+    } else {
+        LineLang::Neutral
+    }
+}
+
 /// 拆分双语字幕：按语言分块，前半部分（语言A）填入 text，后半部分（语言B）填入 translated
-/// 算法：在剥离标签后的纯文本中找到语言切换的字符位置，再映射回原文切分。
-/// 这样即使 \N 换行落在标签内部（如 <font>中文\N中文</font><font>English</font>），
-/// 也能在正确的语言边界处切分。
+/// 算法：按 \N 分行，用三态分类（CJK/NonCjk/Neutral）找到语言切换的行边界。
+/// Neutral 行（纯标签/空行）不参与切换判断，避免空行干扰。
+/// 使用 CJK 存在性而非字符计数，避免中文行中短英文单词（如 Duh.）导致误判。
 pub fn split_bilingual(file: &mut SubtitleFile, _split_mode: SplitMode) {
     for entry in &mut file.entries {
         if is_ass_drawing(&entry.text) {
@@ -339,61 +374,92 @@ pub fn split_bilingual(file: &mut SubtitleFile, _split_mode: SplitMode) {
         }
         // \N → \n 统一换行
         let normalized = entry.text.replace("\\N", "\n").replace("\\n", "\n");
+        let lines: Vec<&str> = normalized.lines().collect();
+        if lines.len() < 2 {
+            continue;
+        }
 
-        // 剥离标签，同时建立 clean_text 字符索引 → 原文字符索引 的映射
-        let (clean_text, clean_to_orig): (String, Vec<usize>) = {
-            let mut clean = String::with_capacity(normalized.len());
-            let mut mapping = Vec::with_capacity(normalized.len());
-            let mut in_brace = false;
-            let mut in_html = false;
-            for (i, c) in normalized.char_indices() {
-                if c == '{' {
-                    in_brace = true;
-                } else if c == '}' {
-                    in_brace = false;
-                } else if c == '<' {
-                    in_html = true;
-                } else if c == '>' {
-                    in_html = false;
-                } else if !in_brace && !in_html {
-                    clean.push(c);
-                    mapping.push(i);
+        // 三态分类每行
+        let line_langs: Vec<LineLang> = lines.iter().map(|l| classify_line(l)).collect();
+
+        // 找第一个 CJK 行和第一个非 CJK 行（跳过 Neutral）
+        let first_cjk = line_langs.iter().position(|&x| x == LineLang::Cjk);
+        let first_non_cjk = line_langs.iter().position(|&x| x == LineLang::NonCjk);
+
+        if first_cjk.is_none() || first_non_cjk.is_none() {
+            continue; // 只有一种语言，无需拆分
+        }
+
+        let first_cjk = first_cjk.unwrap();
+        let first_non_cjk = first_non_cjk.unwrap();
+
+        // 确定切换方向：CJK 在前还是非 CJK 在前
+        let (split_line, cjk_first) = if first_cjk < first_non_cjk {
+            // CJK 在前：找最后一个 CJK 行，切换行 = 其后第一个非 Neutral 行
+            let last_cjk = line_langs.iter().rposition(|&x| x == LineLang::Cjk).unwrap();
+            // 找切换行：last_cjk 之后第一个 NonCjk 行
+            let mut switch = None;
+            for (i, &ll) in line_langs.iter().enumerate().skip(last_cjk + 1) {
+                if ll == LineLang::NonCjk {
+                    switch = Some(i);
+                    break;
+                }
+                // Neutral 行可以跳过，但如果遇到 Cjk 则模式不纯
+                if ll == LineLang::Cjk {
+                    break;
                 }
             }
-            (clean, mapping)
+            match switch {
+                Some(sl) => (sl, true),
+                None => continue,
+            }
+        } else {
+            // 非 CJK 在前：找最后一个非 CJK 行，切换行 = 其后第一个 CJK 行
+            let last_non_cjk = line_langs.iter().rposition(|&x| x == LineLang::NonCjk).unwrap();
+            let mut switch = None;
+            for (i, &ll) in line_langs.iter().enumerate().skip(last_non_cjk + 1) {
+                if ll == LineLang::Cjk {
+                    switch = Some(i);
+                    break;
+                }
+                if ll == LineLang::NonCjk {
+                    break;
+                }
+            }
+            match switch {
+                Some(sl) => (sl, false),
+                None => continue,
+            }
         };
 
-        // 在 clean_text 中找语言切换点
-        // 策略：找第一个非 Other 语言作为 first_lang，
-        // 然后找第一个与 first_lang 不同的非 Other 语言字符作为切换点
-        let mut first_lang = LangClass::Other;
-        let mut first_lang_end = 0usize; // clean_text 中 first_lang 连续段的结束位置
-
-        for (i, c) in clean_text.chars().enumerate() {
-            if c.is_alphabetic() {
-                let cls = classify_char(c);
-                if cls != LangClass::Other {
-                    if first_lang == LangClass::Other {
-                        first_lang = cls;
-                    }
-                    if cls == first_lang || !is_different_lang(cls, first_lang) {
-                        first_lang_end = i + 1;
-                    } else if first_lang_end > 0 {
-                        // 找到切换点：在原文中找到对应的切分位置
-                        let orig_pos = clean_to_orig.get(i).copied().unwrap_or(normalized.len());
-                        let orig_split = find_tag_start_before(&normalized, orig_pos);
-                        let a = &normalized[..orig_split];
-                        let b = &normalized[orig_split..];
-                        if !a.is_empty() && !b.is_empty() {
-                            entry.text = a.to_string();
-                            entry.translated = b.to_string();
-                        }
-                        break;
-                    }
-                }
+        // 在原文中找到切换行的起始位置
+        let mut byte_offset = 0usize;
+        for line in lines.iter().take(split_line) {
+            byte_offset += line.len() + 1; // +1 for \n
+        }
+        // 往前找标签起始位置（如 {\rSecondary}）
+        let orig_split = find_tag_start_before(&normalized, byte_offset);
+        let a = &normalized[..orig_split];
+        let b = &normalized[orig_split..];
+        let clean_a = clean_split_text(a);
+        let clean_b = clean_split_text(b);
+        if !clean_a.is_empty() && !clean_b.is_empty() {
+            if cjk_first {
+                entry.text = clean_a;
+                entry.translated = clean_b;
+            } else {
+                entry.text = clean_b;
+                entry.translated = clean_a;
             }
         }
     }
+}
+
+/// 清理拆分后的字幕文本：剥离 ASS/HTML 标签，去除首尾多余换行和空白
+fn clean_split_text(s: &str) -> String {
+    let stripped = strip_ass_tags(s);
+    let trimmed = stripped.trim_matches(|c: char| c == '\n' || c == '\r' || c.is_whitespace());
+    trimmed.to_string()
 }
 
 // === 双语检测模块 END ===
@@ -402,11 +468,15 @@ pub fn split_bilingual(file: &mut SubtitleFile, _split_mode: SplitMode) {
 /// 切分点选在标签开始处，这样标签及其内容完整归到后半部分
 fn find_tag_start_before(text: &str, orig_pos: usize) -> usize {
     let bytes = text.as_bytes();
+    // 先检查 orig_pos 自身是否就是标签起始
+    if orig_pos < bytes.len() && (bytes[orig_pos] == b'{' || bytes[orig_pos] == b'<') {
+        return orig_pos;
+    }
     let mut pos = orig_pos;
     while pos > 0 {
         let b = bytes[pos - 1];
         if b == b'<' || b == b'{' {
-            return pos;
+            return pos - 1;
         }
         pos -= 1;
     }
@@ -505,6 +575,7 @@ pub fn parse_srt(content: &str) -> Result<SubtitleFile, AppError> {
             text,
             translated: String::new(),
             style: None,
+            failed: false,
         });
     }
 
@@ -656,6 +727,7 @@ pub fn parse_vtt(content: &str) -> Result<SubtitleFile, AppError> {
             text,
             translated: String::new(),
             style: None,
+            failed: false,
         });
     }
 
@@ -767,6 +839,7 @@ pub fn parse_ass(content: &str) -> Result<SubtitleFile, AppError> {
                     text,
                     translated: String::new(),
                     style: Some(style),
+                    failed: false,
                 });
             }
         }
@@ -856,6 +929,7 @@ fn parse_ass_fallback(content: &str) -> Result<SubtitleFile, AppError> {
                     text,
                     translated: String::new(),
                     style: Some(style),
+                    failed: false,
                 });
             }
         }
@@ -1273,11 +1347,12 @@ fn render_ass_with_options(file: &SubtitleFile, options: &ExportOptions) -> Stri
                 } else {
                     &entry.translated
                 };
+                let text = normalize_ass_newline(&strip_inline_ass_and_html_tags(text));
                 s.push_str(&format!(
                     "Dialogue: 0,{},{},Default,,0,0,0,,{}\n",
                     format_ass_timecode(entry.start_ms),
                     format_ass_timecode(entry.end_ms),
-                    normalize_ass_newline(text)
+                    text
                 ));
             }
             ExportMode::Bilingual => {
@@ -1287,24 +1362,26 @@ fn render_ass_with_options(file: &SubtitleFile, options: &ExportOptions) -> Stri
                 } else {
                     (&entry.text, &entry.translated)
                 };
+                let first = normalize_ass_newline(&strip_inline_ass_and_html_tags(first));
+                let second = normalize_ass_newline(&strip_inline_ass_and_html_tags(second));
                 // 如果其中一方为空，只输出非空的一方（用 Default 样式，避免空行）
-                let text = if first.is_empty() && second.is_empty() {
+                let text = if first.trim().is_empty() && second.trim().is_empty() {
                     String::new()
-                } else if first.is_empty() {
+                } else if first.trim().is_empty() {
                     // 只有 second（原文），用 Secondary 样式
-                    format!("{{\\rSecondary}}{}", normalize_ass_newline(second))
-                } else if second.is_empty() {
+                    format!("{{\\rSecondary}}{}", second)
+                } else if second.trim().is_empty() {
                     // 只有 first（译文），用 Primary 样式
-                    format!("{{\\rPrimary}}{}", normalize_ass_newline(first))
+                    format!("{{\\rPrimary}}{}", first)
                 } else {
                     // 双语：\N 放在 override block 外部，避免重新加载时语言检测失败
                     format!(
                         "{{\\rPrimary}}{}\\N{{\\rSecondary}}{}",
-                        normalize_ass_newline(first),
-                        normalize_ass_newline(second)
+                        first,
+                        second
                     )
                 };
-                let style_name = if first.is_empty() && !second.is_empty() {
+                let style_name = if first.trim().is_empty() && !second.trim().is_empty() {
                     "Secondary"
                 } else {
                     "Primary"
@@ -1361,8 +1438,31 @@ fn format_style_line(
     )
 }
 
+/// 导出 ASS 时剥离条目内已有的 ASS/HTML 内联样式标记，避免覆盖用户在导出弹层里配置的统一样式。
+/// 例如：源字幕里的 `{\r60字体 美剧 中文}`、`<font size="24">` 等会导致播放器最终效果与预览严重不一致。
+fn strip_inline_ass_and_html_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_brace = false;
+    let mut in_html = false;
+    for c in s.chars() {
+        if c == '{' {
+            in_brace = true;
+        } else if c == '}' {
+            in_brace = false;
+        } else if c == '<' {
+            in_html = true;
+        } else if c == '>' {
+            in_html = false;
+        } else if !in_brace && !in_html {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// 把硬换行（\r\n / \n / \r）统一转为 ASS 的 \N。
-/// 不转义 { }——entry.text 中的 ASS 覆盖标记（如 {\b1}）必须原样保留让播放器渲染。
+/// 注意：导出链路会先调用 strip_inline_ass_and_html_tags 剥离源条目内联样式标记，
+/// 这里仅做换行标准化。
 fn normalize_ass_newline(s: &str) -> String {
     s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\\N")
 }
@@ -1637,6 +1737,41 @@ Dialogue: 0,0:00:06.92,0:00:08.38,Default,,0,0,0,,<font size=\"24\">因为失业
     }
 
     #[test]
+    fn test_export_ass_strips_inline_tags_to_match_preview() {
+        // 输入条目内含 ASS/HTML 内联样式标记；导出应剥离这些内联标记，
+        // 只保留导出模板注入的 Primary/Secondary 样式，避免播放器效果与预览差异过大。
+        let file = SubtitleFile {
+            format: SubtitleFormat::Ass,
+            entries: vec![SubtitleEntry {
+                index: 0,
+                start_ms: 0,
+                end_ms: 2000,
+                text: "{\\r60字体 美剧 中文}<font size=\"24\">噢，我们可以取笑你</font>".to_string(),
+                translated: "{\\r60字体 美剧 英文}<font size=\"18\">Aw. We can make fun of you</font>".to_string(),
+                style: Some("Default".to_string()),
+                failed: false,
+            }],
+            raw_header: None,
+            source_path: None,
+        };
+        let opts = ExportOptions {
+            format: SubtitleFormat::Ass,
+            mode: ExportMode::Bilingual,
+            monolingual_lang: None,
+            bilingual_translated_first: Some(true),
+            ass_style: None,
+            video_width: Some(1280),
+            video_height: Some(720),
+        };
+        let out = render_ass_with_options(&file, &opts);
+        // 事件文本里应只含导出模板样式，不再含源内联样式标签
+        assert!(out.contains("{\\rPrimary}Aw. We can make fun of you\\N{\\rSecondary}噢，我们可以取笑你"));
+        assert!(!out.contains("{\\r60字体 美剧 中文}"));
+        assert!(!out.contains("{\\r60字体 美剧 英文}"));
+        assert!(!out.contains("<font"));
+    }
+
+    #[test]
     fn test_detect_and_split_already_exported_broken_file() {
         // 真实案例：本软件之前（有 bug 时）导出的 ASS 双语文件
         // 因为检测失败，translated 为空，全部内容堆在 text 里，导出后格式错乱
@@ -1711,5 +1846,136 @@ Dialogue: 0,0:21:36.62,0:21:38.88,Secondary,,0,0,0,,{\\rSecondary}So it's all ha
         // multiline_count = 5(双语) + 2(纯英文多行) = 7
         // threshold = 7*3/5 = 4, matched = 5 >= 4 → 检测成功
         assert!(result.is_bilingual, "应检测出双语：matched={}, total={}", result.matched_count, result.total_count);
+    }
+
+    #[test]
+    fn test_split_bilingual_cjk_line_with_english_name() {
+        // 真实案例：本软件导出的 ASS 双语字幕，中文行中混有英文人名 "Sum Sum"
+        // 旧算法（逐字符扫描）会在 "S" 处误判为语言切换点，导致中文行被截断
+        // 新算法（行级别检测）应正确在 {\rSecondary} 处切分
+        let content = "[Script Info]\nTitle: AI-SubTrans Export\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Primary,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Secondary,Arial,30,&HCCCCCC&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Default,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:01:14.82,0:01:17.24,Primary,,0,0,0,,{\\rPrimary}你吃的所有东西\\N设计用于扩展。\\N{\\rSecondary}Everything you ate\\Nis designed to expand.\n\
+Dialogue: 0,0:01:17.32,0:01:19.53,Primary,,0,0,0,,{\\rPrimary}[打嗝]\\N说得好，Sum Sum。\\N{\\rSecondary}[ Belches ]\\NGood point, Sum-Sum.\n\
+Dialogue: 0,0:01:19.62,0:01:22.20,Primary,,0,0,0,,{\\rPrimary}我们去找爷爷。\\N新学期。\\N{\\rSecondary}L-Let's get grandpa.\\Nnew tum tum.\n";
+        let mut file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 3);
+
+        // 检测双语
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语：matched={}, total={}", result.matched_count, result.total_count);
+
+        // 拆分
+        split_bilingual(&mut file, SplitMode::EvenFirst);
+
+        // 第2条是关键测试：中文行含 "Sum Sum" 英文人名
+        assert!(file.entries[1].text.contains("说得好"), "text 应含中文'说得好'：{}", file.entries[1].text);
+        assert!(file.entries[1].text.contains("Sum Sum"), "text 应含英文人名 'Sum Sum'：{}", file.entries[1].text);
+        assert!(!file.entries[1].text.contains("Good point"), "text 不应含英文翻译：{}", file.entries[1].text);
+        assert!(file.entries[1].translated.contains("Good point"), "translated 应含英文：{}", file.entries[1].translated);
+        assert!(!file.entries[1].translated.contains("说得好"), "translated 不应含中文：{}", file.entries[1].translated);
+        // 不应有残留 ASS 标签
+        assert!(!file.entries[1].text.contains("{\\r"), "text 不应含 ASS 样式标签：{}", file.entries[1].text);
+        assert!(!file.entries[1].translated.contains("{\\r"), "translated 不应含 ASS 样式标签：{}", file.entries[1].translated);
+    }
+
+    #[test]
+    fn test_split_bilingual_primary_at_pos_zero() {
+        // 真实案例：本软件导出的 ASS 双语字幕，{\rPrimary} 在字符串位置 0
+        // 旧版 find_tag_start_before 不检查 orig_pos 自身，越过 \n 找到位置 0 的 {
+        // 导致 a="" 切分失败。修复后应正确在 {\rSecondary} 处切分。
+        let content = "[Script Info]\nTitle: AI-SubTrans Export\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Primary,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Secondary,Arial,30,&HCCCCCC&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Default,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:02.79,0:00:04.63,Primary,,0,0,0,,{\\rPrimary}[放声大哭]\\N{\\rSecondary}[ Gulping loudly ]\n\
+Dialogue: 0,0:00:04.71,0:00:05.67,Primary,,0,0,0,,{\\rPrimary}啊！\\N{\\rSecondary}Ahh!\n\
+Dialogue: 0,0:00:05.75,0:00:06.96,Primary,,0,0,0,,{\\rPrimary}什么？\\N没有什么。\\N{\\rSecondary}What?\\NNothing.\n\
+Dialogue: 0,0:00:07.00,0:00:08.34,Primary,,0,0,0,,{\\rPrimary}只是等待\\N让你完成。\\N{\\rSecondary}Just waiting\\Nfor you to finish.\n";
+        let mut file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 4);
+
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语：matched={}, total={}", result.matched_count, result.total_count);
+
+        split_bilingual(&mut file, SplitMode::EvenFirst);
+
+        // 所有条目都应成功拆分
+        for (i, e) in file.entries.iter().enumerate() {
+            assert!(!e.text.is_empty(), "entry[{}] text 不应为空", i);
+            assert!(!e.translated.is_empty(), "entry[{}] translated 不应为空", i);
+            assert!(!e.text.contains("{\\r"), "entry[{}] text 不应含 ASS 标签：{}", i, e.text);
+            assert!(!e.translated.contains("{\\r"), "entry[{}] translated 不应含 ASS 标签：{}", i, e.translated);
+            assert!(!e.translated.contains("\\rSecondary"), "entry[{}] translated 不应含残留 \\rSecondary：{}", i, e.translated);
+        }
+
+        // 验证具体内容
+        assert!(file.entries[0].text.contains("放声大哭"), "entry[0] text：{}", file.entries[0].text);
+        assert!(file.entries[0].translated.contains("Gulping"), "entry[0] translated：{}", file.entries[0].translated);
+
+        assert!(file.entries[1].text.contains("啊"), "entry[1] text：{}", file.entries[1].text);
+        assert!(file.entries[1].translated.contains("Ahh"), "entry[1] translated：{}", file.entries[1].translated);
+
+        assert!(file.entries[2].text.contains("什么"), "entry[2] text：{}", file.entries[2].text);
+        assert!(file.entries[2].translated.contains("What"), "entry[2] translated：{}", file.entries[2].translated);
+    }
+
+    #[test]
+    fn test_split_bilingual_tag_start_off_by_one() {
+        // 真实案例 #508：{\rPrimary}W-你为什么会猜到？\N{\rSecondary}W-Why would you guess that?
+        // {\rSecondary} 的 { 在 byte_offset-3 处（前面有 \n），
+        // 旧版 find_tag_start_before 返回 pos 而非 pos-1，导致 { 留在 a 中，
+        // b 以 \rSecondary} 开头，strip_ass_tags 无法剥离（没有配对的 {）
+        let content = "[Script Info]\nTitle: AI-SubTrans Export\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Primary,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Secondary,Arial,30,&HCCCCCC&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Default,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:19:29.75,0:19:31.04,Primary,,0,0,0,,{\\rPrimary}你只是吸\\N你自己的鸡巴在里面？\\N{\\rSecondary}Did you just suck\\Nyour own dick in there?\n\
+Dialogue: 0,0:19:31.12,0:19:32.29,Primary,,0,0,0,,{\\rPrimary}哇！\\N不，我没有！\\N{\\rSecondary}Whoa!\\NNo, I didn't!\n\
+Dialogue: 0,0:19:32.38,0:19:33.71,Primary,,0,0,0,,{\\rPrimary}W-你为什么会猜到？\\N{\\rSecondary}W-Why would you guess that?\n\
+Dialogue: 0,0:19:33.75,0:19:35.46,Primary,,0,0,0,,{\\rPrimary}你为什么要那么做？！\\N我没有！\\N{\\rSecondary}Why would you do that?!\\NI didn't!\n";
+        let mut file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 4);
+
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语");
+
+        split_bilingual(&mut file, SplitMode::EvenFirst);
+
+        // #508 是 entry[2]：W-你为什么会猜到？\NW-Why would you guess that?
+        let e = &file.entries[2];
+        assert!(!e.text.is_empty(), "text 不应为空：{}", e.text);
+        assert!(!e.translated.is_empty(), "translated 不应为空：{}", e.translated);
+        assert!(e.text.contains("你为什么"), "text 应含中文：{}", e.text);
+        assert!(e.translated.contains("Why would"), "translated 应含英文：{}", e.translated);
+        // 关键验证：不应有残留的 \rSecondary 或 rSecondary
+        assert!(!e.translated.contains("rSecondary"), "translated 不应含残留 rSecondary：{}", e.translated);
+        assert!(!e.text.contains("rPrimary}"), "text 不应含残留 rPrimary}}：{}", e.text);
+        assert!(!e.translated.contains("{\\r"), "translated 不应含 ASS 标签：{}", e.translated);
+    }
+
+    #[test]
+    fn test_split_bilingual_cjk_line_with_short_english() {
+        // 真实案例 #89：{\rPrimary}夏季：Duh.\N看起来我谋杀了一个人。\N{\rSecondary}Summer: Duh.\NIt looks like I murdered a guy.
+        // 旧算法用 detect_line_lang 按字符计数：夏季(Duh.) = 2 CJK vs 3 Latin → 误判为 Latin
+        // 新算法用 CJK 存在性：含"夏季"→ CJK 行，不因短英文单词误判
+        let content = "[Script Info]\nTitle: AI-SubTrans Export\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\nWrapStyle: 0\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Primary,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Secondary,Arial,30,&HCCCCCC&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\nStyle: Default,Arial,48,&HFFFFFF&,&H000000&,&H000000&,&H000000&,0,0,0,0,100,100,0,0,1,2,1,2,10,10,40,1\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:03:37.46,0:03:39.05,Primary,,0,0,0,,{\\rPrimary}先别放松。\\N{\\rSecondary}Don't relax yet.\n\
+Dialogue: 0,0:03:39.13,0:03:40.76,Primary,,0,0,0,,{\\rPrimary}你找错地方了\\N随身携带那东西。\\N{\\rSecondary}You're in the wrong place\\Nto be toting that thing around.\n\
+Dialogue: 0,0:03:40.84,0:03:42.22,Primary,,0,0,0,,{\\rPrimary}夏季：Duh.\\N看起来我谋杀了一个人。\\N{\\rSecondary}Summer: Duh.\\NIt looks like I murdered a guy.\n\
+Dialogue: 0,0:03:42.30,0:03:43.76,Primary,,0,0,0,,{\\rPrimary}里克的头：哦，那很好。\\N{\\rSecondary}Rick's Head: Oh, that's fine.\n";
+        let mut file = parse_ass(content).unwrap();
+        assert_eq!(file.entries.len(), 4);
+
+        let result = detect_bilingual(&file);
+        assert!(result.is_bilingual, "应检测出双语");
+
+        split_bilingual(&mut file, SplitMode::EvenFirst);
+
+        // #89 是 entry[2]：夏季：Duh.\N看起来我谋杀了一个人。\NSummer: Duh.\NIt looks like I murdered a guy.
+        let e = &file.entries[2];
+        assert!(!e.text.is_empty(), "text 不应为空：{}", e.text);
+        assert!(!e.translated.is_empty(), "translated 不应为空：{}", e.translated);
+        assert!(e.text.contains("夏季"), "text 应含中文'夏季'：{}", e.text);
+        assert!(e.text.contains("Duh"), "text 应含 'Duh'：{}", e.text);
+        assert!(e.text.contains("谋杀"), "text 应含'谋杀'：{}", e.text);
+        assert!(e.translated.contains("Summer"), "translated 应含 'Summer'：{}", e.translated);
+        assert!(e.translated.contains("murdered"), "translated 应含 'murdered'：{}", e.translated);
+        assert!(!e.translated.contains("夏季"), "translated 不应含中文：{}", e.translated);
+        assert!(!e.text.contains("murdered"), "text 不应含英文翻译：{}", e.text);
+        assert!(!e.translated.contains("rSecondary"), "translated 不应含残留标签：{}", e.translated);
     }
 }

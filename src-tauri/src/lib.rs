@@ -46,6 +46,9 @@ pub fn init_logging(app_data_dir: &std::path::Path) -> tracing_appender::non_blo
     let log_dir = app_data_dir.join("logs");
     std::fs::create_dir_all(&log_dir).ok();
 
+    // 清理 7 天前的旧日志文件
+    cleanup_old_logs(&log_dir, 7);
+
     let file_appender = tracing_appender::rolling::daily(&log_dir, "zimufan.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
@@ -59,6 +62,47 @@ pub fn init_logging(app_data_dir: &std::path::Path) -> tracing_appender::non_blo
         .init();
 
     guard
+}
+
+/// 清理超过指定天数的日志文件
+fn cleanup_old_logs(log_dir: &std::path::Path, retain_days: u64) {
+    if !log_dir.exists() {
+        return;
+    }
+    let now = std::time::SystemTime::now();
+    let cutoff = std::time::Duration::from_secs(retain_days * 24 * 3600);
+    let mut removed = 0;
+    if let Ok(entries) = std::fs::read_dir(log_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // 只清理文件（不递归子目录），且文件名以 zimufan.log 开头
+            if !path.is_file() {
+                continue;
+            }
+            if let Ok(name) = entry.file_name().into_string() {
+                if !name.starts_with("zimufan.log") {
+                    continue;
+                }
+            } else {
+                continue;
+            }
+            if let Ok(metadata) = entry.metadata() {
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(age) = now.duration_since(modified) {
+                        if age > cutoff {
+                            if std::fs::remove_file(&path).is_ok() {
+                                removed += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if removed > 0 {
+        // 用 eprintln 避免在 tracing 初始化前调用 tracing
+        eprintln!("[cleanup_old_logs] 已清理 {} 个超过 {} 天的旧日志文件", removed, retain_days);
+    }
 }
 
 /// Tauri 应用入口
@@ -80,6 +124,7 @@ pub fn run() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::DragDrop(drop) = event {
                 use tauri::Emitter;
@@ -128,6 +173,45 @@ pub fn run() {
             crate::ffmpeg::init_app_data_dir(app_data_dir.clone());
 
             tracing::info!("AI-SubTrans 启动完成，数据目录: {:?}", app_data_dir);
+
+            // 显式显示窗口并获取焦点，居中到鼠标所在显示器
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(windows)]
+                {
+                    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+                    use windows::Win32::Graphics::Gdi::{MonitorFromPoint, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+                    use windows::Win32::Foundation::POINT;
+
+                    unsafe {
+                        let mut cursor = POINT { x: 0, y: 0 };
+                        if GetCursorPos(&mut cursor).is_ok() {
+                            let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+                            let mut mi = MONITORINFO {
+                                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                                ..Default::default()
+                            };
+                            if GetMonitorInfoW(monitor, &mut mi).as_bool() {
+                                let mon_left = mi.rcMonitor.left;
+                                let mon_top = mi.rcMonitor.top;
+                                let mon_w = mi.rcMonitor.right - mi.rcMonitor.left;
+                                let mon_h = mi.rcMonitor.bottom - mi.rcMonitor.top;
+
+                                let scale = window.scale_factor().unwrap_or(1.0);
+                                let win_w = 520.0 * scale;
+                                let win_h = 325.0 * scale;
+                                let x = mon_left + ((mon_w as f64 - win_w) / 2.0).round() as i32;
+                                let y = mon_top + ((mon_h as f64 - win_h) / 2.0).round() as i32;
+                                let _ = window.set_position(tauri::PhysicalPosition {
+                                    x: x.max(0),
+                                    y: y.max(0),
+                                });
+                            }
+                        }
+                    }
+                }
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
 
             // 解析命令行参数
             let cli_args = parse_cli_args();

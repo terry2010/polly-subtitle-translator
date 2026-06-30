@@ -56,6 +56,7 @@
   "subtitle": {
     "original": "Original",
     "translated": "Translation",
+    "translateFailed": "Failed",
     "edit": "Edit Subtitle",
     "save": "Save Subtitle",
     "export": "Export Subtitle",
@@ -269,7 +270,30 @@
     "authFailed": "Search API {{provider}} auth failed, check API key",
     "networkError": "Search network error for {{provider}}",
     "notConfigured": "Search provider not configured, set API key in settings",
-    "downloadFailed": "Subtitle download failed from {{provider}}"
+    "downloadFailed": "Subtitle download failed from {{provider}}",
+    "source": {
+      "opensubtitles": "OpenSubtitles",
+      "subhd": "SubHD",
+      "zimuku": "Zimuku"
+    },
+    "goProxySettings": "Configure proxy",
+    "captchaPlaceholder": "Enter captcha",
+    "captchaSubmit": "Continue"
+  },
+  "update": {
+    "title": "Update Available",
+    "newVersionAvailable": "New version v{{version}} available. Update now?",
+    "installNow": "Update Now",
+    "later": "Later",
+    "downloading": "Downloading update...",
+    "installed": "Update installed",
+    "relaunchHint": "Application restart is required to complete the update",
+    "relaunch": "Restart Now",
+    "failed": "Update failed",
+    "retry": "Retry",
+    "checkButton": "Check for Updates",
+    "alreadyLatest": "You're on the latest version",
+    "checkFailed": "Update check failed, please check your network"
   },
   "player": {
     "notDownloaded": "Player component not downloaded, click download button first",

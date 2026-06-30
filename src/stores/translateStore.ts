@@ -16,7 +16,7 @@ interface TranslateState {
   setSourceLang: (lang: string) => void;
   setTargetLang: (lang: string) => void;
   setProvider: (provider: string) => void;
-  startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string) => void) => Promise<TranslateResult | null>;
+  startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void) => Promise<TranslateResult | null>;
   cancelTranslate: () => Promise<void>;
   reset: () => void;
 }
@@ -35,7 +35,7 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
   setTargetLang: (lang) => set({ targetLang: lang }),
   setProvider: (provider) => set({ provider }),
 
-  startTranslate: async (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string) => void) => {
+  startTranslate: async (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void) => {
     // 如果正在翻译，不允许启动新的翻译任务
     if (get().translating) {
       console.warn("翻译正在进行中，跳过新任务");
@@ -62,7 +62,7 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
     if (onEntryDone) {
       try {
         unlistenEntry = await api.onTranslateEntryDone((entry) => {
-          onEntryDone(entry.index, entry.translated);
+          onEntryDone(entry.index, entry.translated, entry.failed);
         });
       } catch (e) {
         console.warn("单条监听失败:", e);

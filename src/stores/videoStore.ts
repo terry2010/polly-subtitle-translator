@@ -24,9 +24,16 @@ export const useVideoStore = create<VideoState>((set) => ({
     try {
       const result = await api.probeVideo(path);
       set({ probeResult: result, loading: false });
-      // 自动选择字幕流：优先 eng SDH，其次 eng，最后第一条非图形字幕
+      // 自动选择字幕流：优先英文 SDH（disposition 标志或 title 含 SDH/HI/CC），
+      // 其次普通英文，最后第一条非图形字幕兜底
       const subs = result.subtitle_streams.filter((s) => !s.is_graphic);
-      const engSdh = subs.find((s) => s.language === "eng" && s.disposition_hearing_impaired);
+      const isSdhTitle = (s: SubtitleStream) => {
+        const t = (s.title ?? "").toUpperCase();
+        return t.includes("SDH") || t.includes("HI") || t.includes("CC");
+      };
+      const engSdh = subs.find(
+        (s) => s.language === "eng" && (s.disposition_hearing_impaired || isSdhTitle(s))
+      );
       const eng = subs.find((s) => s.language === "eng");
       const firstSub = engSdh ?? eng ?? subs[0] ?? null;
       set({ selectedSubtitleStream: firstSub });

@@ -31,7 +31,9 @@ impl ProxyConfig {
 
     /// 构建 reqwest 代理 URL（如 mode != none）
     fn proxy_url(&self) -> Option<String> {
+        tracing::info!("ProxyConfig: mode={}, host={}, port={}, user={}", self.mode, self.host, self.port, self.username.as_deref().unwrap_or(""));
         if self.mode == "none" || self.host.is_empty() || self.port == 0 {
+            tracing::info!("代理未配置或配置不完整，使用直连");
             return None;
         }
         let scheme = if self.mode == "socks5" { "socks5" } else { "http" };
@@ -55,6 +57,34 @@ impl ProxyConfig {
                     .unwrap_or_else(|_| reqwest::Client::new())
             }
             None => reqwest::Client::new(),
+        }
+    }
+
+    /// 构建 reqwest::blocking::Client（带代理或普通），供搜索等 blocking 场景使用
+    pub fn build_blocking_client(&self) -> reqwest::blocking::Client {
+        let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+        let base = || reqwest::blocking::Client::builder()
+            .user_agent(ua)
+            .redirect(reqwest::redirect::Policy::limited(10));
+        match self.proxy_url() {
+            Some(url) => {
+                tracing::info!("搜索使用代理 URL: {}", url);
+                let result = base()
+                    .proxy(reqwest::Proxy::all(&url).unwrap_or_else(|e| {
+                        tracing::warn!("代理配置失败: {}, 使用直连", e);
+                        reqwest::Proxy::all("direct://").unwrap()
+                    }))
+                    .build();
+                match &result {
+                    Ok(_) => tracing::info!("代理客户端构建成功"),
+                    Err(e) => tracing::warn!("代理客户端构建失败: {}, 回退到直连", e),
+                }
+                result.unwrap_or_else(|_| base().build().unwrap_or_default())
+            }
+            None => {
+                tracing::info!("搜索使用直连（无代理）");
+                base().build().unwrap_or_default()
+            }
         }
     }
 }
@@ -84,6 +114,23 @@ impl TranslateProvider {
             "google" => Some(TranslateProvider::Google),
             _ => None,
         }
+    }
+
+    /// 各引擎的 QPS 上限（免费/默认档位）
+    /// 百度免费版 1 QPS、Bing 10 QPS、Google 100 QPS
+    pub fn qps_limit(&self) -> usize {
+        match self {
+            TranslateProvider::Baidu => 1,
+            TranslateProvider::Bing => 10,
+            TranslateProvider::Google => 100,
+        }
+    }
+
+    /// 计算实际并发 = min(用户配置并发, QPS 上限)，至少 1
+    pub fn effective_concurrency(user_config: usize, provider: &TranslateProvider) -> usize {
+        let qps = provider.qps_limit();
+        let c = user_config.min(qps).max(1);
+        c
     }
 }
 
@@ -156,7 +203,37 @@ pub struct LanguageInfo {
 /// 私用区字符范围：U+E000 ~ U+E0FF（256 个占位符）
 const PLACEHOLDER_BASE: u32 = 0xE000;
 
+/// 判断一个 `<...>` 片段是否为 HTML 字幕标签（需保护）。
+/// 支持常见字幕 HTML 标签及其闭合形式，不限制标签长度。
+/// 排除普通文本中的 `<` / `>` 符号（如数学表达式 `a < b`）。
+fn is_html_subtitle_tag(tag: &str) -> bool {
+    // 必须以 < 开头、> 结尾
+    if !tag.starts_with('<') || !tag.ends_with('>') {
+        return false;
+    }
+    // 提取标签名：跳过 < 和可选的 /
+    let inner = &tag[1..tag.len() - 1]; // 去掉 < >
+    let name_part = inner.strip_prefix('/').unwrap_or(inner);
+    // 标签名到第一个空格或属性为止
+    let tag_name = name_part.split_whitespace().next().unwrap_or(name_part);
+    if tag_name.is_empty() {
+        return false;
+    }
+    // 标签名必须全为字母（排除 <3、<.5 等非标签）
+    if !tag_name.chars().all(|c| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    // 已知 HTML 字幕标签白名单
+    matches!(
+        tag_name.to_ascii_lowercase().as_str(),
+        "b" | "i" | "u" | "s" | "font" | "span" | "div" | "p" | "br"
+        | "strong" | "em" | "mark" | "strike" | "sub" | "sup" | "small"
+        | "big" | "tt" | "code" | "pre" | "blockquote" | "ruby" | "rt" | "rp"
+    )
+}
+
 /// 占位符保护器
+#[derive(Clone)]
 pub struct PlaceholderProtector {
     /// 占位符映射表：占位符字符 -> 原始文本
     placeholders: Vec<(char, String)>,
@@ -190,8 +267,9 @@ impl PlaceholderProtector {
             if remaining.starts_with('<') {
                 if let Some(end) = remaining.find('>') {
                     let tag = &remaining[..=end];
-                    // 仅保护 HTML 标签，不保护普通 < > 符号
-                    if tag.len() < 50 && (tag.starts_with("</") || tag.starts_with("<b") || tag.starts_with("<i") || tag.starts_with("<u") || tag.starts_with("<font")) {
+                    // 保护常见 HTML 字幕标签（含闭合标签），不保护普通 < > 符号
+                    // 不再限制标签长度，支持 <span>/<div> 等任意标签
+                    if is_html_subtitle_tag(tag) {
                         let placeholder = self.add_placeholder(tag);
                         result.push(placeholder);
                         remaining = &remaining[end + 1..];
@@ -250,46 +328,64 @@ impl PlaceholderProtector {
     }
 }
 
-/// 翻译分段：将长文本按句号/换行切分，确保单条不超过 API 上限
+/// 翻译分段：将长文本按句号/换行切分，确保单段不超过 max_length（按字节计）。
+/// 保留原始分隔符（. / \n / ？ / ！ / 。），避免补回错误的分隔符。
 pub fn split_text(text: &str, max_length: usize) -> Vec<String> {
     if text.len() <= max_length {
         return vec![text.to_string()];
     }
 
-    let mut segments = Vec::new();
-    let mut current = String::new();
-
-    // 按句号、换行、问号、感叹号切分
-    let sentences: Vec<&str> = text.split(|c| c == '.' || c == '\n' || c == '？' || c == '！' || c == '。').collect();
-
-    for (i, sentence) in sentences.iter().enumerate() {
-        let mut s = sentence.to_string();
-        // 补回分隔符（最后一个不补）
-        if i < sentences.len() - 1 {
-            s.push('.');
-        }
-
-        if current.len() + s.len() > max_length {
-            if !current.is_empty() {
-                segments.push(current.trim().to_string());
-                current = String::new();
-            }
-            // 如果单个句子就超过上限，硬切
-            if s.len() > max_length {
-                let chars: Vec<char> = s.chars().collect();
-                for chunk in chars.chunks(max_length) {
-                    segments.push(chunk.iter().collect());
-                }
-            } else {
-                current = s;
-            }
-        } else {
-            current.push_str(&s);
-        }
+    // 按句子切分，保留分隔符。分隔符视为句子结尾的一部分。
+    // 句子边界字符：. ! ? 。 ！ ？ \n
+    fn is_sentence_boundary(c: char) -> bool {
+        matches!(c, '.' | '!' | '?' | '。' | '！' | '？' | '\n')
     }
 
+    let mut sentences: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for c in text.chars() {
+        current.push(c);
+        if is_sentence_boundary(c) {
+            sentences.push(std::mem::take(&mut current));
+        }
+    }
     if !current.is_empty() {
-        segments.push(current.trim().to_string());
+        sentences.push(current);
+    }
+
+    // 贪心合并句子到段，每段不超过 max_length 字节
+    let mut segments = Vec::new();
+    let mut buf = String::new();
+    for sentence in &sentences {
+        if !buf.is_empty() && buf.len() + sentence.len() > max_length {
+            segments.push(buf.trim().to_string());
+            buf.clear();
+        }
+        if sentence.len() > max_length {
+            // 单句超限：按字符硬切
+            if !buf.is_empty() {
+                segments.push(buf.trim().to_string());
+                buf.clear();
+            }
+            let chars: Vec<char> = sentence.chars().collect();
+            let mut chunk = String::new();
+            for c in &chars {
+                let next_len = chunk.len() + c.len_utf8();
+                if next_len > max_length && !chunk.is_empty() {
+                    segments.push(chunk.clone());
+                    chunk.clear();
+                }
+                chunk.push(*c);
+            }
+            if !chunk.is_empty() {
+                buf = chunk;
+            }
+        } else {
+            buf.push_str(sentence);
+        }
+    }
+    if !buf.is_empty() {
+        segments.push(buf.trim().to_string());
     }
 
     segments
@@ -331,21 +427,48 @@ impl TranslateProviderTrait for BaiduProvider {
         source_lang: &str,
         target_lang: &str,
     ) -> Result<Vec<String>, AppError> {
-        // 百度 API 逐条翻译（避免 \n 拼接导致签名/对齐问题）
-        let mut results = Vec::with_capacity(texts.len());
-        for (i, text) in texts.iter().enumerate() {
-            // 跳过空文本
-            if text.trim().is_empty() {
-                results.push(String::new());
-                continue;
-            }
+        // 百度 API 批量翻译：将多条文本用 \n 拼接成一次请求，
+        // trans_result 数组每项对应一行，1 次 API 调用即可翻译整批。
+        // 百度 q 参数上限约 6000 字节，超限时自动分块发送。
+        const BAIDU_MAX_QUERY_BYTES: usize = 5000; // 留余量，避免超限
 
+        // 记录非空文本的索引，空文本直接填空字符串
+        let mut results = vec![String::new(); texts.len()];
+        let non_empty: Vec<(usize, &String)> = texts
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.trim().is_empty())
+            .collect();
+
+        if non_empty.is_empty() {
+            return Ok(results);
+        }
+
+        // 按 6000 字节上限分块：贪心地往当前块加文本，超限就开新块
+        let mut chunks: Vec<Vec<(usize, &String)>> = Vec::new();
+        let mut current_chunk: Vec<(usize, &String)> = Vec::new();
+        let mut current_bytes = 0usize;
+        for &(idx, text) in &non_empty {
+            let text_bytes = text.as_bytes().len(); // UTF-8 字节数（百度按字节计限）
+            if !current_chunk.is_empty() && current_bytes + text_bytes + 1 > BAIDU_MAX_QUERY_BYTES {
+                chunks.push(std::mem::take(&mut current_chunk));
+                current_bytes = 0;
+            }
+            current_chunk.push((idx, text));
+            current_bytes += text_bytes + 1; // +1 for \n separator
+        }
+        if !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+        }
+
+        for chunk in chunks {
+            let joined = chunk.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n");
             let salt = uuid::Uuid::new_v4().simple().to_string();
-            let sign = self.sign(text, &salt);
+            let sign = self.sign(&joined, &salt);
 
             let url = "https://fanyi-api.baidu.com/api/trans/vip/translate";
             let params = serde_json::json!({
-                "q": text,
+                "q": joined,
                 "from": source_lang,
                 "to": target_lang,
                 "appid": self.app_id,
@@ -357,7 +480,7 @@ impl TranslateProviderTrait for BaiduProvider {
                 .client
                 .post(url)
                 .form(&params)
-                .timeout(std::time::Duration::from_secs(15))
+                .timeout(std::time::Duration::from_secs(30))
                 .send()
                 .await
                 .map_err(|e| AppError::TranslateRequestFailed {
@@ -414,8 +537,9 @@ impl TranslateProviderTrait for BaiduProvider {
                 });
             }
 
+            // trans_result 是数组，每项 {src, dst} 对应输入的一行
             let trans_result = body.get("trans_result");
-            let translated = match trans_result {
+            let translations: Vec<String> = match trans_result {
                 Some(arr) if arr.is_array() => {
                     arr.as_array().unwrap()
                         .iter()
@@ -425,17 +549,26 @@ impl TranslateProviderTrait for BaiduProvider {
                                 .unwrap_or("")
                                 .to_string()
                         })
-                        .collect::<Vec<String>>()
-                        .join("\n")
+                        .collect()
                 }
-                _ => text.clone(), // 无法解析时返回原文
+                _ => {
+                    // 无法解析时，用原文回填
+                    chunk.iter().map(|(_, t)| (*t).clone()).collect()
+                }
             };
 
-            results.push(translated);
+            // 对齐检查：百度返回的行数应与输入一致
+            if translations.len() != chunk.len() {
+                tracing::warn!(
+                    "百度翻译对齐异常：输入 {} 行，返回 {} 行，按可用结果回填",
+                    chunk.len(),
+                    translations.len()
+                );
+            }
 
-            // QPS 限制：每条之间延迟 1 秒（百度免费版 1 QPS）
-            if i + 1 < texts.len() {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            for (i, (idx, _)) in chunk.iter().enumerate() {
+                let translated = translations.get(i).cloned().unwrap_or_default();
+                results[*idx] = translated;
             }
         }
 
@@ -485,13 +618,11 @@ impl BingProvider {
     pub fn with_client(api_key: String, region: String, client: reqwest::Client) -> Self {
         Self { api_key, region, client }
     }
-}
 
-#[async_trait::async_trait]
-impl TranslateProviderTrait for BingProvider {
-    async fn translate(
+    /// 单批翻译（不超过字符上限）
+    async fn translate_single_batch(
         &self,
-        texts: &[String],
+        texts: &[&String],
         source_lang: &str,
         target_lang: &str,
     ) -> Result<Vec<String>, AppError> {
@@ -505,7 +636,7 @@ impl TranslateProviderTrait for BingProvider {
         // Bing 接受数组形式的 body，每个元素含 Text
         let body: Vec<serde_json::Value> = texts
             .iter()
-            .map(|t| serde_json::json!({ "Text": t }))
+            .map(|t| serde_json::json!({ "Text": t.as_str() }))
             .collect();
 
         let resp = self
@@ -580,6 +711,42 @@ impl TranslateProviderTrait for BingProvider {
 
         Ok(results)
     }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for BingProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        const BING_MAX_CHARS: usize = 5000; // Bing 单次请求字符上限（留余量）
+
+        // 按字符上限分块：贪心累计，超限就开新块
+        let mut chunks: Vec<Vec<&String>> = Vec::new();
+        let mut current_chunk: Vec<&String> = Vec::new();
+        let mut current_chars = 0usize;
+        for text in texts {
+            let text_chars = text.chars().count();
+            if !current_chunk.is_empty() && current_chars + text_chars + 2 > BING_MAX_CHARS {
+                chunks.push(std::mem::take(&mut current_chunk));
+                current_chars = 0;
+            }
+            current_chunk.push(text);
+            current_chars += text_chars + 2; // +2 估算 JSON 开销
+        }
+        if !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+        }
+
+        let mut all_results: Vec<String> = Vec::with_capacity(texts.len());
+        for chunk in &chunks {
+            let translations = self.translate_single_batch(chunk, source_lang, target_lang).await?;
+            all_results.extend(translations);
+        }
+        Ok(all_results)
+    }
 
     async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
         Ok(vec![
@@ -618,19 +785,18 @@ impl GoogleProvider {
     pub fn with_client(api_key: String, client: reqwest::Client) -> Self {
         Self { api_key, client }
     }
-}
 
-#[async_trait::async_trait]
-impl TranslateProviderTrait for GoogleProvider {
-    async fn translate(
+    /// 单批翻译（不超过字符上限）
+    async fn translate_single_batch(
         &self,
-        texts: &[String],
+        texts: &[&String],
         source_lang: &str,
         target_lang: &str,
     ) -> Result<Vec<String>, AppError> {
         let url = "https://translation.googleapis.com/language/translate/v2";
+        let q: Vec<&str> = texts.iter().map(|t| t.as_str()).collect();
         let body = serde_json::json!({
-            "q": texts,
+            "q": q,
             "source": source_lang,
             "target": target_lang,
             "format": "text",
@@ -704,6 +870,42 @@ impl TranslateProviderTrait for GoogleProvider {
 
         Ok(results)
     }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for GoogleProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        const GOOGLE_MAX_CHARS: usize = 5000; // Google v2 单次请求字符上限（留余量）
+
+        // 按字符上限分块：贪心累计，超限就开新块
+        let mut chunks: Vec<Vec<&String>> = Vec::new();
+        let mut current_chunk: Vec<&String> = Vec::new();
+        let mut current_chars = 0usize;
+        for text in texts {
+            let text_chars = text.chars().count();
+            if !current_chunk.is_empty() && current_chars + text_chars > GOOGLE_MAX_CHARS {
+                chunks.push(std::mem::take(&mut current_chunk));
+                current_chars = 0;
+            }
+            current_chunk.push(text);
+            current_chars += text_chars;
+        }
+        if !current_chunk.is_empty() {
+            chunks.push(current_chunk);
+        }
+
+        let mut all_results: Vec<String> = Vec::with_capacity(texts.len());
+        for chunk in &chunks {
+            let translations = self.translate_single_batch(chunk, source_lang, target_lang).await?;
+            all_results.extend(translations);
+        }
+        Ok(all_results)
+    }
 
     async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
         Ok(vec![
@@ -730,15 +932,16 @@ impl TranslateProviderTrait for GoogleProvider {
 /// 负责缓存查询、分段、占位符保护、限流重试
 pub struct TranslateScheduler<'a> {
     db: &'a Database,
-    provider: Box<dyn TranslateProviderTrait>,
+    provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
     provider_name: String,
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    concurrency: usize,
 }
 
 impl<'a> TranslateScheduler<'a> {
     pub fn new(
         db: &'a Database,
-        provider: Box<dyn TranslateProviderTrait>,
+        provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
         provider_name: String,
     ) -> Self {
         Self {
@@ -746,12 +949,13 @@ impl<'a> TranslateScheduler<'a> {
             provider,
             provider_name,
             cancelled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            concurrency: 1,
         }
     }
 
     pub fn with_cancel_token(
         db: &'a Database,
-        provider: Box<dyn TranslateProviderTrait>,
+        provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
         provider_name: String,
         cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
@@ -760,7 +964,14 @@ impl<'a> TranslateScheduler<'a> {
             provider,
             provider_name,
             cancelled,
+            concurrency: 1,
         }
+    }
+
+    /// 设置并发数（实际并发 = min(此值, QPS 上限)）
+    pub fn with_concurrency(mut self, concurrency: usize) -> Self {
+        self.concurrency = concurrency.max(1);
+        self
     }
 
     pub fn is_cancelled(&self) -> bool {
@@ -866,79 +1077,253 @@ impl<'a> TranslateScheduler<'a> {
             let mut protector = PlaceholderProtector::new();
             let protected_text = protector.protect(&entry.text);
 
-            // 分段（如果超过 API 上限）
+            // 分段（如果超过 API 上限）：按句号二次切分，逐段翻译后拼接
             if protected_text.len() > max_single_length {
-                tracing::warn!("字幕 #{} 超过 API 上限，硬切翻译", entry.index);
-                let truncated: String = protected_text.chars().take(max_single_length).collect();
-                to_translate.push((entry.index, truncated, protector));
-            } else {
-                to_translate.push((entry.index, protected_text, protector));
-            }
-        }
+                tracing::warn!("字幕 #{} 超过 API 上限（{}字节），按句号切分翻译", entry.index, protected_text.len());
+                let segments = split_text(&protected_text, max_single_length);
+                tracing::info!("字幕 #{} 切分为 {} 段", entry.index, segments.len());
 
-        // 2. 分批翻译（每批 30 条，带重试）
-        const BATCH_SIZE: usize = 30;
-        if !to_translate.is_empty() {
-            let total_batches = (to_translate.len() + BATCH_SIZE - 1) / BATCH_SIZE;
-            for (batch_idx, batch) in to_translate.chunks(BATCH_SIZE).enumerate() {
-                // 检查取消标志
-                if self.is_cancelled() {
-                    tracing::info!("翻译已取消，已完成 {} 批", batch_idx);
-                    break;
+                let mut combined = String::new();
+                let mut any_failed = false;
+                for seg in &segments {
+                    if self.is_cancelled() {
+                        any_failed = true;
+                        break;
+                    }
+                    match self.translate_with_retry(&[seg.clone()], source_lang, target_lang).await {
+                        Ok(tr) if !tr.is_empty() && !tr[0].is_empty() => {
+                            combined.push_str(&tr[0]);
+                        }
+                        _ => {
+                            any_failed = true;
+                            tracing::warn!("字幕 #{} 切分段翻译失败", entry.index);
+                        }
+                    }
                 }
 
-                tracing::info!(
-                    "翻译批次 {}/{}，本批 {} 条",
-                    batch_idx + 1,
-                    total_batches,
-                    batch.len()
-                );
-
-                let texts: Vec<String> = batch.iter().map(|(_, t, _)| t.clone()).collect();
-                let translations = self.translate_with_retry(&texts, source_lang, target_lang).await?;
-
-                // 3. 回填占位符 + 写入缓存
-                for ((index, original_text, protector), translated) in
-                    batch.iter().zip(translations.iter())
-                {
-                    let restored = protector.restore(translated);
-
+                let restored = protector.restore(&combined);
+                if !restored.is_empty() && !any_failed {
                     let cache_key = translate_cache_key(
-                        original_text,
+                        &entry.text,
                         source_lang,
                         target_lang,
                         &self.provider_name,
                     );
                     let _ = self.db.set_translate_cache(
                         &cache_key,
-                        original_text,
+                        &entry.text,
                         &restored,
                         source_lang,
                         target_lang,
                         &self.provider_name,
                     );
-
-                    let te = TranslateEntry {
-                        index: *index,
-                        original: original_text.clone(),
-                        translated: restored,
-                        from_cache: false,
-                        failed: false,
-                    };
-                    if let Some(ref cb) = on_entry_done {
-                        cb(&te);
-                    }
-                    results.push(te);
                 }
 
-                // 发送进度
+                let te = TranslateEntry {
+                    index: entry.index,
+                    original: entry.text.clone(),
+                    translated: restored,
+                    from_cache: false,
+                    failed: any_failed || combined.is_empty(),
+                };
+                if let Some(ref cb) = on_entry_done {
+                    cb(&te);
+                }
+                results.push(te);
                 if let Some(ref cb) = on_progress {
                     cb(results.len(), entries.len());
                 }
+            } else {
+                to_translate.push((entry.index, protected_text, protector));
+            }
+        }
 
-                // 批次间延迟（百度已逐条延迟，这里仅对非百度引擎需要）
-                if batch_idx + 1 < total_batches && !self.is_cancelled() {
-                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        // 2. 分批翻译（每批 30 条，带重试），并发度由 self.concurrency 控制
+        const BATCH_SIZE: usize = 30;
+        if !to_translate.is_empty() {
+            let batches: Vec<Vec<(usize, String, PlaceholderProtector)>> =
+                to_translate.chunks(BATCH_SIZE).map(|c| c.to_vec()).collect();
+            let total_batches = batches.len();
+            let concurrency = self.concurrency.max(1);
+            tracing::info!("翻译并发度: {}，共 {} 批", concurrency, total_batches);
+
+            // 并发调用 API：用 Semaphore 控制并发数，JoinSet 收集结果
+            let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+            let provider = self.provider.clone();
+            let cancelled = self.cancelled.clone();
+            let mut join_set = tokio::task::JoinSet::new();
+
+            for (batch_idx, batch) in batches.iter().enumerate() {
+                let texts: Vec<String> = batch.iter().map(|(_, t, _)| t.clone()).collect();
+                let source = source_lang.to_string();
+                let target = target_lang.to_string();
+                let provider = provider.clone();
+                let cancelled = cancelled.clone();
+                let permit = semaphore.clone().acquire_owned().await.unwrap();
+
+                join_set.spawn(async move {
+                    let _permit = permit;
+                    if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                        return (batch_idx, Err(AppError::TranslateRetriesExhausted));
+                    }
+                    tracing::info!("翻译批次 {}/{}，本批 {} 条", batch_idx + 1, total_batches, texts.len());
+                    let result = translate_with_retry_provider(
+                        &*provider,
+                        &texts,
+                        &source,
+                        &target,
+                        &cancelled,
+                    )
+                    .await;
+                    (batch_idx, result)
+                });
+            }
+
+            // 收集所有 API 结果，按 batch_idx 排序保证顺序
+            let mut batch_api_results: Vec<(usize, Result<Vec<String>, AppError>)> = Vec::new();
+            while let Some(res) = join_set.join_next().await {
+                if let Ok(item) = res {
+                    batch_api_results.push(item);
+                }
+            }
+            batch_api_results.sort_by_key(|(idx, _)| *idx);
+
+            // 顺序后处理：对齐检查、回填占位符、写缓存、回调
+            for (batch_idx, api_result) in batch_api_results {
+                if self.is_cancelled() {
+                    tracing::info!("翻译已取消，停止后处理（已完成到批次 {}）", batch_idx + 1);
+                    break;
+                }
+
+                let batch = &batches[batch_idx];
+                let texts: Vec<String> = batch.iter().map(|(_, t, _)| t.clone()).collect();
+
+                let translations = match api_result {
+                    Ok(t) => t,
+                    Err(e) => {
+                        tracing::warn!("批次 {} 整批翻译失败: {}", batch_idx + 1, e);
+                        for (index, original_text, _protector) in batch.iter() {
+                            let te = TranslateEntry {
+                                index: *index,
+                                original: original_text.clone(),
+                                translated: String::new(),
+                                from_cache: false,
+                                failed: true,
+                            };
+                            if let Some(ref cb) = on_entry_done {
+                                cb(&te);
+                            }
+                            results.push(te);
+                        }
+                        if let Some(ref cb) = on_progress {
+                            cb(results.len(), entries.len());
+                        }
+                        continue;
+                    }
+                };
+
+                // 对齐检查：API 返回的翻译数量必须与输入一致
+                if translations.len() != batch.len() {
+                    tracing::warn!(
+                        "翻译批次 {} 对齐异常：输入 {} 条，返回 {} 条，逐条重试缺失项",
+                        batch_idx + 1,
+                        batch.len(),
+                        translations.len()
+                    );
+                    let mut final_translations: Vec<String> = translations.clone();
+                    while final_translations.len() < batch.len() {
+                        final_translations.push(String::new());
+                    }
+                    for (i, translated) in final_translations.iter_mut().enumerate() {
+                        if translated.is_empty() {
+                            if self.is_cancelled() {
+                                break;
+                            }
+                            let single_text = vec![texts[i].clone()];
+                            match self.translate_with_retry(&single_text, source_lang, target_lang).await {
+                                Ok(single_result) if !single_result.is_empty() => {
+                                    *translated = single_result[0].clone();
+                                    tracing::info!("逐条重试成功：批次 {} 第 {} 条", batch_idx + 1, i + 1);
+                                }
+                                Ok(_) => {
+                                    tracing::warn!("逐条重试返回空：批次 {} 第 {} 条", batch_idx + 1, i + 1);
+                                }
+                                Err(e) => {
+                                    tracing::warn!("逐条重试失败：批次 {} 第 {} 条: {}", batch_idx + 1, i + 1, e);
+                                }
+                            }
+                        }
+                    }
+
+                    for ((index, original_text, protector), translated) in
+                        batch.iter().zip(final_translations.iter())
+                    {
+                        let restored = protector.restore(translated);
+                        if !restored.is_empty() {
+                            let cache_key = translate_cache_key(
+                                original_text,
+                                source_lang,
+                                target_lang,
+                                &self.provider_name,
+                            );
+                            let _ = self.db.set_translate_cache(
+                                &cache_key,
+                                original_text,
+                                &restored,
+                                source_lang,
+                                target_lang,
+                                &self.provider_name,
+                            );
+                        }
+                        let te = TranslateEntry {
+                            index: *index,
+                            original: original_text.clone(),
+                            translated: restored,
+                            from_cache: false,
+                            failed: translated.is_empty(),
+                        };
+                        if let Some(ref cb) = on_entry_done {
+                            cb(&te);
+                        }
+                        results.push(te);
+                    }
+                } else {
+                    for ((index, original_text, protector), translated) in
+                        batch.iter().zip(translations.iter())
+                    {
+                        let restored = protector.restore(translated);
+
+                        let cache_key = translate_cache_key(
+                            original_text,
+                            source_lang,
+                            target_lang,
+                            &self.provider_name,
+                        );
+                        let _ = self.db.set_translate_cache(
+                            &cache_key,
+                            original_text,
+                            &restored,
+                            source_lang,
+                            target_lang,
+                            &self.provider_name,
+                        );
+
+                        let te = TranslateEntry {
+                            index: *index,
+                            original: original_text.clone(),
+                            translated: restored,
+                            from_cache: false,
+                            failed: false,
+                        };
+                        if let Some(ref cb) = on_entry_done {
+                            cb(&te);
+                        }
+                        results.push(te);
+                    }
+                }
+
+                if let Some(ref cb) = on_progress {
+                    cb(results.len(), entries.len());
                 }
             }
         }
@@ -960,12 +1345,33 @@ impl<'a> TranslateScheduler<'a> {
         source_lang: &str,
         target_lang: &str,
     ) -> Result<Vec<String>, AppError> {
+        translate_with_retry_provider(
+            &*self.provider,
+            texts,
+            source_lang,
+            target_lang,
+            &self.cancelled,
+        ).await
+    }
+}
+
+/// 独立的带重试翻译函数（可在 spawned task 中调用，不依赖 &self）
+/// 指数退避：1s/2s/4s，最多 3 次
+async fn translate_with_retry_provider(
+    provider: &(dyn TranslateProviderTrait),
+    texts: &[String],
+    source_lang: &str,
+    target_lang: &str,
+    cancelled: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<Vec<String>, AppError> {
         let mut last_error: Option<AppError> = None;
         let delays = [1u64, 2, 4];
 
         for (attempt, delay) in delays.iter().enumerate() {
-            match self
-                .provider
+            if cancelled.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(AppError::TranslateRetriesExhausted);
+            }
+            match provider
                 .translate(texts, source_lang, target_lang)
                 .await
             {
@@ -997,14 +1403,13 @@ impl<'a> TranslateScheduler<'a> {
         }
 
         Err(last_error.unwrap_or(AppError::TranslateRetriesExhausted))
-    }
 }
 
 /// 创建翻译 provider 实例
 pub fn create_provider(
     provider: &TranslateProvider,
     credentials: &ProviderCredentials,
-) -> Result<Box<dyn TranslateProviderTrait>, AppError> {
+) -> Result<std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>, AppError> {
     create_provider_with_proxy(provider, credentials, &ProxyConfig::default())
 }
 
@@ -1013,7 +1418,7 @@ pub fn create_provider_with_proxy(
     provider: &TranslateProvider,
     credentials: &ProviderCredentials,
     proxy: &ProxyConfig,
-) -> Result<Box<dyn TranslateProviderTrait>, AppError> {
+) -> Result<std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>, AppError> {
     let client = proxy.build_client();
     match provider {
         TranslateProvider::Baidu => {
@@ -1027,7 +1432,7 @@ pub fn create_provider_with_proxy(
                     provider: "baidu".to_string(),
                 }
             })?;
-            Ok(Box::new(BaiduProvider::with_client(app_id, secret_key, client)))
+            Ok(std::sync::Arc::new(BaiduProvider::with_client(app_id, secret_key, client)))
         }
         TranslateProvider::Bing => {
             let api_key = credentials.secret_key.clone().ok_or_else(|| {
@@ -1036,7 +1441,7 @@ pub fn create_provider_with_proxy(
                 }
             })?;
             let region = credentials.region.clone().unwrap_or_else(|| "global".to_string());
-            Ok(Box::new(BingProvider::with_client(api_key, region, client)))
+            Ok(std::sync::Arc::new(BingProvider::with_client(api_key, region, client)))
         }
         TranslateProvider::Google => {
             let api_key = credentials.secret_key.clone().ok_or_else(|| {
@@ -1044,7 +1449,7 @@ pub fn create_provider_with_proxy(
                     provider: "google".to_string(),
                 }
             })?;
-            Ok(Box::new(GoogleProvider::with_client(api_key, client)))
+            Ok(std::sync::Arc::new(GoogleProvider::with_client(api_key, client)))
         }
     }
 }

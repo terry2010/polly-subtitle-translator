@@ -88,6 +88,8 @@ export interface SubtitleEntry {
   translated: string;
   style: string | null;
   _deleted?: boolean;
+  /** 翻译是否失败（仅内存状态，不写入字幕文件） */
+  failed?: boolean;
 }
 
 export interface SubtitleFile {

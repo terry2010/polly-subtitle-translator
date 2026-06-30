@@ -198,9 +198,19 @@ export function SubtitleListPanel() {
                 onClick={() => setEditingIndex(entry.index)}
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {formatTimecode(entry.start_ms)} → {formatTimecode(entry.end_ms)}
-                  </span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {entry.failed && (
+                      <span
+                        className="shrink-0 inline-flex items-center rounded bg-destructive/15 px-1 py-0.5 text-[10px] font-medium text-destructive"
+                        title={t("subtitle.translateFailed")}
+                      >
+                        {t("subtitle.translateFailed")}
+                      </span>
+                    )}
+                    <span className="font-mono text-xs text-muted-foreground truncate">
+                      {formatTimecode(entry.start_ms)} → {formatTimecode(entry.end_ms)}
+                    </span>
+                  </div>
                   <div className="flex gap-1">
                     {editingIndex === entry.index && (
                       <Button

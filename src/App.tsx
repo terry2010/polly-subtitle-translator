@@ -13,6 +13,8 @@ import { useTranslateStore } from "./stores/translateStore";
 import { useDevModeStore } from "./stores/devModeStore";
 import { useLibmpvStore } from "./stores/libmpvStore";
 import { useFfmpegStore } from "./stores/ffmpegStore";
+import { useUpdateStore } from "./stores/updateStore";
+import { UpdateDialog } from "./components/UpdateDialog";
 import { api } from "./lib/api";
 import { Toaster } from "sonner";
 
@@ -145,7 +147,7 @@ export default function App() {
           if (result) {
             const entries = subtitleState.file.entries.map((e) => {
               const tr = result.translations.find((r) => r.index === e.index);
-              return tr ? { ...e, translated: tr.translated } : e;
+              return tr ? { ...e, translated: tr.translated, failed: tr.failed } : e;
             });
             setFile({ ...subtitleState.file, entries });
 
@@ -224,6 +226,18 @@ export default function App() {
     return () => { void unlisten.then((fn) => fn()); };
   }, [openVideo, loadSubtitle]);
 
+  // 启动时自动检查更新（延迟 5 秒，不阻塞启动）
+  const checkOnStartup = useUpdateStore((s) => s.checkOnStartup);
+  useEffect(() => {
+    const timer = setTimeout(() => { void checkOnStartup(); }, 5000);
+    return () => clearTimeout(timer);
+  }, [checkOnStartup]);
+
+  // 更新弹窗
+  const updateDialogOpen = useUpdateStore((s) => s.dialogOpen);
+  const updateInfo = useUpdateStore((s) => s.updateInfo);
+  const closeUpdateDialog = useUpdateStore((s) => s.closeDialog);
+
   return (
     <>
       <HashRouter>
@@ -235,6 +249,14 @@ export default function App() {
         </Suspense>
       </HashRouter>
       <Toaster position="top-right" richColors closeButton />
+      {updateInfo && (
+        <UpdateDialog
+          open={updateDialogOpen}
+          version={updateInfo.version}
+          notes={updateInfo.notes}
+          onClose={closeUpdateDialog}
+        />
+      )}
     </>
   );
 }
