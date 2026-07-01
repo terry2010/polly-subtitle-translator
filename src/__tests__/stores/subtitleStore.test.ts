@@ -4,6 +4,7 @@ import { useSubtitleStore } from "../../stores/subtitleStore";
 import type { SubtitleFile, SubtitleEntry } from "../../lib/ipc-types";
 
 // mock api
+import { api } from "../../lib/api";
 vi.mock("../../lib/api", () => ({
   api: {
     parseSubtitleFile: vi.fn(),
@@ -375,3 +376,101 @@ describe("subtitleStore - saveSubtitle", () => {
 });
 
 // === SECTION 9 END ===
+
+// === SECTION 10: 拆分/交换/取消拆分 ===
+
+describe("subtitleStore - 拆分/交换/取消拆分", () => {
+  it("splitBilingual 无文件时不执行", async () => {
+    await getStore().splitBilingual();
+    expect(api.splitBilingualSubtitle).not.toHaveBeenCalled();
+  });
+
+  it("splitBilingual 无 bilingualDetect 时不执行", async () => {
+    const file = makeFile([makeEntry(0, "hello")]);
+    getStore().setFile(file);
+    await getStore().splitBilingual();
+    expect(api.splitBilingualSubtitle).not.toHaveBeenCalled();
+  });
+
+  it("splitBilingual 成功拆分", async () => {
+    const file = makeFile([makeEntry(0, "hello"), makeEntry(1, "你好")]);
+    getStore().setFile(file);
+    useSubtitleStore.setState({
+      bilingualDetect: { is_bilingual: true, split_mode: "interleave" } as any,
+    });
+    const splitFile = makeFile([makeEntry(0, "hello"), makeEntry(1, "你好")]);
+    (api.splitBilingualSubtitle as any).mockResolvedValue(splitFile);
+    await getStore().splitBilingual();
+    const state = getStore();
+    expect(state.isSplit).toBe(true);
+    expect(state.preSplitFile).toEqual(file);
+    expect(state.bilingualDetect).toBeNull();
+  });
+
+  it("splitBilingual 失败时不修改状态", async () => {
+    const file = makeFile([makeEntry(0, "hello")]);
+    getStore().setFile(file);
+    useSubtitleStore.setState({
+      bilingualDetect: { is_bilingual: true, split_mode: "interleave" } as any,
+    });
+    (api.splitBilingualSubtitle as any).mockRejectedValue(new Error("split fail"));
+    await getStore().splitBilingual();
+    expect(getStore().isSplit).toBe(false);
+  });
+
+  it("unsplitBilingual 无 preSplitFile 时不执行", () => {
+    const file = makeFile([makeEntry(0, "hello")]);
+    getStore().setFile(file);
+    getStore().unsplitBilingual();
+    expect(getStore().file).toEqual(file);
+  });
+
+  it("unsplitBilingual 恢复拆分前状态", () => {
+    const originalFile = makeFile([makeEntry(0, "hello"), makeEntry(1, "你好")]);
+    const splitFile = makeFile([makeEntry(0, "hello")]);
+    getStore().setFile(originalFile);
+    useSubtitleStore.setState({
+      file: splitFile,
+      isSplit: true,
+      preSplitFile: originalFile,
+      preSplitBilingualDetect: { is_bilingual: true } as any,
+    });
+    getStore().unsplitBilingual();
+    const state = getStore();
+    expect(state.file).toEqual(originalFile);
+    expect(state.isSplit).toBe(false);
+    expect(state.preSplitFile).toBeNull();
+    expect(state.bilingualDetect).toEqual({ is_bilingual: true });
+  });
+
+  it("swapOriginalTranslated 无文件时不执行", () => {
+    getStore().swapOriginalTranslated();
+    expect(getStore().file).toBeNull();
+  });
+
+  it("swapOriginalTranslated 交换原文和译文", () => {
+    const file = makeFile([makeEntry(0, "hello", "你好")]);
+    getStore().setFile(file);
+    getStore().swapOriginalTranslated();
+    const entries = getStore().file!.entries;
+    expect(entries[0].text).toBe("你好");
+    expect(entries[0].translated).toBe("hello");
+  });
+
+  it("swapOriginalTranslated 译文为空时保留原文", () => {
+    const file = makeFile([makeEntry(0, "hello", "")]);
+    getStore().setFile(file);
+    getStore().swapOriginalTranslated();
+    const entries = getStore().file!.entries;
+    expect(entries[0].text).toBe("hello");
+    expect(entries[0].translated).toBe("hello");
+  });
+
+  it("dismissBilingualDetect 清空 bilingualDetect", () => {
+    useSubtitleStore.setState({ bilingualDetect: { is_bilingual: true } as any });
+    getStore().dismissBilingualDetect();
+    expect(getStore().bilingualDetect).toBeNull();
+  });
+});
+
+// === SECTION 10 END ===
