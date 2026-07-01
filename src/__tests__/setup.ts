@@ -37,6 +37,13 @@ vi.mock("@tauri-apps/plugin-notification", () => ({
   isPermissionGranted: vi.fn(() => Promise.resolve(true)),
 }));
 
+// mock react-i18next，避免未初始化 i18next 的警告
+vi.mock("react-i18next", () => ({
+  useTranslation: () => ({ t: (key: string) => key, i18n: {} as any }),
+  I18nextProvider: ({ children }: { children: React.ReactNode }) => children,
+  initReactI18next: { type: "thirdParty" } as any,
+}));
+
 // mock sonner toast（避免 jsdom 下无 DOM 渲染问题）
 vi.mock("sonner", () => ({
   toast: {
