@@ -6,6 +6,7 @@ import type { AudioStream, ProbeResult, InstalledPlayer, PlayerIcon, SubtitleEnt
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { platform } from "@tauri-apps/plugin-os";
 import { Film, Play, Pause, Loader2, Download, Volume2, VolumeX, X, FolderOpen, Info, ChevronRight, MonitorPlay, Languages } from "lucide-react";
 import { Button } from "./ui/button";
 import { uiState } from "../lib/utils";
@@ -154,6 +155,11 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
   const [iconMap, setIconMap] = useState<Map<string, string>>(new Map());
   // 快捷图标栏的"更多播放器"展开状态（hover 展开箭头时显示）
   const [quickPlayersExpanded, setQuickPlayersExpanded] = useState(false);
+  // 当前平台（macOS 上不支持 libmpv 悬浮窗播放）
+  const [currentPlatform, setCurrentPlatform] = useState<string>("");
+  useEffect(() => {
+    try { setCurrentPlatform(platform()); } catch { /* ignore */ }
+  }, []);
 
   // 下载 libmpv（委托给 store，事件监听在 App.tsx 全局处理）
   const handleDownload = useCallback(() => {
@@ -192,6 +198,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     } catch (e) {
       console.error("初始化播放器失败:", e);
       setPlayerReady(false);
+      setLoadingVideo(false);
     }
   }, []);
 
@@ -248,22 +255,35 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
   // 窗口移动由后端 delta 线程处理（更跟手，无事件延迟）
   useEffect(() => {
     if (!playerReady) return;
+    let rafId = 0;
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const syncPosition = () => {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const win = getCurrentWindow();
-      win.scaleFactor().then((sf: number) => {
-        const x = Math.round(rect.left * sf);
-        const y = Math.round(rect.top * sf);
-        const w = Math.round(rect.width * sf);
-        const h = Math.round(rect.height * sf);
-        api.playerResize(x, y, w, h).catch(() => {});
+      if (rafId) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = 0;
+        if (!containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const win = getCurrentWindow();
+        win.scaleFactor().then((sf: number) => {
+          const x = Math.round(rect.left * sf);
+          const y = Math.round(rect.top * sf);
+          const w = Math.round(rect.width * sf);
+          const h = Math.round(rect.height * sf);
+          api.playerResize(x, y, w, h).catch(() => {});
+        });
       });
+    };
+    const debouncedSync = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        syncPosition();
+      }, 80);
     };
     const win = getCurrentWindow();
     // 只监听 resize（大小变化），不监听 move（位置由后端 delta 处理）
-    const unlistenResize = win.onResized(() => syncPosition());
-    const onScroll = () => syncPosition();
+    const unlistenResize = win.onResized(() => debouncedSync());
+    const onScroll = () => debouncedSync();
     window.addEventListener("resize", onScroll);
     window.addEventListener("scroll", onScroll, true);
     syncPosition();
@@ -271,6 +291,8 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
       unlistenResize.then((fn) => fn());
       window.removeEventListener("resize", onScroll);
       window.removeEventListener("scroll", onScroll, true);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      if (rafId) cancelAnimationFrame(rafId);
     };
   }, [playerReady]);
 
@@ -286,6 +308,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
 
   // 播控操作
   const togglePlay = useCallback(async () => {
+    console.log("[VideoPlayer] togglePlay 调用，当前 playing=", playing);
     if (playing) {
       await api.playerPause();
       setPlaying(false);
@@ -342,6 +365,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
   // 改由后端 child_wnd_proc 捕获 WM_LBUTTONDOWN 并 emit "player-click"）
   useEffect(() => {
     const unlisten = listen("player-click", () => {
+      console.log("[VideoPlayer] 收到 player-click 事件");
       togglePlay();
     });
     return () => { unlisten.then((fn) => fn()); };

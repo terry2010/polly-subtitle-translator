@@ -26,7 +26,19 @@ use windows::core::PCWSTR;
 use windows::Win32::Graphics::Gdi::HBRUSH;
 #[cfg(windows)]
 use windows::Win32::UI::Accessibility::*;
+#[cfg(windows)]
 use windows::Win32::System::Threading::GetCurrentThreadId;
+
+/// 跨平台辅助：Windows 上隐藏控制台窗口，其他平台直接返回原命令
+#[cfg(windows)]
+fn no_window(mut cmd: std::process::Command) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+    cmd
+}
+#[cfg(not(windows))]
+fn no_window(cmd: std::process::Command) -> std::process::Command { cmd }
 
 // WinEventHook 全局状态（回调函数无法传递上下文，只能用全局变量）
 #[cfg(windows)]
@@ -121,35 +133,85 @@ impl LibmpvStatus {
 }
 
 const LIBMPV_DIR_NAME: &str = "libmpv";
+#[cfg(windows)]
 const LIBMPV_ARCHIVE_NAME: &str = "libmpv.7z";
+#[cfg(windows)]
 const LIBMPV_DLL_NAME: &str = "libmpv.dll";
+#[cfg(target_os = "macos")]
+const LIBMPV_DYLIB_NAME: &str = "libmpv.dylib";
+#[cfg(target_os = "macos")]
+const LIBMPV_ARCHIVE_NAME: &str = "libmpv.tar.gz";
 /// GitHub Releases API（zhongfly/mpv-winbuild，GPL build 的 libmpv）
 /// GPL build 功能完整，含 D3D11/GPU 渲染器和 DXVA2/D3D11VA 硬件解码。
 /// 资产命名：mpv-dev-x86_64-日期-git-哈希.7z
+#[cfg(windows)]
 const LIBMPV_RELEASES_API: &str = "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest";
+/// macOS libmpv 下载源（media-kit/libmpv-darwin-build，预编译 dylib）
+/// 按 arch 分支：arm64 / x86_64，video-full 包含完整编码器
+#[cfg(target_os = "macos")]
+#[cfg(target_arch = "aarch64")]
+const LIBMPV_MACOS_DOWNLOAD_URLS: &[&str] = &[
+    "https://gh-proxy.com/https://github.com/media-kit/libmpv-darwin-build/releases/download/v0.7.2/libmpv-libs_v0.7.2_macos-arm64-video-full.tar.gz",
+    "https://github.com/media-kit/libmpv-darwin-build/releases/download/v0.7.2/libmpv-libs_v0.7.2_macos-arm64-video-full.tar.gz",
+];
+#[cfg(target_os = "macos")]
+#[cfg(target_arch = "x86_64")]
+const LIBMPV_MACOS_DOWNLOAD_URLS: &[&str] = &[
+    "https://gh-proxy.com/https://github.com/media-kit/libmpv-darwin-build/releases/download/v0.7.2/libmpv-libs_v0.7.2_macos-amd64-video-full.tar.gz",
+    "https://github.com/media-kit/libmpv-darwin-build/releases/download/v0.7.2/libmpv-libs_v0.7.2_macos-amd64-video-full.tar.gz",
+];
 
 fn libmpv_dir(app_data_dir: &Path) -> std::path::PathBuf {
     app_data_dir.join(LIBMPV_DIR_NAME)
 }
+#[cfg(windows)]
 fn libmpv_dll_path(app_data_dir: &Path) -> std::path::PathBuf {
     libmpv_dir(app_data_dir).join(LIBMPV_DLL_NAME)
 }
+#[cfg(target_os = "macos")]
+fn libmpv_dylib_path(app_data_dir: &Path) -> std::path::PathBuf {
+    libmpv_dir(app_data_dir).join(LIBMPV_DYLIB_NAME)
+}
+#[cfg(any(windows, target_os = "macos"))]
 fn libmpv_archive_path(app_data_dir: &Path) -> std::path::PathBuf {
     libmpv_dir(app_data_dir).join(LIBMPV_ARCHIVE_NAME)
 }
 
 pub fn get_libmpv_status(app_data_dir: &Path) -> LibmpvStatus {
-    let dll_path = libmpv_dll_path(app_data_dir);
-    if dll_path.exists() {
-        LibmpvStatus { downloaded: true, path: Some(dll_path.to_string_lossy().to_string()), version: None }
-    } else {
+    #[cfg(windows)]
+    {
+        let dll_path = libmpv_dll_path(app_data_dir);
+        if dll_path.exists() {
+            LibmpvStatus { downloaded: true, path: Some(dll_path.to_string_lossy().to_string()), version: None }
+        } else {
+            LibmpvStatus::not_downloaded()
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let dylib_path = libmpv_dylib_path(app_data_dir);
+        if dylib_path.exists() {
+            LibmpvStatus { downloaded: true, path: Some(dylib_path.to_string_lossy().to_string()), version: None }
+        } else {
+            LibmpvStatus::not_downloaded()
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = app_data_dir;
         LibmpvStatus::not_downloaded()
     }
 }
 
+#[cfg(windows)]
 pub fn get_libmpv_path(app_data_dir: &Path) -> Option<std::path::PathBuf> {
     let dll_path = libmpv_dll_path(app_data_dir);
     if dll_path.exists() { Some(dll_path) } else { None }
+}
+#[cfg(target_os = "macos")]
+pub fn get_libmpv_path(app_data_dir: &Path) -> Option<std::path::PathBuf> {
+    let dylib_path = libmpv_dylib_path(app_data_dir);
+    if dylib_path.exists() { Some(dylib_path) } else { None }
 }
 
 /// 从 GitHub Releases JSON 中解析最新 mpv-dev-x86_64-*.7z 的下载 URL（排除 lgpl/v3/aarch64）
@@ -176,8 +238,30 @@ pub fn download_libmpv(
     proxy: Option<&str>,
     app_handle: &tauri::AppHandle,
 ) -> Result<(), AppError> {
+    // macOS 下载逻辑
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::Emitter;
+        let result = download_libmpv_macos(app_data_dir, proxy, app_handle);
+        if let Err(ref e) = result {
+            let archive_path = libmpv_archive_path(app_data_dir);
+            let dylib_path = libmpv_dylib_path(app_data_dir);
+            let _ = fs::remove_file(&archive_path);
+            if dylib_path.exists() { let _ = fs::remove_file(&dylib_path); }
+            let ipc_err = e.to_ipc_error();
+            let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+                "stage": "failed", "progress": 0,
+                "code": ipc_err.code,
+                "args": ipc_err.args,
+            }));
+            tracing::warn!("libmpv 下载失败: code={}", ipc_err.code);
+        }
+        return result;
+    }
+    // Windows 下载逻辑
+    #[cfg(windows)]
+    {
     use tauri::Emitter;
-
     // 内部主逻辑：返回 Err 时外层负责清理半成品
     let result = download_libmpv_inner(app_data_dir, proxy, app_handle);
 
@@ -206,9 +290,17 @@ pub fn download_libmpv(
     }
 
     result
+    } // end #[cfg(windows)]
+    // 其他平台不支持
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = (app_data_dir, proxy, app_handle);
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
 }
 
 /// 下载主逻辑（不含清理）
+#[cfg(windows)]
 fn download_libmpv_inner(
     app_data_dir: &Path,
     proxy: Option<&str>,
@@ -874,12 +966,108 @@ pub fn list_installed_players(video_path: &str) -> Result<Vec<InstalledPlayer>, 
     Ok(result)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub fn list_installed_players(video_path: &str) -> Result<Vec<InstalledPlayer>, AppError> {
+    use objc::runtime::{Class, Object};
+    use objc::{class, msg_send, sel, sel_impl};
+    use std::collections::HashSet;
+
+    let path = std::path::Path::new(video_path);
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    if ext.is_empty() {
+        return Ok(vec![]);
+    }
+
+    unsafe {
+        let pool: *mut Object = msg_send![class!(NSAutoreleasePool), new];
+
+        let nsstring = |s: &str| -> *mut Object {
+            let cls = Class::get("NSString").unwrap();
+            let bytes = s.as_bytes();
+            let s: *mut Object = msg_send![cls, alloc];
+            let s: *mut Object = msg_send![s, initWithBytes: bytes.as_ptr() length: bytes.len() encoding: 4u32];
+            let s: *mut Object = msg_send![s, autorelease];
+            s
+        };
+
+        let nsstring_to_string = |s: *mut Object| -> String {
+            let cstr: *const i8 = msg_send![s, UTF8String];
+            if cstr.is_null() {
+                return String::new();
+            }
+            std::ffi::CStr::from_ptr(cstr).to_string_lossy().to_string()
+        };
+
+        let file_url: *mut Object = msg_send![class!(NSURL), fileURLWithPath: nsstring(video_path)];
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+
+        // 获取默认应用路径
+        let default_app: *mut Object = msg_send![workspace, URLForApplicationToOpenURL: file_url];
+        let default_path = if default_app.is_null() {
+            String::new()
+        } else {
+            let path: *mut Object = msg_send![default_app, path];
+            nsstring_to_string(path)
+        };
+
+        // 获取所有可打开该文件的应用（与 Finder 右键"打开方式"列表一致）
+        let apps: *mut Object = msg_send![workspace, URLsForApplicationsToOpenURL: file_url];
+        let count: usize = msg_send![apps, count];
+
+        let mut players = Vec::new();
+        let mut seen = HashSet::new();
+
+        for i in 0..count {
+            let app_url: *mut Object = msg_send![apps, objectAtIndex: i];
+            let app_path_obj: *mut Object = msg_send![app_url, path];
+            let app_path = nsstring_to_string(app_path_obj);
+
+            if app_path.is_empty() || !seen.insert(app_path.clone()) {
+                continue;
+            }
+
+            // 从 bundle 读取应用显示名
+            let bundle: *mut Object = msg_send![class!(NSBundle), bundleWithPath: nsstring(&app_path)];
+            let mut name = String::new();
+            if !bundle.is_null() {
+                let display_name: *mut Object = msg_send![bundle, objectForInfoDictionaryKey: nsstring("CFBundleDisplayName")];
+                if !display_name.is_null() {
+                    name = nsstring_to_string(display_name);
+                }
+                if name.trim().is_empty() {
+                    let bundle_name: *mut Object = msg_send![bundle, objectForInfoDictionaryKey: nsstring("CFBundleName")];
+                    if !bundle_name.is_null() {
+                        name = nsstring_to_string(bundle_name);
+                    }
+                }
+            }
+            if name.trim().is_empty() {
+                name = std::path::Path::new(&app_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| app_path.clone());
+            }
+
+            players.push(InstalledPlayer {
+                name,
+                exe_path: app_path.clone(),
+                is_default: app_path == default_path,
+            });
+        }
+
+        let _: () = msg_send![pool, release];
+        Ok(players)
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn list_installed_players(_video_path: &str) -> Result<Vec<InstalledPlayer>, AppError> {
     Ok(vec![])
 }
 
 /// 用指定播放器打开视频文件
+#[cfg(windows)]
 pub fn open_with_player(exe_path: &str, video_path: &str) -> Result<(), AppError> {
     let status = std::process::Command::new(exe_path)
         .arg(video_path)
@@ -891,28 +1079,70 @@ pub fn open_with_player(exe_path: &str, video_path: &str) -> Result<(), AppError
     Ok(())
 }
 
-/// 在资源管理器中定位视频文件（explorer /select,"path"）
-/// 注意：explorer 的 /select 参数对路径中的空格/特殊字符敏感，
-/// 必须把 /select,"path" 作为单个参数传递（用 raw_arg 避免 Rust 自动加引号）。
-/// 直接用 .arg() 传含空格的参数时 Rust 会自动加引号，导致 explorer 解析失败打开"我的文档"。
+#[cfg(target_os = "macos")]
+pub fn open_with_player(exe_path: &str, video_path: &str) -> Result<(), AppError> {
+    // macOS 上 exe_path 是 .app  bundle 路径，用 open -a 指定应用打开
+    std::process::Command::new("open")
+        .arg("-a")
+        .arg(exe_path)
+        .arg(video_path)
+        .spawn()
+        .map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("open -a {} {} ({})", exe_path, video_path, e),
+        })?;
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn open_with_player(exe_path: &str, video_path: &str) -> Result<(), AppError> {
+    std::process::Command::new(exe_path)
+        .arg(video_path)
+        .spawn()
+        .map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("{} ({})", exe_path, e),
+        })?;
+    Ok(())
+}
+
+/// 在文件管理器中定位视频文件
+#[cfg(windows)]
 pub fn reveal_in_explorer(file_path: &str) -> Result<(), AppError> {
     // 将路径中的正斜杠统一为反斜杠（explorer 对正斜杠支持不佳）
     let normalized = file_path.replace('/', "\\");
     let select_arg = format!("/select,\"{}\"", normalized);
     let mut cmd = std::process::Command::new("explorer.exe");
     // raw_arg 不自动加引号，直接原样传递参数
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.raw_arg(select_arg);
-    }
-    #[cfg(not(windows))]
-    {
-        cmd.arg(select_arg);
-    }
+    use std::os::windows::process::CommandExt;
+    cmd.raw_arg(select_arg);
     cmd.spawn()
         .map_err(|e| AppError::PlayerLoadFailed {
             detail: format!("explorer ({})", e),
+        })?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+pub fn reveal_in_explorer(file_path: &str) -> Result<(), AppError> {
+    // macOS：open -R 在 Finder 中选中并定位到文件
+    std::process::Command::new("open")
+        .arg("-R")
+        .arg(file_path)
+        .spawn()
+        .map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("open -R {} ({})", file_path, e),
+        })?;
+    Ok(())
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn reveal_in_explorer(file_path: &str) -> Result<(), AppError> {
+    let path = std::path::Path::new(file_path);
+    let dir = path.parent().and_then(|p| p.to_str()).unwrap_or(".");
+    std::process::Command::new("xdg-open")
+        .arg(dir)
+        .spawn()
+        .map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("xdg-open {} ({})", dir, e),
         })?;
     Ok(())
 }
@@ -1064,7 +1294,133 @@ fn extract_icon_to_png(exe_path: &str, output_path: &Path) -> Result<(), AppErro
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn extract_icon_to_png(exe_path: &str, output_path: &Path) -> Result<(), AppError> {
+    use objc::runtime::{Class, Object};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSPoint {
+        x: f64,
+        y: f64,
+    }
+    unsafe impl objc::Encode for NSPoint {
+        fn encode() -> objc::Encoding {
+            unsafe { objc::Encoding::from_str("{CGPoint=dd}") }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSSize {
+        width: f64,
+        height: f64,
+    }
+    unsafe impl objc::Encode for NSSize {
+        fn encode() -> objc::Encoding {
+            unsafe { objc::Encoding::from_str("{CGSize=dd}") }
+        }
+    }
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct NSRect {
+        origin: NSPoint,
+        size: NSSize,
+    }
+    unsafe impl objc::Encode for NSRect {
+        fn encode() -> objc::Encoding {
+            unsafe { objc::Encoding::from_str("{CGRect={CGPoint=dd}{CGSize=dd}}") }
+        }
+    }
+
+    unsafe {
+        let pool: *mut Object = msg_send![class!(NSAutoreleasePool), new];
+
+        let nsstring = |s: &str| -> *mut Object {
+            let cls = Class::get("NSString").unwrap();
+            let bytes = s.as_bytes();
+            let s: *mut Object = msg_send![cls, alloc];
+            let s: *mut Object = msg_send![s, initWithBytes: bytes.as_ptr() length: bytes.len() encoding: 4u32];
+            let s: *mut Object = msg_send![s, autorelease];
+            s
+        };
+
+        let workspace: *mut Object = msg_send![class!(NSWorkspace), sharedWorkspace];
+        let icon: *mut Object = msg_send![workspace, iconForFile: nsstring(exe_path)];
+
+        if icon.is_null() {
+            let _: () = msg_send![pool, release];
+            return Err(AppError::PlayerLoadFailed {
+                detail: "无法获取应用图标".to_string(),
+            });
+        }
+
+        let size: (f64, f64) = msg_send![icon, size];
+        let width = size.0;
+        let height = size.1;
+
+        // 创建 ARGB 位图表示
+        let bitmap_class = Class::get("NSBitmapImageRep").unwrap();
+        let bitmap: *mut Object = msg_send![bitmap_class, alloc];
+        let bitmap: *mut Object = msg_send![
+            bitmap,
+            initWithBitmapDataPlanes: std::ptr::null_mut::<*mut u8>()
+            pixelsWide: width as i64
+            pixelsHigh: height as i64
+            bitsPerSample: 8i64
+            samplesPerPixel: 4i64
+            hasAlpha: true
+            isPlanar: false
+            colorSpaceName: nsstring("NSDeviceRGBColorSpace")
+            bytesPerRow: 0i64
+            bitsPerPixel: 32i64
+        ];
+
+        if bitmap.is_null() {
+            let _: () = msg_send![pool, release];
+            return Err(AppError::PlayerLoadFailed {
+                detail: "无法创建位图".to_string(),
+            });
+        }
+
+        // 在位图上下文中绘制图标
+        let graphics_context: *mut Object = msg_send![class!(NSGraphicsContext), graphicsContextWithBitmapImageRep: bitmap];
+        let _: () = msg_send![class!(NSGraphicsContext), saveGraphicsState];
+        let _: () = msg_send![class!(NSGraphicsContext), setCurrentContext: graphics_context];
+
+        let rect = NSRect {
+            origin: NSPoint { x: 0.0, y: 0.0 },
+            size: NSSize { width, height },
+        };
+        // NSCompositingOperationSourceOver = 2
+        let _: () = msg_send![icon, drawInRect: rect fromRect: rect operation: 2u64 fraction: 1.0f64];
+
+        let _: () = msg_send![class!(NSGraphicsContext), restoreGraphicsState];
+
+        // NSPNGFileType = 4
+        let png_data: *mut Object = msg_send![bitmap, representationUsingType: 4u64 properties: std::ptr::null_mut::<Object>()];
+        if png_data.is_null() {
+            let _: () = msg_send![pool, release];
+            return Err(AppError::PlayerLoadFailed {
+                detail: "无法生成 PNG 数据".to_string(),
+            });
+        }
+
+        let bytes: *const u8 = msg_send![png_data, bytes];
+        let length: usize = msg_send![png_data, length];
+        let data = std::slice::from_raw_parts(bytes, length);
+        std::fs::write(output_path, data).map_err(|e| AppError::PlayerLoadFailed {
+            detail: format!("写入图标失败: {} ({})", output_path.display(), e),
+        })?;
+
+        let _: () = msg_send![pool, release];
+        Ok(())
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn extract_icon_to_png(_exe_path: &str, _output_path: &Path) -> Result<(), AppError> {
     Err(AppError::PlayerLoadFailed { detail: "不支持的平台".to_string() })
 }
@@ -1501,6 +1857,1252 @@ impl Drop for Player {
 
 // === SECTION 4 END ===
 
+// === SECTION 4.6: macOS libmpv 下载 ===
+
+/// macOS libmpv 下载：从 media-kit/libmpv-darwin-build 下载 tar.gz，
+/// 解压所有 dylib 到 libmpv 目录，用 install_name_tool 修复 rpath（@loader_path），
+/// 使所有 dylib 能在同目录下互相找到。
+#[cfg(target_os = "macos")]
+fn download_libmpv_macos(
+    app_data_dir: &Path,
+    proxy: Option<&str>,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), AppError> {
+    use tauri::Emitter;
+    use std::io::{Read, Write};
+
+    let dir = libmpv_dir(app_data_dir);
+    fs::create_dir_all(&dir).map_err(|e| AppError::PlayerDownloadMkdirFailed {
+        detail: e.to_string(),
+    })?;
+
+    let mut client_builder = reqwest::blocking::Client::builder()
+        .user_agent("zimufan/1.0")
+        .timeout(std::time::Duration::from_secs(600));
+    if let Some(p) = proxy {
+        if !p.is_empty() {
+            client_builder = client_builder.proxy(
+                reqwest::Proxy::all(p).map_err(|e| AppError::PlayerDownloadProxyFailed {
+                    detail: e.to_string(),
+                })?,
+            );
+        }
+    }
+    let client = client_builder.build().map_err(|e| AppError::PlayerDownloadHttpClientFailed {
+        detail: e.to_string(),
+    })?;
+
+    // 1. 下载 tar.gz（依次尝试多个源）
+    let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+        "stage": "downloading", "progress": 0, "message": "开始下载 libmpv..."
+    }));
+
+    let mut response = None;
+    let mut last_err = None;
+    for url in LIBMPV_MACOS_DOWNLOAD_URLS {
+        tracing::info!("尝试下载 libmpv: {}", url);
+        let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+            "stage": "downloading", "progress": 0, "message": "连接下载源...",
+        }));
+        match client.get(*url).send() {
+            Ok(resp) if resp.status().is_success() => {
+                response = Some(resp);
+                break;
+            }
+            Ok(resp) => {
+                tracing::warn!("下载源 {} 返回 HTTP {}", url, resp.status());
+                last_err = Some(format!("HTTP {}", resp.status()));
+            }
+            Err(e) => {
+                tracing::warn!("下载源 {} 连接失败: {}", url, e);
+                last_err = Some(e.to_string());
+            }
+        }
+    }
+    let mut response = response.ok_or_else(|| AppError::PlayerDownloadRequestFailed {
+        detail: last_err.unwrap_or_else(|| "所有下载源均不可用".to_string()),
+    })?;
+
+    let total_size = response.content_length().unwrap_or(0);
+    let archive_path = libmpv_archive_path(app_data_dir);
+    let mut file = fs::File::create(&archive_path).map_err(|e| AppError::PlayerDownloadCreateFileFailed {
+        detail: e.to_string(),
+    })?;
+
+    let mut buf = [0u8; 65536];
+    let mut downloaded: u64 = 0;
+    let mut last_emit = std::time::Instant::now();
+    let download_start = std::time::Instant::now();
+    loop {
+        let n = response.read(&mut buf).map_err(|e| AppError::PlayerDownloadStreamReadFailed {
+            detail: e.to_string(),
+        })?;
+        if n == 0 { break; }
+        file.write_all(&buf[..n]).map_err(|e| AppError::PlayerDownloadWriteFailed {
+            detail: e.to_string(),
+        })?;
+        downloaded += n as u64;
+        if last_emit.elapsed() > std::time::Duration::from_millis(200) {
+            let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+            let elapsed = download_start.elapsed().as_secs_f64();
+            let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
+            let speed_mb = speed_bps / 1024.0 / 1024.0;
+            let remaining_bytes = total_size.saturating_sub(downloaded);
+            let eta_secs = if speed_bps > 0.0 { remaining_bytes as f64 / speed_bps } else { 0.0 };
+            let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+                "stage": "downloading", "progress": pct,
+                "downloaded": downloaded, "total": total_size,
+                "speed_mbps": (speed_mb * 10.0).round() / 10.0,
+                "eta_secs": eta_secs.round() as u64,
+                "message": format!("下载中 {}% ({} / {} MB)",
+                    pct, downloaded / 1024 / 1024, total_size / 1024 / 1024)
+            }));
+            last_emit = std::time::Instant::now();
+        }
+    }
+    let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+        "stage": "downloading", "progress": 100, "message": "下载完成"
+    }));
+
+    // 2. 解压 tar.gz，提取所有 dylib 到 libmpv 目录
+    let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+        "stage": "extracting", "progress": -1, "message": "正在解压安装..."
+    }));
+    tracing::info!("解压 libmpv tar.gz...");
+    let tar_gz = std::fs::File::open(&archive_path).map_err(|e| AppError::PlayerDownloadExtractFailed {
+        detail: e.to_string(),
+    })?;
+    let gz = flate2::read::GzDecoder::new(tar_gz);
+    let mut archive = tar::Archive::new(gz);
+    // 解压所有 .dylib 文件到 libmpv 目录（扁平化，去掉子目录）
+    let entries = archive.entries().map_err(|e| AppError::PlayerDownloadExtractFailed {
+        detail: e.to_string(),
+    })?;
+    for entry in entries {
+        let mut entry = entry.map_err(|e| AppError::PlayerDownloadExtractFailed {
+            detail: e.to_string(),
+        })?;
+        let path = entry.path().map_err(|e| AppError::PlayerDownloadExtractFailed {
+            detail: e.to_string(),
+        })?.to_path_buf();
+        // 只提取 .dylib 文件
+        if path.extension().map(|e| e == "dylib").unwrap_or(false) {
+            let filename = path.file_name().unwrap();
+            let dest = dir.join(filename);
+            entry.unpack(&dest).map_err(|e| AppError::PlayerDownloadExtractFailed {
+                detail: e.to_string(),
+            })?;
+            tracing::info!("提取 dylib: {}", filename.to_string_lossy());
+        }
+    }
+
+    // 3. 修复 rpath：为所有 dylib 添加 @loader_path，使同目录下的 dylib 互相可见
+    let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+        "stage": "extracting", "progress": 90, "message": "正在修复库路径..."
+    }));
+    for entry in fs::read_dir(&dir).map_err(|e| AppError::PlayerDownloadExtractFailed {
+        detail: e.to_string(),
+    })? {
+        let entry = entry.map_err(|e| AppError::PlayerDownloadExtractFailed {
+            detail: e.to_string(),
+        })?;
+        let path = entry.path();
+        if path.extension().map(|e| e == "dylib").unwrap_or(false) {
+            // install_name_tool -add_rpath @loader_path <dylib>
+            // 忽略错误（如果 rpath 已存在会报错，不影响功能）
+            let _ = no_window(std::process::Command::new("install_name_tool"))
+                .args(["-add_rpath", "@loader_path", &path.to_string_lossy()])
+                .output();
+        }
+    }
+
+    // 4. 设置可执行权限
+    use std::os::unix::fs::PermissionsExt;
+    for entry in fs::read_dir(&dir).map_err(|e| AppError::PlayerDownloadExtractFailed {
+        detail: e.to_string(),
+    })? {
+        let entry = entry.map_err(|e| AppError::PlayerDownloadExtractFailed {
+            detail: e.to_string(),
+        })?;
+        let path = entry.path();
+        if path.extension().map(|e| e == "dylib").unwrap_or(false) {
+            let mut perms = fs::metadata(&path)
+                .map_err(|e| AppError::PlayerDownloadCopyDllFailed { detail: e.to_string() })?
+                .permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&path, perms);
+        }
+    }
+
+    // 5. 清理 tar.gz
+    let _ = fs::remove_file(&archive_path);
+
+    // 验证 libmpv.dylib 存在
+    let dylib_path = libmpv_dylib_path(app_data_dir);
+    if !dylib_path.exists() {
+        return Err(AppError::PlayerDownloadDllNotFound);
+    }
+
+    let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
+        "stage": "done", "progress": 100, "message": "安装完成"
+    }));
+    tracing::info!("libmpv 下载完成: {}", dylib_path.display());
+    Ok(())
+}
+
+// === SECTION 4.6 END ===
+
+// === SECTION 4.5: macOS Player 实现 ===
+// macOS 上使用 NSView 子视图 + libmpv wid 嵌入实现视频播放预览。
+// 创建自定义 NSView 子类（捕获鼠标事件），添加为 Tauri 窗口 contentView 的子视图，
+// 将 NSView 指针传给 libmpv 的 wid 选项，libmpv 在该 NSView 上创建 CALayer 渲染视频。
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use super::*;
+    use libloading::Library;
+    use objc::declare::ClassDecl;
+    use objc::runtime::{Class, Object, Sel};
+    use objc::{class, msg_send, sel, sel_impl};
+    use std::ffi::CString;
+    use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
+
+    // === libdispatch：把 AppKit 操作派发回主线程 ===
+    // AppKit（NSWindow 等）不是线程安全的，窗口的 orderOut/close 等必须在主线程调用，
+    // 否则会触发 NSWMWindowCoordinator 崩溃。
+    extern "C" {
+        static _dispatch_main_q: c_void;
+        fn dispatch_async_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: extern "C" fn(*mut c_void),
+        );
+        fn dispatch_sync_f(
+            queue: *const c_void,
+            context: *mut c_void,
+            work: extern "C" fn(*mut c_void),
+        );
+    }
+
+    /// NSPoint 对应的 Rust 类型，用于 hitTest: 的参数
+    #[repr(C)]
+    struct NSPoint {
+        x: f64,
+        y: f64,
+    }
+    unsafe impl objc::Encode for NSPoint {
+        fn encode() -> objc::Encoding {
+            // NSPoint = {CGPoint=dd}（两个 double）
+            unsafe { objc::Encoding::from_str("{CGPoint=dd}") }
+        }
+    }
+
+    /// 派发到主线程的窗口清理上下文
+    struct WindowCleanupCtx {
+        ns_window: usize,
+        parent_window: usize,
+    }
+
+    /// 在主线程执行的窗口清理回调（由 dispatch_sync_f 调用）
+    extern "C" fn cleanup_window_on_main(context: *mut c_void) {
+        unsafe {
+            let ctx = Box::from_raw(context as *mut WindowCleanupCtx);
+            if ctx.ns_window != 0 {
+                let ns_window = ctx.ns_window as *mut Object;
+                if ctx.parent_window != 0 {
+                    let parent = ctx.parent_window as *mut Object;
+                    let _: () = msg_send![parent, removeChildWindow: ns_window];
+                }
+                let _: () = msg_send![ns_window, orderOut: std::ptr::null_mut::<Object>()];
+                let _: () = msg_send![ns_window, close];
+                let _: () = msg_send![ns_window, release];
+                tracing::info!("Player::destroy (macOS): 窗口已在主线程释放");
+            }
+        }
+    }
+
+    /// 把窗口清理同步派发到主线程执行并等待完成。
+    /// 使用 dispatch_sync_f 而非 dispatch_async_f，确保 destroy() 返回时窗口已完全释放，
+    /// 避免 player_init 创建新窗口时旧窗口仍在主线程队列中待清理导致竞争。
+    unsafe fn dispatch_window_cleanup(ns_window: usize, parent_window: usize) {
+        if is_main_thread() {
+            // 已在主线程，直接执行
+            let ctx = Box::new(WindowCleanupCtx { ns_window, parent_window });
+            cleanup_window_on_main(Box::into_raw(ctx) as *mut c_void);
+        } else {
+            let ctx = Box::new(WindowCleanupCtx { ns_window, parent_window });
+            dispatch_sync_f(
+                &_dispatch_main_q as *const c_void,
+                Box::into_raw(ctx) as *mut c_void,
+                cleanup_window_on_main,
+            );
+        }
+    }
+
+    /// 主线程创建窗口的上下文
+    struct CreateWindowCtx {
+        parent_window: *mut Object,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+        result: Option<*mut Object>,
+    }
+
+    /// 在主线程执行窗口创建
+    extern "C" fn create_floating_window_on_main(context: *mut c_void) {
+        unsafe {
+            let ctx = &mut *(context as *mut CreateWindowCtx);
+            ctx.result = create_floating_window_raw(ctx.parent_window, ctx.x, ctx.y, ctx.w, ctx.h);
+        }
+    }
+
+    /// 判断当前是否在主线程
+    unsafe fn is_main_thread() -> bool {
+        let is_main: bool = msg_send![class!(NSThread), isMainThread];
+        is_main
+    }
+
+    /// 同步到主线程创建悬浮窗口（如果当前已在主线程则直接执行）
+    unsafe fn create_floating_window(parent_window: *mut Object, x: f64, y: f64, w: f64, h: f64) -> Option<*mut Object> {
+        if is_main_thread() {
+            return create_floating_window_raw(parent_window, x, y, w, h);
+        }
+        let mut ctx = CreateWindowCtx {
+            parent_window,
+            x,
+            y,
+            w,
+            h,
+            result: None,
+        };
+        dispatch_sync_f(
+            &_dispatch_main_q as *const c_void,
+            &mut ctx as *mut _ as *mut c_void,
+            create_floating_window_on_main,
+        );
+        ctx.result
+    }
+
+    /// 派发到主线程更新窗口 frame 的上下文
+    struct SetFrameCtx {
+        ns_window: *mut Object,
+        x: f64,
+        y: f64,
+        w: f64,
+        h: f64,
+    }
+
+    /// 在主线程执行窗口 frame 更新
+    extern "C" fn set_window_frame_on_main(context: *mut c_void) {
+        unsafe {
+            let ctx = Box::from_raw(context as *mut SetFrameCtx);
+            if !ctx.ns_window.is_null() {
+                set_window_frame_raw(ctx.ns_window, ctx.x, ctx.y, ctx.w, ctx.h);
+            }
+        }
+    }
+
+    /// 派发到主线程显示窗口的上下文
+    struct ShowWindowCtx {
+        ns_window: *mut Object,
+    }
+
+    /// 在主线程执行显示窗口
+    extern "C" fn show_window_on_main(context: *mut c_void) {
+        unsafe {
+            let ctx = Box::from_raw(context as *mut ShowWindowCtx);
+            if !ctx.ns_window.is_null() {
+                show_window_raw(ctx.ns_window);
+            }
+        }
+    }
+
+    /// 派发到主线程隐藏窗口的上下文
+    struct HideWindowCtx {
+        ns_window: *mut Object,
+    }
+
+    /// 在主线程执行隐藏窗口
+    extern "C" fn hide_window_on_main(context: *mut c_void) {
+        unsafe {
+            let ctx = Box::from_raw(context as *mut HideWindowCtx);
+            if !ctx.ns_window.is_null() {
+                hide_window_raw(ctx.ns_window);
+            }
+        }
+    }
+
+    /// 全局 AppHandle，供 NSView 鼠标事件回调 emit Tauri 事件
+    static GLOBAL_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
+    /// 自定义 NSView 类是否已注册
+    static CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
+
+    /// 注册自定义 NSView 子类 "MpvVideoView"
+    /// 重写 isFlipped → YES（左上角原点，与 Web 坐标系一致）
+    /// 重写 mouseDown: → emit "player-click" 事件
+    /// 重写 rightMouseDown: → emit "player-right-click" 事件（带屏幕坐标）
+    fn ensure_video_view_class() {
+        CLASS_REGISTERED.call_once(|| {
+            // 如果类已存在（例如上一进程注册的残留），直接跳过
+            if Class::get("MpvVideoView").is_some() {
+                tracing::info!("MpvVideoView 类已存在，跳过注册");
+                return;
+            }
+            let superclass = match Class::get("NSView") {
+                Some(cls) => cls,
+                None => {
+                    tracing::error!("ensure_video_view_class: NSView 类未找到，AppKit 可能未加载");
+                    return;
+                }
+            };
+            let mut decl = match ClassDecl::new("MpvVideoView", superclass) {
+                Some(d) => d,
+                None => {
+                    tracing::error!("ensure_video_view_class: ClassDecl::new 返回 None（类名冲突）");
+                    return;
+                }
+            };
+            extern "C" fn is_flipped(_this: &Object, _sel: Sel) -> bool {
+                true
+            }
+            // borderless 透明窗口默认 mouseDownCanMoveWindow=YES，
+            // 导致点击被当作窗口拖拽手势，不会投递到 mouseDown:。
+            // 必须返回 NO，点击才能到达我们的 mouseDown: 处理器。
+            extern "C" fn mouse_down_can_move_window(_this: &Object, _sel: Sel) -> bool {
+                false
+            }
+            // mpv 的 cocoa vo 可能创建 NSOpenGLView 子视图覆盖在我们的 view 上，
+            // 拦截鼠标事件。重写 hitTest: 始终返回 self，确保事件投递到我们的 view。
+            extern "C" fn hit_test(this: &Object, _sel: Sel, _point: NSPoint) -> *mut Object {
+                this as *const Object as *mut Object
+            }
+            // 允许 view 成为 first responder，确保能接收鼠标事件
+            extern "C" fn accepts_first_responder(_this: &Object, _sel: Sel) -> bool {
+                true
+            }
+            extern "C" fn mouse_down(_this: &Object, _sel: Sel, _event: *mut Object) {
+                tracing::info!("MpvVideoView mouseDown 被调用");
+                use tauri::Emitter;
+                if let Some(app) = GLOBAL_APP_HANDLE.get() {
+                    let _ = app.emit("player-click", ());
+                    tracing::info!("player-click 事件已 emit");
+                } else {
+                    tracing::warn!("GLOBAL_APP_HANDLE 未设置，无法 emit player-click");
+                }
+                // 点击后让父窗口重新成为 key window，避免标题栏变灰、键盘快捷键失效
+                unsafe {
+                    let ns_window: *mut Object = msg_send![_this as *const Object as *mut Object, window];
+                    if !ns_window.is_null() {
+                        let parent: *mut Object = msg_send![ns_window, parentWindow];
+                        if !parent.is_null() {
+                            let ctx = Box::new(RestoreParentKeyCtx { parent_window: parent });
+                            dispatch_async_f(
+                                &_dispatch_main_q as *const c_void,
+                                Box::into_raw(ctx) as *mut c_void,
+                                restore_parent_key_on_main,
+                            );
+                        }
+                    }
+                }
+            }
+            extern "C" fn right_mouse_down(_this: &Object, _sel: Sel, event: *mut Object) {
+                tracing::info!("MpvVideoView rightMouseDown 被调用");
+                use tauri::Emitter;
+                // 获取点击位置在窗口中的坐标
+                let location: (f64, f64) = unsafe { msg_send![event as *mut Object, locationInWindow] };
+                // 转换为屏幕坐标
+                let ns_window: *mut Object = unsafe { msg_send![_this as *const Object as *mut Object, window] };
+                if ns_window.is_null() { return; }
+                let ns_screen: *mut Object = unsafe { msg_send![ns_window, screen] };
+                if ns_screen.is_null() { return; }
+                let screen_frame: (f64, f64, f64, f64) = unsafe { msg_send![ns_screen, frame] };
+                let win_frame: (f64, f64, f64, f64) = unsafe { msg_send![ns_window, frame] };
+                // NSWindow frame.origin 是左下角坐标，屏幕坐标也是左下角原点
+                // 转换为屏幕左上角原点坐标（前端期望的格式）
+                let screen_x = win_frame.0 + location.0;
+                let screen_y_from_bottom = win_frame.1 + location.1;
+                let screen_y = screen_frame.3 - screen_y_from_bottom; // 翻转 Y
+                if let Some(app) = GLOBAL_APP_HANDLE.get() {
+                    let _ = app.emit("player-right-click", (screen_x as i32, screen_y as i32));
+                    tracing::info!("player-right-click 事件已 emit");
+                } else {
+                    tracing::warn!("GLOBAL_APP_HANDLE 未设置，无法 emit player-right-click");
+                }
+                // 右键点击后同样恢复父窗口 key，确保前端菜单所在主窗口保持焦点
+                unsafe {
+                    let parent: *mut Object = msg_send![ns_window, parentWindow];
+                    if !parent.is_null() {
+                        let ctx = Box::new(RestoreParentKeyCtx { parent_window: parent });
+                        dispatch_async_f(
+                            &_dispatch_main_q as *const c_void,
+                            Box::into_raw(ctx) as *mut c_void,
+                            restore_parent_key_on_main,
+                        );
+                    }
+                }
+            }
+            unsafe {
+                decl.add_method(sel!(isFlipped), is_flipped as extern "C" fn(&Object, Sel) -> bool);
+                decl.add_method(sel!(mouseDownCanMoveWindow), mouse_down_can_move_window as extern "C" fn(&Object, Sel) -> bool);
+                decl.add_method(sel!(hitTest:), hit_test as extern "C" fn(&Object, Sel, NSPoint) -> *mut Object);
+                decl.add_method(sel!(acceptsFirstResponder), accepts_first_responder as extern "C" fn(&Object, Sel) -> bool);
+                decl.add_method(sel!(mouseDown:), mouse_down as extern "C" fn(&Object, Sel, *mut Object));
+                decl.add_method(sel!(rightMouseDown:), right_mouse_down as extern "C" fn(&Object, Sel, *mut Object));
+            }
+            decl.register();
+            tracing::info!("MpvVideoView 类注册成功");
+        });
+    }
+
+    /// 自定义 NSWindow 子类是否已注册
+    static WINDOW_CLASS_REGISTERED: std::sync::Once = std::sync::Once::new();
+
+    /// 注册自定义 NSWindow 子类 "MpvFloatingWindow"
+    /// 重写 canBecomeKeyWindow → YES，让无边框悬浮窗口能接收鼠标点击事件
+    /// 重写 canBecomeMainWindow → NO，避免主窗口标题栏变灰
+    /// 重写 sendEvent: → 在窗口级别拦截鼠标事件，无论 mpv 的 vo 线程如何替换 contentView
+    fn ensure_floating_window_class() {
+        WINDOW_CLASS_REGISTERED.call_once(|| {
+            if Class::get("MpvFloatingWindow").is_some() {
+                tracing::info!("MpvFloatingWindow 类已存在，跳过注册");
+                return;
+            }
+            let superclass = match Class::get("NSWindow") {
+                Some(cls) => cls,
+                None => {
+                    tracing::error!("ensure_floating_window_class: NSWindow 类未找到，AppKit 可能未加载");
+                    return;
+                }
+            };
+            let mut decl = match ClassDecl::new("MpvFloatingWindow", superclass) {
+                Some(d) => d,
+                None => {
+                    tracing::error!("ensure_floating_window_class: ClassDecl::new 返回 None（类名冲突）");
+                    return;
+                }
+            };
+            extern "C" fn can_become_key_window(_this: &Object, _sel: Sel) -> bool {
+                true
+            }
+            extern "C" fn can_become_main_window(_this: &Object, _sel: Sel) -> bool {
+                false
+            }
+            // 在窗口级别拦截鼠标事件。mpv 的 cocoa vo 可能创建自己的 NSOpenGLView
+            // 并替换 contentView，导致 MpvVideoView 的 mouseDown: 重写被绕过。
+            // sendEvent: 在事件到达任何 view 之前被调用，是最可靠的拦截点。
+            extern "C" fn send_event(this: &Object, _sel: Sel, event: *mut Object) {
+                unsafe {
+                    let event_type: usize = msg_send![event as *mut Object, type];
+                    // NSEventTypeLeftMouseDown = 1
+                    if event_type == 1 {
+                        tracing::info!("MpvFloatingWindow sendEvent: leftMouseDown");
+                        use tauri::Emitter;
+                        if let Some(app) = GLOBAL_APP_HANDLE.get() {
+                            let _ = app.emit("player-click", ());
+                            tracing::info!("player-click 事件已 emit (window sendEvent)");
+                        } else {
+                            tracing::warn!("GLOBAL_APP_HANDLE 未设置，无法 emit player-click");
+                        }
+                        // 恢复父窗口 key 状态
+                        let ns_window = this as *const Object as *mut Object;
+                        let parent: *mut Object = msg_send![ns_window, parentWindow];
+                        if !parent.is_null() {
+                            let ctx = Box::new(RestoreParentKeyCtx { parent_window: parent });
+                            dispatch_async_f(
+                                &_dispatch_main_q as *const c_void,
+                                Box::into_raw(ctx) as *mut c_void,
+                                restore_parent_key_on_main,
+                            );
+                        }
+                    }
+                    // NSEventTypeRightMouseDown = 3
+                    if event_type == 3 {
+                        tracing::info!("MpvFloatingWindow sendEvent: rightMouseDown");
+                        use tauri::Emitter;
+                        let location: (f64, f64) = msg_send![event as *mut Object, locationInWindow];
+                        let ns_window = this as *const Object as *mut Object;
+                        let ns_screen: *mut Object = msg_send![ns_window, screen];
+                        if !ns_screen.is_null() {
+                            let screen_frame: (f64, f64, f64, f64) = msg_send![ns_screen, frame];
+                            let win_frame: (f64, f64, f64, f64) = msg_send![ns_window, frame];
+                            let screen_x = win_frame.0 + location.0;
+                            let screen_y_from_bottom = win_frame.1 + location.1;
+                            let screen_y = screen_frame.3 - screen_y_from_bottom;
+                            if let Some(app) = GLOBAL_APP_HANDLE.get() {
+                                let _ = app.emit("player-right-click", (screen_x as i32, screen_y as i32));
+                                tracing::info!("player-right-click 事件已 emit (window sendEvent)");
+                            }
+                        }
+                        // 恢复父窗口 key 状态
+                        let parent: *mut Object = msg_send![ns_window, parentWindow];
+                        if !parent.is_null() {
+                            let ctx = Box::new(RestoreParentKeyCtx { parent_window: parent });
+                            dispatch_async_f(
+                                &_dispatch_main_q as *const c_void,
+                                Box::into_raw(ctx) as *mut c_void,
+                                restore_parent_key_on_main,
+                            );
+                        }
+                    }
+                    // 调用 super 的 sendEvent:，让事件继续传递给 view
+                    let superclass = Class::get("NSWindow").unwrap();
+                    // objc_super 结构体，与 Objective-C runtime 的 objc_super 兼容
+                    #[repr(C)]
+                    struct ObjcSuper {
+                        receiver: *mut Object,
+                        super_class: *const objc::runtime::Class,
+                    }
+                    let sup = ObjcSuper {
+                        receiver: this as *const Object as *mut Object,
+                        super_class: superclass as *const _,
+                    };
+                    // 声明 objc_msgSendSuper 为无参数 extern fn（与 objc crate 相同的方式），
+                    // 然后 transmute 为具体签名的函数指针
+                    extern "C" { fn objc_msgSendSuper(); }
+                    let func: extern "C" fn(*const ObjcSuper, Sel, *mut Object) =
+                        unsafe { std::mem::transmute(objc_msgSendSuper as *const ()) };
+                    func(&sup, sel!(sendEvent:), event);
+                }
+            }
+            unsafe {
+                decl.add_method(sel!(canBecomeKeyWindow), can_become_key_window as extern "C" fn(&Object, Sel) -> bool);
+                decl.add_method(sel!(canBecomeMainWindow), can_become_main_window as extern "C" fn(&Object, Sel) -> bool);
+                decl.add_method(sel!(sendEvent:), send_event as extern "C" fn(&Object, Sel, *mut Object));
+            }
+            decl.register();
+            tracing::info!("MpvFloatingWindow 类注册成功");
+        });
+    }
+
+    /// 恢复父窗口 key 状态的上下文
+    struct RestoreParentKeyCtx {
+        parent_window: *mut Object,
+    }
+
+    /// 在事件处理完成后恢复父窗口为 key window，避免主窗口标题栏变灰、键盘快捷键失效
+    extern "C" fn restore_parent_key_on_main(context: *mut c_void) {
+        unsafe {
+            let ctx = Box::from_raw(context as *mut RestoreParentKeyCtx);
+            if !ctx.parent_window.is_null() {
+                let _: () = msg_send![ctx.parent_window, makeKeyWindow];
+                tracing::info!("restore_parent_key_on_main: 父窗口已恢复 key");
+            }
+        }
+    }
+
+    /// 在主线程创建独立的悬浮 NSWindow 作为 libmpv 渲染窗口
+    /// x, y, w, h 为 Web 坐标（左上角原点），相对于父窗口内容区
+    unsafe fn create_floating_window_raw(parent_window: *mut Object, x: f64, y: f64, w: f64, h: f64) -> Option<*mut Object> {
+        let parent_frame: (f64, f64, f64, f64) = msg_send![parent_window, frame];
+        let parent_content_rect: (f64, f64, f64, f64) = msg_send![parent_window, contentRectForFrameRect: parent_frame];
+        // 当 fullSizeContentView 时 contentRect == frame，需要减去标题栏高度
+        let titlebar = get_titlebar_height(parent_window);
+        let content_left = parent_content_rect.0;
+        let content_top = parent_content_rect.1 + parent_content_rect.3 - titlebar;
+        // 计算屏幕坐标（左下角原点）
+        let screen_x = content_left + x;
+        let screen_y = content_top - y - h;
+        let window_frame: (f64, f64, f64, f64) = (screen_x, screen_y, w, h);
+        tracing::info!("创建悬浮窗口: parent_frame={:?}, content_rect={:?}, titlebar={}, window_frame={:?}", parent_frame, parent_content_rect, titlebar, window_frame);
+
+        // 使用自定义 NSWindow 子类，重写 canBecomeKeyWindow 以接收鼠标点击事件
+        ensure_floating_window_class();
+        let window_class = Class::get("MpvFloatingWindow")?;
+        let window: *mut Object = msg_send![window_class, alloc];
+        // styleMask=0 borderless, backing=2 Buffered, defer=false
+        let window: *mut Object = msg_send![window, initWithContentRect: window_frame styleMask: 0u32 backing: 2u32 defer: false];
+        if window.is_null() {
+            return None;
+        }
+
+        // 窗口属性：透明、无边框、不释放、浮动层级
+        let _: () = msg_send![window, setReleasedWhenClosed: false];
+        let bg_color: *mut Object = msg_send![class!(NSColor), clearColor];
+        let _: () = msg_send![window, setBackgroundColor: bg_color];
+        let _: () = msg_send![window, setOpaque: false];
+        let _: () = msg_send![window, setHasShadow: false];
+        let _: () = msg_send![window, setIgnoresMouseEvents: false];
+        let _: () = msg_send![window, setAcceptsMouseMovedEvents: true];
+        let _: () = msg_send![window, setLevel: 8u32]; // NSFloatingWindowLevel
+
+        // 创建自定义 NSView 作为 contentView，填满窗口
+        ensure_video_view_class();
+        let view_class = Class::get("MpvVideoView")?;
+        let view: *mut Object = msg_send![view_class, alloc];
+        let view: *mut Object = msg_send![view, init];
+        let view_frame: (f64, f64, f64, f64) = (0.0, 0.0, w, h);
+        let _: () = msg_send![view, setFrame: view_frame];
+        // 不使用 layer-backed view，避免 CoreAnimation commit 时触发
+        // _NSOpenGLViewBackingLayer display → performAsyncResize → NSOpenGLContext update
+        // 与 vo 线程的 GL 渲染竞争导致 Metal 命令缓冲区验证失败崩溃。
+        // 传统 NSOpenGLContext 渲染模式直接绘制到 view surface，不走 layer 系统。
+        let _: () = msg_send![view, setWantsLayer: false];
+        let _: () = msg_send![window, setContentView: view];
+
+        // 作为子窗口附着到父窗口，保持跟随父窗口
+        let _: () = msg_send![parent_window, addChildWindow: window ordered: 1u32]; // NSWindowAbove
+
+        // 立即显示窗口，避免 libmpv 在不可见窗口上创建渲染上下文崩溃
+        show_window(window);
+
+        Some(window)
+    }
+
+    /// 获取父窗口标题栏高度。
+    /// 当窗口使用 fullSizeContentView 时，contentRectForFrameRect 返回值与 frame 相同，
+    /// 此时通过标准窗口按钮（关闭按钮）的位置推算实际标题栏高度。
+    unsafe fn get_titlebar_height(parent_window: *mut Object) -> f64 {
+        let frame: (f64, f64, f64, f64) = msg_send![parent_window, frame];
+        let content_rect: (f64, f64, f64, f64) = msg_send![parent_window, contentRectForFrameRect: frame];
+        let diff = frame.3 - content_rect.3;
+        if diff > 1.0 {
+            return diff;
+        }
+        // fullSizeContentView 情况：通过关闭按钮位置推算标题栏高度
+        // NSWindowCloseButton = 0
+        let close_button: *mut Object = msg_send![parent_window, standardWindowButton: 0i64];
+        if !close_button.is_null() {
+            let btn_frame: (f64, f64, f64, f64) = msg_send![close_button, frame];
+            // 关闭按钮顶部相对于窗口底部的位置 ≈ 标题栏高度
+            let btn_top = btn_frame.1 + btn_frame.3;
+            if btn_top > 0.0 {
+                // 加上按钮顶部到标题栏顶部的间距（约 6px）
+                return btn_top + 6.0;
+            }
+        }
+        // 默认值：macOS 标准标题栏高度
+        28.0
+    }
+
+    /// 根据父窗口当前位置计算视频窗口新的屏幕坐标
+    unsafe fn video_rect_to_screen(parent_window: *mut Object, x: f64, y: f64, w: f64, h: f64) -> (f64, f64, f64, f64) {
+        let parent_frame: (f64, f64, f64, f64) = msg_send![parent_window, frame];
+        let parent_content_rect: (f64, f64, f64, f64) = msg_send![parent_window, contentRectForFrameRect: parent_frame];
+        // 当 fullSizeContentView 时 contentRect == frame，需要减去标题栏高度
+        let titlebar = get_titlebar_height(parent_window);
+        let content_left = parent_content_rect.0;
+        let content_top = parent_content_rect.1 + parent_content_rect.3 - titlebar;
+        let screen_x = content_left + x;
+        let screen_y = content_top - y - h;
+        (screen_x, screen_y, w, h)
+    }
+
+    /// 在主线程直接更新悬浮窗口的 frame（原始版本）
+    unsafe fn set_window_frame_raw(window: *mut Object, x: f64, y: f64, w: f64, h: f64) {
+        let parent_window: *mut Object = msg_send![window, parentWindow];
+        let frame = video_rect_to_screen(parent_window, x, y, w, h);
+        // display:false 避免立即触发 NSOpenGLContext update，与 vo 线程渲染竞争
+        let _: () = msg_send![window, setFrame: frame display: false];
+    }
+
+    /// 异步派发到主线程更新悬浮窗口 frame
+    unsafe fn set_window_frame(window: *mut Object, x: f64, y: f64, w: f64, h: f64) {
+        let ctx = Box::new(SetFrameCtx { ns_window: window, x, y, w, h });
+        dispatch_async_f(
+            &_dispatch_main_q as *const c_void,
+            Box::into_raw(ctx) as *mut c_void,
+            set_window_frame_on_main,
+        );
+    }
+
+    /// 在主线程直接显示悬浮窗口（原始版本）
+    /// 使用 setAlphaValue:1.0 恢复可见，而非 setIsVisible/orderFront。
+    /// 窗口始终保持 visible 状态（hide 时 alpha=0），NSOpenGLContext 持续活跃，
+    /// 避免 vo 线程在窗口不可见时停止渲染后无法恢复导致黑屏。
+    unsafe fn show_window_raw(window: *mut Object) {
+        let _: () = msg_send![window, setAlphaValue: 1.0f64];
+        // 恢复鼠标事件接收
+        let _: () = msg_send![window, setIgnoresMouseEvents: false];
+    }
+
+    /// 异步派发到主线程显示悬浮窗口
+    unsafe fn show_window(window: *mut Object) {
+        let ctx = Box::new(ShowWindowCtx { ns_window: window });
+        dispatch_async_f(
+            &_dispatch_main_q as *const c_void,
+            Box::into_raw(ctx) as *mut c_void,
+            show_window_on_main,
+        );
+    }
+
+    /// 在主线程直接隐藏悬浮窗口（原始版本）
+    /// 使用 setAlphaValue:0.0 让窗口变透明而非真正隐藏。
+    /// 窗口仍在屏幕上（只是看不见），NSOpenGLContext 不会因窗口不可见而暂停，
+    /// libmpv vo 线程持续渲染，避免 show 后黑屏。
+    /// 同时 setIgnoresMouseEvents:true 让鼠标穿透到下方的 Dialog。
+    unsafe fn hide_window_raw(window: *mut Object) {
+        let _: () = msg_send![window, setAlphaValue: 0.0f64];
+        // 透明时忽略鼠标事件，让点击穿透到下方的 WebView/Dialog
+        let _: () = msg_send![window, setIgnoresMouseEvents: true];
+    }
+
+    /// 异步派发到主线程隐藏悬浮窗口
+    unsafe fn hide_window(window: *mut Object) {
+        let ctx = Box::new(HideWindowCtx { ns_window: window });
+        dispatch_async_f(
+            &_dispatch_main_q as *const c_void,
+            Box::into_raw(ctx) as *mut c_void,
+            hide_window_on_main,
+        );
+    }
+
+    // === libmpv FFI（macOS 共用 Windows 的类型定义） ===
+
+    struct MpvApi {
+        _lib: Library,
+        create: FnMpvCreate,
+        initialize: FnMpvInitialize,
+        terminate_destroy: FnMpvTerminateDestroy,
+        set_option_string: FnMpvSetOptionString,
+        set_property_string: FnMpvSetPropertyString,
+        get_property_string: FnMpvGetPropertyString,
+        get_property: FnMpvGetPropertyDouble,
+        command: FnMpvCommand,
+        free: FnMpvFree,
+        wait_event: FnMpvWaitEvent,
+        wakeup: FnMpvWakeup,
+    }
+
+    impl MpvApi {
+        unsafe fn load(dylib_path: &str) -> Result<Self, AppError> {
+            let lib = Library::new(dylib_path).map_err(|e| AppError::PlayerLibmpvDllLoadFailed {
+                detail: format!("{} ({})", dylib_path, e),
+            })?;
+            macro_rules! sym {
+                ($name:literal, $type:ty) => {
+                    *lib.get::<$type>(concat!($name, "\0").as_bytes())
+                        .map_err(|e| AppError::PlayerSymbolNotFound { name: $name.to_string(), detail: e.to_string() })?
+                };
+            }
+            Ok(MpvApi {
+                create: sym!("mpv_create", FnMpvCreate),
+                initialize: sym!("mpv_initialize", FnMpvInitialize),
+                terminate_destroy: sym!("mpv_terminate_destroy", FnMpvTerminateDestroy),
+                set_option_string: sym!("mpv_set_option_string", FnMpvSetOptionString),
+                set_property_string: sym!("mpv_set_property_string", FnMpvSetPropertyString),
+                get_property_string: sym!("mpv_get_property_string", FnMpvGetPropertyString),
+                get_property: sym!("mpv_get_property", FnMpvGetPropertyDouble),
+                command: sym!("mpv_command", FnMpvCommand),
+                free: sym!("mpv_free", FnMpvFree),
+                wait_event: sym!("mpv_wait_event", FnMpvWaitEvent),
+                wakeup: sym!("mpv_wakeup", FnMpvWakeup),
+                _lib: lib,
+            })
+        }
+    }
+
+    /// macOS libmpv 播放器
+    pub struct Player {
+        api: MpvApi,
+        mpv: *mut MpvHandle,
+        ns_window: *mut Object,
+        parent_window: *mut Object,
+        stop_flag: Arc<AtomicBool>,
+        poll_thread: Option<std::thread::JoinHandle<()>>,
+        sync_thread: Option<std::thread::JoinHandle<()>>,
+        // 避免重复发送相同 frame，减少 NSOpenGLContext resize 与 vo 线程的竞争
+        last_frame: Mutex<(i32, i32, i32, i32)>,
+    }
+
+    unsafe impl Send for Player {}
+    unsafe impl Sync for Player {}
+
+    impl Player {
+        /// 创建新的 libmpv 播放器
+        /// - `dylib_path`: libmpv.dylib 的绝对路径
+        /// - `parent_window`: Tauri 主窗口的 NSWindow 指针
+        /// - `app_handle`: Tauri AppHandle，用于 emit 事件
+        /// - `x, y, w, h`: 视频区域在父窗口内容区中的位置和大小（物理像素）
+        pub fn new(
+            dylib_path: &str,
+            parent_window: *mut Object,
+            app_handle: tauri::AppHandle,
+            x: i32, y: i32, w: i32, h: i32,
+        ) -> Result<Self, AppError> {
+            let _ = GLOBAL_APP_HANDLE.set(app_handle.clone());
+            unsafe {
+                tracing::info!("Player::new (macOS): 加载 dylib: {}", dylib_path);
+                let api = MpvApi::load(dylib_path)?;
+                tracing::info!("Player::new (macOS): dylib 加载成功");
+                if parent_window.is_null() {
+                    return Err(AppError::PlayerCreateWindowFailed {
+                        detail: "NSWindow 指针为 null".to_string(),
+                    });
+                }
+                // 创建悬浮窗口
+                let ns_window = match create_floating_window(parent_window, x as f64, y as f64, w as f64, h as f64) {
+                    Some(v) => v,
+                    None => {
+                        return Err(AppError::PlayerCreateWindowFailed {
+                            detail: "创建悬浮窗口失败".to_string(),
+                        });
+                    }
+                };
+                // 获取 contentView 作为 wid
+                let ns_view: *mut Object = msg_send![ns_window, contentView];
+                if ns_view.is_null() {
+                    return Err(AppError::PlayerCreateWindowFailed {
+                        detail: "NSWindow contentView 为 null".to_string(),
+                    });
+                }
+                tracing::info!("Player::new (macOS): 悬浮窗口创建成功: {:?}", ns_window);
+                // 创建 mpv 实例
+                let mpv = (api.create)();
+                if mpv.is_null() {
+                    return Err(AppError::PlayerInitFailed { code: "mpv_create returned null".to_string() });
+                }
+                // 设置 wid（NSView 指针）
+                let wid_str = format!("{}", ns_view as isize);
+                tracing::info!("Player::new (macOS): 设置 wid={}", wid_str);
+                let wid_c = CString::new(wid_str).unwrap();
+                let name_c = CString::new("wid").unwrap();
+                let ret = (api.set_option_string)(mpv, name_c.as_ptr(), wid_c.as_ptr());
+                if ret < 0 {
+                    (api.terminate_destroy)(mpv);
+                    return Err(AppError::PlayerSetWidFailed { code: ret.to_string() });
+                }
+                // 禁用 mpv 自带 OSD / OSC / 字幕 / 输入绑定
+                // 这些选项在某些 libmpv 构建中可能不存在，设为非致命
+                let _ = set_option(&api, mpv, "osd-level", "0");
+                let _ = set_option(&api, mpv, "osc", "no");
+                let _ = set_option(&api, mpv, "sid", "no");
+                let _ = set_option(&api, mpv, "input-default-bindings", "no");
+                let _ = set_option(&api, mpv, "input-vo-keyboard", "no");
+                let _ = set_option(&api, mpv, "input-media-keys", "no");
+                let _ = set_option(&api, mpv, "input-cmdlist", "no");
+                // 禁用 mpv 鼠标输入，防止 mpv 的 NSOpenGLView 子视图拦截鼠标事件
+                let _ = set_option(&api, mpv, "input-mouse", "no");
+                let _ = set_option(&api, mpv, "input-cursor", "no");
+                // 硬件解码（macOS 用 VideoToolbox）
+                let _ = set_option(&api, mpv, "hwdec", "auto-safe");
+                // 不强制创建窗口，使用 wid 嵌入
+                let _ = set_option(&api, mpv, "force-window", "no");
+                // 背景透明，避免遮挡 WebView
+                let _ = set_option(&api, mpv, "background-color", "#000000");
+                // 悬浮窗口模式下，视频渲染在独立 NSWindow 里，不会与 WebView 冲突。
+                // macOS 的 OpenGL 底层使用 Metal，但通过禁用 layer-backed view
+                // 避免 CoreAnimation commit 时与 vo 线程的 GL 渲染竞争。
+                let _ = set_option(&api, mpv, "vo", "gpu");
+                let _ = set_option(&api, mpv, "gpu-api", "opengl");
+                let _ = set_option(&api, mpv, "gpu-context", "cocoa");
+                // 初始化
+                let ret = (api.initialize)(mpv);
+                if ret < 0 {
+                    (api.terminate_destroy)(mpv);
+                    return Err(AppError::PlayerInitFailed { code: ret.to_string() });
+                }
+                tracing::info!("Player::new (macOS): mpv_initialize 成功");
+                let _ = set_property(&api, mpv, "osc", "no");
+                let _ = set_property(&api, mpv, "osd-level", "0");
+                // 启动位置轮询线程
+                let stop_flag = Arc::new(AtomicBool::new(false));
+                let poll_handle = app_handle.clone();
+                let mpv_addr = mpv as usize;
+                let api_get_prop = api.get_property_string as usize;
+                let api_free = api.free as usize;
+                let stop_clone = stop_flag.clone();
+                let thread = std::thread::spawn(move || {
+                    poll_position_loop(poll_handle, mpv_addr, api_get_prop, api_free, stop_clone);
+                });
+                // 启动位置同步线程：悬浮窗口需要跟随父窗口移动
+                let parent_addr = parent_window as usize;
+                let child_addr = ns_window as usize;
+                let stop_for_sync = stop_flag.clone();
+                let sync_thread = std::thread::spawn(move || {
+                    position_sync_loop(parent_addr, child_addr, stop_for_sync);
+                });
+                Ok(Player {
+                    api, mpv, ns_window, parent_window,
+                    stop_flag,
+                    poll_thread: Some(thread),
+                    sync_thread: Some(sync_thread),
+                    last_frame: Mutex::new((x, y, w, h)),
+                })
+            }
+        }
+
+        pub fn load(&self, file_path: &str) -> Result<(), AppError> {
+            tracing::info!("player load (macOS): {}", file_path);
+            unsafe {
+                let cmd = "loadfile";
+                let path_c = CString::new(file_path).unwrap();
+                let cmd_c = CString::new(cmd).unwrap();
+                let null_ptr: *const c_char = std::ptr::null();
+                let args: [*const c_char; 3] = [cmd_c.as_ptr(), path_c.as_ptr(), null_ptr];
+                let ret = (self.api.command)(self.mpv, args.as_ptr());
+                if ret < 0 {
+                    return Err(AppError::PlayerLoadVideoFailed { path: file_path.to_string(), code: ret.to_string() });
+                }
+                Ok(())
+            }
+        }
+
+        pub fn play(&self) -> Result<(), AppError> {
+            set_property(&self.api, self.mpv, "pause", "no")
+        }
+
+        pub fn pause(&self) -> Result<(), AppError> {
+            set_property(&self.api, self.mpv, "pause", "yes")
+        }
+
+        pub fn seek(&self, time_sec: f64) -> Result<(), AppError> {
+            unsafe {
+                let cmd = "seek";
+                let time_str = format!("{}", time_sec);
+                let cmd_c = CString::new(cmd).unwrap();
+                let time_c = CString::new(time_str).unwrap();
+                let mode_c = CString::new("absolute").unwrap();
+                let null_ptr: *const c_char = std::ptr::null();
+                let args: [*const c_char; 4] = [cmd_c.as_ptr(), time_c.as_ptr(), mode_c.as_ptr(), null_ptr];
+                let ret = (self.api.command)(self.mpv, args.as_ptr());
+                if ret < 0 {
+                    return Err(AppError::PlayerSeekFailed { code: ret.to_string() });
+                }
+                Ok(())
+            }
+        }
+
+        pub fn set_volume(&self, vol: i32) -> Result<(), AppError> {
+            set_property(&self.api, self.mpv, "volume", &vol.to_string())
+        }
+
+        pub fn set_speed(&self, speed: f64) -> Result<(), AppError> {
+            set_property(&self.api, self.mpv, "speed", &speed.to_string())
+        }
+
+        pub fn set_audio_track(&self, audio_id: i32) -> Result<(), AppError> {
+            set_property(&self.api, self.mpv, "aid", &audio_id.to_string())
+        }
+
+        pub fn get_position(&self) -> Result<f64, AppError> {
+            unsafe {
+                let name_c = CString::new("time-pos").unwrap();
+                let ptr = (self.api.get_property_string)(self.mpv, name_c.as_ptr());
+                if ptr.is_null() { return Ok(0.0); }
+                let s = std::ffi::CStr::from_ptr(ptr).to_string_lossy().to_string();
+                (self.api.free)(ptr as *mut c_void);
+                s.parse::<f64>().map_err(|_| AppError::PlayerLoadFailed { detail: "parse time-pos failed".to_string() })
+            }
+        }
+
+        pub fn get_duration(&self) -> Result<f64, AppError> {
+            unsafe {
+                let name_c = CString::new("duration").unwrap();
+                let ptr = (self.api.get_property_string)(self.mpv, name_c.as_ptr());
+                if ptr.is_null() { return Ok(0.0); }
+                let s = std::ffi::CStr::from_ptr(ptr).to_string_lossy().to_string();
+                (self.api.free)(ptr as *mut c_void);
+                s.parse::<f64>().map_err(|_| AppError::PlayerLoadFailed { detail: "parse duration failed".to_string() })
+            }
+        }
+
+        pub fn resize(&self, x: i32, y: i32, w: i32, h: i32) -> Result<(), AppError> {
+            if self.ns_window.is_null() {
+                return Ok(());
+            }
+            {
+                let mut last = self.last_frame.lock().unwrap();
+                let new = (x, y, w, h);
+                if *last == new {
+                    return Ok(());
+                }
+                *last = new;
+            }
+            unsafe {
+                set_window_frame(self.ns_window, x as f64, y as f64, w as f64, h as f64);
+            }
+            Ok(())
+        }
+
+        pub fn show(&self) {
+            unsafe { show_window(self.ns_window); }
+        }
+
+        pub fn hide(&self) {
+            unsafe { hide_window(self.ns_window); }
+        }
+
+        pub fn destroy(&mut self) {
+            tracing::info!("Player::destroy (macOS) 开始");
+            self.stop_flag.store(true, Ordering::Relaxed);
+            tracing::info!("Player::destroy (macOS): wakeup mpv");
+            unsafe { (self.api.wakeup)(self.mpv); }
+            tracing::info!("Player::destroy (macOS): join poll_thread");
+            if let Some(t) = self.poll_thread.take() { let _ = t.join(); }
+            tracing::info!("Player::destroy (macOS): join sync_thread");
+            if let Some(t) = self.sync_thread.take() { let _ = t.join(); }
+            tracing::info!("Player::destroy (macOS): 开始同步销毁 mpv 和窗口");
+            // 重要：本方法不能运行在主线程！macOS 上 mpv_terminate_destroy 内部会停止 vo 线程，
+            // 而 vo 线程在退出前需要通过 dispatch_sync 回到主线程执行 vo_cocoa_exit。
+            // 如果 destroy 运行在主线程，主线程等待 vo 线程，vo 线程又等待主线程，就会形成死锁。
+            // 调用方（player_destroy_cmd）必须将 Player 的 drop/destroy 放在后台 blocking 线程
+            // 执行，从而保证主线程可以继续处理 dispatch 队列，完成 vo 线程的清理。
+            unsafe {
+                let mpv = self.mpv;
+                (self.api.terminate_destroy)(mpv);
+                tracing::info!("Player::destroy (macOS): mpv_terminate_destroy 完成");
+                // mpv 已销毁、vo 线程已停止、GL/Metal 上下文已释放。
+                // 窗口的 AppKit 操作必须回到主线程执行，否则会崩溃。
+                // 使用 dispatch_sync_f 同步等待窗口清理完成，确保 destroy() 返回后一切就绪。
+                dispatch_window_cleanup(self.ns_window as usize, self.parent_window as usize);
+            }
+            // 标记已销毁，避免 Drop 再次释放
+            self.mpv = std::ptr::null_mut();
+            self.ns_window = std::ptr::null_mut();
+            tracing::info!("Player::destroy (macOS) 完成");
+        }
+    }
+
+    impl Drop for Player {
+        fn drop(&mut self) {
+            self.destroy();
+        }
+    }
+
+    // === 辅助函数 ===
+
+    fn set_option(api: &MpvApi, mpv: *mut MpvHandle, name: &str, value: &str) -> Result<(), AppError> {
+        unsafe {
+            let name_c = CString::new(name).unwrap();
+            let value_c = CString::new(value).unwrap();
+            let ret = (api.set_option_string)(mpv, name_c.as_ptr(), value_c.as_ptr());
+            if ret < 0 {
+                return Err(AppError::PlayerSetOptionFailed {
+                    name: name.to_string(), value: value.to_string(), code: ret.to_string(),
+                });
+            }
+            Ok(())
+        }
+    }
+
+    fn set_property(api: &MpvApi, mpv: *mut MpvHandle, name: &str, value: &str) -> Result<(), AppError> {
+        unsafe {
+            let name_c = CString::new(name).unwrap();
+            let value_c = CString::new(value).unwrap();
+            let ret = (api.set_property_string)(mpv, name_c.as_ptr(), value_c.as_ptr());
+            if ret < 0 {
+                return Err(AppError::PlayerSetPropertyFailed {
+                    name: name.to_string(), value: value.to_string(), code: ret.to_string(),
+                });
+            }
+            Ok(())
+        }
+    }
+
+    /// 位置轮询线程：10Hz 推送 player_position 事件（与 Windows 版相同）
+    fn poll_position_loop(
+        app: tauri::AppHandle,
+        mpv_addr: usize,
+        api_get_prop: usize,
+        api_free: usize,
+        stop_flag: Arc<AtomicBool>,
+    ) {
+        let get_prop: FnMpvGetPropertyString = unsafe { std::mem::transmute(api_get_prop) };
+        let free_fn: FnMpvFree = unsafe { std::mem::transmute(api_free) };
+        let mpv = mpv_addr as *mut MpvHandle;
+        while !stop_flag.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if stop_flag.load(Ordering::Relaxed) { break; }
+            unsafe {
+                let name_c = CString::new("time-pos").unwrap();
+                let pos_ptr = (get_prop)(mpv, name_c.as_ptr());
+                let pos = if pos_ptr.is_null() { None } else {
+                    let s = std::ffi::CStr::from_ptr(pos_ptr).to_string_lossy().to_string();
+                    (free_fn)(pos_ptr as *mut c_void);
+                    s.parse::<f64>().ok()
+                };
+                let name_c2 = CString::new("duration").unwrap();
+                let dur_ptr = (get_prop)(mpv, name_c2.as_ptr());
+                let dur = if dur_ptr.is_null() { None } else {
+                    let s = std::ffi::CStr::from_ptr(dur_ptr).to_string_lossy().to_string();
+                    (free_fn)(dur_ptr as *mut c_void);
+                    s.parse::<f64>().ok()
+                };
+                let name_c3 = CString::new("pause").unwrap();
+                let pause_ptr = (get_prop)(mpv, name_c3.as_ptr());
+                let paused = if pause_ptr.is_null() { false } else {
+                    let s = std::ffi::CStr::from_ptr(pause_ptr).to_string_lossy().to_string();
+                    (free_fn)(pause_ptr as *mut c_void);
+                    s == "yes"
+                };
+                use tauri::Emitter;
+                let _ = app.emit("player_position", serde_json::json!({
+                    "position": pos.unwrap_or(0.0),
+                    "duration": dur.unwrap_or(0.0),
+                    "paused": paused,
+                }));
+            }
+        }
+    }
+
+    /// 位置同步线程：轮询父窗口位置，同步悬浮窗口位置
+    /// 父窗口移动时，子窗口作为 child window 会自动跟随。这里仅做被动同步。
+    fn position_sync_loop(
+        _parent_addr: usize,
+        _child_addr: usize,
+        stop_flag: Arc<AtomicBool>,
+    ) {
+        while !stop_flag.load(Ordering::Relaxed) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+}
+
+// === macOS Player re-export ===
+#[cfg(target_os = "macos")]
+pub use macos::Player;
+
+// === 非 Windows/非 macOS 平台 stub（Linux 等） ===
+#[cfg(not(any(windows, target_os = "macos")))]
+pub struct Player;
+
+#[cfg(not(any(windows, target_os = "macos")))]
+impl Player {
+    pub fn load(&self, _file_path: &str) -> Result<(), AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn play(&self) -> Result<(), AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn pause(&self) -> Result<(), AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn seek(&self, _time_sec: f64) -> Result<(), AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn set_volume(&self, _vol: i32) -> Result<(), AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn set_speed(&self, _speed: f64) -> Result<(), AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn set_audio_track(&self, _audio_id: i32) -> Result<(), AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn get_position(&self) -> Result<f64, AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn get_duration(&self) -> Result<f64, AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn resize(&self, _x: i32, _y: i32, _w: i32, _h: i32) -> Result<(), AppError> {
+        Err(AppError::PlayerInitFailed { code: "播放预览暂不支持当前平台".to_string() })
+    }
+    pub fn show(&self) {}
+    pub fn hide(&self) {}
+    pub fn destroy(&mut self) {}
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.destroy();
+    }
+}
+
+// === SECTION 4.5 END ===
+
 // === 辅助函数 ===
 
 #[cfg(windows)]
@@ -1574,6 +3176,7 @@ unsafe extern "system" fn child_wnd_proc(
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+#[cfg(windows)]
 fn create_child_window(parent: HWND, x: i32, y: i32, w: i32, h: i32) -> Result<HWND, AppError> {
     unsafe {
         // 将父窗口客户区坐标转为屏幕坐标
@@ -1610,6 +3213,15 @@ fn create_child_window(parent: HWND, x: i32, y: i32, w: i32, h: i32) -> Result<H
         tracing::info!("悬浮窗口创建成功: 屏幕坐标=({},{}), 大小={}x{}", point.x, point.y, w, h);
         Ok(hwnd)
     }
+}
+
+// === SECTION: create_child_window stub (非 Windows) ===
+
+#[cfg(not(windows))]
+fn create_child_window(_parent: (), _x: i32, _y: i32, _w: i32, _h: i32) -> Result<(), AppError> {
+    Err(AppError::PlayerInitFailed {
+        code: "播放预览暂不支持当前平台".to_string(),
+    })
 }
 
 /// 窗口位置同步：用 SetWinEventHook 监听父窗口位置变化，

@@ -920,6 +920,8 @@ use std::sync::Mutex;
 static PLAYER: Mutex<Option<crate::player::Player>> = Mutex::new(None);
 
 /// player_init：初始化 libmpv 播放器，创建子窗口嵌入 Tauri 主窗口
+/// Windows 版保持同步：Win32 子窗口有线程亲和性（CreateWindowExW 必须在主线程调用），
+/// 且 Windows 的 vo (d3d11) 不会 dispatch_sync 到主线程，不存在 macOS 那样的死锁问题。
 #[cfg(windows)]
 #[tauri::command]
 pub fn player_init(
@@ -948,130 +950,213 @@ pub fn player_init(
     }
 }
 
-#[cfg(not(windows))]
+/// player_init (macOS)：初始化 libmpv 播放器，创建 NSView 子视图嵌入 Tauri 主窗口
+/// async + spawn_blocking：mpv_initialize 和 mpv_set_property_string 不能在主线程调用，
+/// 因为 macOS 的 vo_cocoa 线程在 init/exit 时会 dispatch_sync 到主线程，
+/// 如果主线程被 mpv API 阻塞（等待 core lock），就会与 vo 线程形成死锁。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn player_init(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    dll_path: String,
+    x: i32, y: i32, w: i32, h: i32,
+) -> Result<(), ()> {
+    use objc::runtime::Object;
+    tracing::info!("player_init (macOS) 开始: dylib={}, x={}, y={}, w={}, h={}", dll_path, x, y, w, h);
+    let ns_window_ptr = window.ns_window().map_err(|e| {
+        tracing::error!("获取 NSWindow 失败: {:?}", e);
+    })?;
+    let ns_window = ns_window_ptr as *mut Object;
+    if ns_window.is_null() {
+        tracing::error!("NSWindow 指针为 null");
+        return Err(());
+    }
+    // raw pointer 本身是 !Send，转为 usize 以便跨线程传递
+    let ns_window_addr = ns_window as usize;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let ns_window = ns_window_addr as *mut Object;
+        crate::player::Player::new(&dll_path, ns_window, app, x, y, w, h)
+    }).await;
+    match result {
+        Ok(Ok(player)) => {
+            tracing::info!("player_init (macOS) 成功");
+            *PLAYER.lock().unwrap() = Some(player);
+            Ok(())
+        }
+        Ok(Err(e)) => {
+            tracing::error!("player_init (macOS) 失败: {:?}", e);
+            Err(())
+        }
+        Err(e) => {
+            tracing::error!("player_init (macOS): spawn_blocking 任务失败: {:?}", e);
+            Err(())
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 #[tauri::command]
 pub fn player_init(_app: tauri::AppHandle, _window: tauri::Window, _dll_path: String, _x: i32, _y: i32, _w: i32, _h: i32) -> Result<(), ()> {
     Err(())
 }
 
 /// player_load_cmd：加载视频文件
+/// async + spawn_blocking：mpv_command 不能在主线程调用，
+/// 因为 macOS vo_cocoa 线程在 init 时会 dispatch_sync 到主线程，
+/// 如果主线程被 mpv API 阻塞就会死锁。
 #[tauri::command]
-pub fn player_load_cmd(file_path: String) -> Result<(), ()> {
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.load(&file_path).map_err(|_| ())
-    } else {
-        Err(())
-    }
+pub async fn player_load_cmd(file_path: String) -> Result<(), ()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.load(&file_path).map_err(|_| ())
+        } else {
+            Err(())
+        }
+    }).await.map_err(|_| ())?
 }
 
 /// player_play_cmd：播放
 #[tauri::command]
-pub fn player_play_cmd() -> Result<(), ()> {
+pub async fn player_play_cmd() -> Result<(), ()> {
     tracing::info!("播放器: 开始播放");
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.play().map_err(|_| ())
-    } else { Err(()) }
+    tauri::async_runtime::spawn_blocking(|| {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.play().map_err(|_| ())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_pause_cmd：暂停
 #[tauri::command]
-pub fn player_pause_cmd() -> Result<(), ()> {
+pub async fn player_pause_cmd() -> Result<(), ()> {
     tracing::info!("播放器: 暂停播放");
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.pause().map_err(|_| ())
-    } else { Err(()) }
+    tauri::async_runtime::spawn_blocking(|| {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.pause().map_err(|_| ())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_seek_cmd：跳转到指定时间（秒）
 #[tauri::command]
-pub fn player_seek_cmd(time_sec: f64) -> Result<(), ()> {
+pub async fn player_seek_cmd(time_sec: f64) -> Result<(), ()> {
     tracing::info!("播放器: 跳转到 {:.1}s", time_sec);
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.seek(time_sec).map_err(|_| ())
-    } else { Err(()) }
+    tauri::async_runtime::spawn_blocking(move || {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.seek(time_sec).map_err(|_| ())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_set_volume_cmd：设置音量 (0-100)
 #[tauri::command]
-pub fn player_set_volume_cmd(volume: i32) -> Result<(), ()> {
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.set_volume(volume).map_err(|_| ())
-    } else { Err(()) }
+pub async fn player_set_volume_cmd(volume: i32) -> Result<(), ()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.set_volume(volume).map_err(|_| ())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_set_speed_cmd：设置倍速
 #[tauri::command]
-pub fn player_set_speed_cmd(speed: f64) -> Result<(), ()> {
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.set_speed(speed).map_err(|_| ())
-    } else { Err(()) }
+pub async fn player_set_speed_cmd(speed: f64) -> Result<(), ()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.set_speed(speed).map_err(|_| ())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_set_audio_track_cmd：切换音频轨道（mpv aid，1-based）
 #[tauri::command]
-pub fn player_set_audio_track_cmd(audio_id: i32) -> Result<(), ()> {
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.set_audio_track(audio_id).map_err(|_| ())
-    } else { Err(()) }
+pub async fn player_set_audio_track_cmd(audio_id: i32) -> Result<(), ()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.set_audio_track(audio_id).map_err(|_| ())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_get_position_cmd：获取当前播放位置和时长
 #[tauri::command]
-pub fn player_get_position_cmd() -> Result<(f64, f64), ()> {
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        let pos = player.get_position().unwrap_or(0.0);
-        let dur = player.get_duration().unwrap_or(0.0);
-        Ok((pos, dur))
-    } else { Err(()) }
+pub async fn player_get_position_cmd() -> Result<(f64, f64), ()> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            let pos = player.get_position().unwrap_or(0.0);
+            let dur = player.get_duration().unwrap_or(0.0);
+            Ok((pos, dur))
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_resize_cmd：调整子窗口位置和大小
 #[tauri::command]
-pub fn player_resize_cmd(x: i32, y: i32, w: i32, h: i32) -> Result<(), ()> {
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.resize(x, y, w, h).map_err(|_| ())
-    } else { Err(()) }
+pub async fn player_resize_cmd(x: i32, y: i32, w: i32, h: i32) -> Result<(), ()> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.resize(x, y, w, h).map_err(|_| ())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_show_cmd：显示子窗口
 #[tauri::command]
-pub fn player_show_cmd() -> Result<(), ()> {
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.show();
-        Ok(())
-    } else { Err(()) }
+pub async fn player_show_cmd() -> Result<(), ()> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.show();
+            Ok(())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_hide_cmd：隐藏子窗口（用于弹窗层级处理）
 #[tauri::command]
-pub fn player_hide_cmd() -> Result<(), ()> {
-    let guard = PLAYER.lock().unwrap();
-    if let Some(ref player) = *guard {
-        player.hide();
-        Ok(())
-    } else { Err(()) }
+pub async fn player_hide_cmd() -> Result<(), ()> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let guard = PLAYER.lock().unwrap();
+        if let Some(ref player) = *guard {
+            player.hide();
+            Ok(())
+        } else { Err(()) }
+    }).await.map_err(|_| ())?
 }
 
 /// player_destroy_cmd：销毁播放器
 #[tauri::command]
-pub fn player_destroy_cmd() -> Result<(), ()> {
+pub async fn player_destroy_cmd() -> Result<(), ()> {
     tracing::info!("player_destroy_cmd 开始");
-    let mut guard = PLAYER.lock().unwrap();
-    if guard.is_none() {
+    let player = {
+        let mut guard = PLAYER.lock().unwrap();
+        guard.take()
+    };
+    if player.is_none() {
         tracing::info!("player_destroy_cmd: 播放器未初始化，跳过");
         return Ok(());
     }
-    *guard = None; // Drop 会调用 destroy
+    // 在 macOS 上，mpv 的 vo 线程在销毁时会 dispatch_sync 到主线程，
+    // 因此 mpv_terminate_destroy 不能运行在主线程。将 Player 的 drop/destroy
+    // 放到独立的 blocking 线程执行，destroy_cmd 返回的 Future 仍可供前端 await，
+    // 保证 destroy 完成后再执行 player_init，同时主线程可继续处理事件循环。
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        drop(player);
+    }).await;
+    if result.is_err() {
+        tracing::error!("player_destroy_cmd: spawn_blocking 任务失败");
+        return Err(());
+    }
     tracing::info!("player_destroy_cmd 完成");
     Ok(())
 }
@@ -1234,6 +1319,14 @@ fn detect_system_lang() -> String {
     }
     #[cfg(not(windows))]
     {
+        // macOS/Linux：从 LANG / LC_ALL 环境变量探测
+        for var in &["LANG", "LC_ALL", "LC_MESSAGES"] {
+            if let Ok(val) = std::env::var(var) {
+                if !val.is_empty() {
+                    return normalize_locale(&val);
+                }
+            }
+        }
         "zh".to_string()
     }
 }
@@ -1318,8 +1411,24 @@ pub fn get_work_area(app: tauri::AppHandle) -> IpcResult<serde_json::Value> {
     }
     #[cfg(not(windows))]
     {
-        // 非 Windows：返回整个屏幕（无法获取工作区）
+        // macOS/Linux：用 Tauri 跨平台 API 获取主显示器尺寸
+        use tauri::Manager;
         let _ = app;
+        if let Some(window) = app.get_webview_window("main") {
+            if let Ok(monitors) = window.available_monitors() {
+                if let Some(monitor) = monitors.first() {
+                    let pos = monitor.position();
+                    let size = monitor.size();
+                    return ipc_result(Ok(serde_json::json!({
+                        "x": pos.x,
+                        "y": pos.y,
+                        "width": size.width,
+                        "height": size.height,
+                    })));
+                }
+            }
+        }
+        // fallback
         ipc_result(Ok(serde_json::json!({
             "x": 0, "y": 0, "width": 1920, "height": 1080,
         })))

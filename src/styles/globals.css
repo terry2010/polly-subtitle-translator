@@ -76,25 +76,31 @@
 }
 
 .dark {
-  --background: 222.2 84% 4.9%;
-  --foreground: 210 40% 98%;
-  --card: 222.2 84% 4.9%;
-  --card-foreground: 210 40% 98%;
-  --popover: 222.2 84% 4.9%;
-  --popover-foreground: 210 40% 98%;
-  --primary: 217.2 91.2% 59.8%;
-  --primary-foreground: 222.2 47.4% 11.2%;
-  --secondary: 217.2 32.6% 17.5%;
-  --secondary-foreground: 210 40% 98%;
-  --muted: 217.2 32.6% 17.5%;
-  --muted-foreground: 215 20.2% 65.1%;
-  --accent: 217.2 32.6% 17.5%;
-  --accent-foreground: 210 40% 98%;
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 210 40% 98%;
-  --border: 217.2 32.6% 17.5%;
-  --input: 217.2 32.6% 17.5%;
-  --ring: 224.3 76.3% 48%;
+  /* 参考 shadcn v4 推荐的 neutral 深色搭配：
+     - 背景用接近纯黑的中性灰，避免当前蓝黑 muddy 感
+     - card/popover 比背景稍亮，形成层级
+     - muted-foreground 提高到 71% 明度，确保次要文字清晰可读
+     - border 用 10% 白色，柔和但可见
+     - 保留蓝色作为品牌主色 */
+  --background: 0 0% 7%;
+  --foreground: 0 0% 96%;
+  --card: 0 0% 13%;
+  --card-foreground: 0 0% 96%;
+  --popover: 0 0% 13%;
+  --popover-foreground: 0 0% 96%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 19%;
+  --secondary-foreground: 0 0% 96%;
+  --muted: 0 0% 19%;
+  --muted-foreground: 0 0% 71%;
+  --accent: 0 0% 19%;
+  --accent-foreground: 0 0% 96%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 98%;
+  --border: 0 0% 100% / 10%;
+  --input: 0 0% 100% / 15%;
+  --ring: 217 91% 60%;
 }
 
 @theme inline {

@@ -27,10 +27,21 @@ export default function App() {
   const setFile = useSubtitleStore((s) => s.setFile);
   const startTranslate = useTranslateStore((s) => s.startTranslate);
 
+  // 根据 theme 设置 dark class；system 模式下跟随系统 prefers-color-scheme
   useEffect(() => {
     const root = document.documentElement;
-    if (theme === "dark") root.classList.add("dark");
-    else root.classList.remove("dark");
+    const apply = () => {
+      const isDark =
+        theme === "dark" ||
+        (theme === "system" &&
+          window.matchMedia("(prefers-color-scheme: dark)").matches);
+      root.classList.toggle("dark", isDark);
+    };
+    apply();
+    if (theme !== "system") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
   }, [theme]);
 
   useEffect(() => {

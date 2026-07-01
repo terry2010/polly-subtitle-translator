@@ -49,7 +49,11 @@
     "category": "Utility",
     "shortDescription": "AI Subtitle Translation & Editor",
     "longDescription": "AI-powered subtitle translation and editing tool with video preview",
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": null
+    }
   },
   "plugins": {
     "updater": {

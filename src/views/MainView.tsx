@@ -299,10 +299,17 @@ export default function MainView() {
     });
     const selected = hasPlayer ? await withPlayerHidden(doOpen) : await doOpen();
     if (selected && Array.isArray(selected)) {
-      for (const path of selected) {
-        const name = path.split(/[\\/]/).pop() ?? path;
-        setImportedSubtitles((prev) => [...prev, { name, path }]);
-      }
+      // 去重：跳过已导入列表中存在的路径
+      setImportedSubtitles((prev) => {
+        const existing = new Set(prev.map((s) => s.path));
+        const added: { name: string; path: string }[] = [];
+        for (const path of selected) {
+          if (existing.has(path)) continue;
+          const name = path.split(/[\\/]/).pop() ?? path;
+          added.push({ name, path });
+        }
+        return added.length ? [...prev, ...added] : prev;
+      });
       // 立刻加载第一个导入的字幕
       const firstPath = selected[0];
       await subtitleStore.loadSubtitle(firstPath);
@@ -865,7 +872,7 @@ export default function MainView() {
               {/* 视频预览 + 内嵌字幕列表 横向排列 */}
               {/* items-start：不让字幕列表拉伸到与播放器等高；播放器自身视频区已限制 40vh，
                   播控条在视频区下方正常显示，不被 overflow-hidden 裁剪 */}
-              <div className="flex gap-0 items-start">
+              <div className="flex gap-0 items-start p-4">
                 {/* 视频预览（libmpv 内嵌播放）。不要再套 max-h-[40vh] overflow-hidden，
                     否则会把 VideoPlayer 下方的播控条裁掉（视频区已自行限制 40vh） */}
                 <div className="flex-1 min-w-0">
