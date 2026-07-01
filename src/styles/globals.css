@@ -166,14 +166,26 @@ body {
   background: hsl(var(--muted-foreground) / 0.5);
 }
 
-/* Sonner toast：禁用 hover 缩放动画，避免鼠标在边缘时上下抖动 */
+/* Sonner toast：修复鼠标在边缘/按钮上时上下抖动 */
+/* 根因：hover 触发 sonner 展开状态，导致 toast 几何位置变化；鼠标在边缘或按钮上时，位置变化会让鼠标反复离开/进入，形成抖动循环。
+   方案：
+   1. toast 主体不响应鼠标事件（pointer-events: none），只让按钮接收事件；
+   2. 按钮 hover 时 toast 仍会被 sonner 标记为 data-expanded/data-front；对当前 toast 强制保持原位和原高度，避免几何变化；
+   3. 禁用所有 transition。 */
 [data-sonner-toast] {
-  transition: transform 0s !important;
+  pointer-events: none !important;
+  transition: none !important;
 }
-[data-sonner-toast]:hover {
-  transform: none !important;
+[data-sonner-toast] [data-button],
+[data-sonner-toast] [data-close-button] {
+  pointer-events: auto !important;
 }
-/* sonner 内部 wrapper 也禁用 transform 动画 */
+/* 按钮 hover 时 toast 仍会被 sonner 标记为 data-expanded/data-front；对当前 toast 强制保持原位和原高度，避免抖动 */
+[data-sonner-toast][data-front="true"][data-expanded="true"] {
+  --y: translateY(0) !important;
+  height: auto !important;
+}
+[data-sonner-toast] > *,
 [data-sonner-toaster] [data-sonner-toast] [data-sonner-toast-inner] {
   transition: none !important;
 }

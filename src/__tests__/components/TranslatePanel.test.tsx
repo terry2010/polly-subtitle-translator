@@ -15,6 +15,7 @@ const { mockGetSupportedTargetLangs, mockStartTranslate } = vi.hoisted(() => ({
 vi.mock("../../lib/api", () => ({
   api: {
     getSupportedTargetLangs: mockGetSupportedTargetLangs,
+    getConfig: vi.fn(() => Promise.resolve(null)),
   },
 }));
 

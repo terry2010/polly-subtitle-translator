@@ -6,10 +6,14 @@
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
-use std::ffi::{c_char, c_int, c_void, CString};
+use std::ffi::{c_char, c_int, c_void};
+#[cfg(windows)]
+use std::ffi::CString;
 use std::fs;
 use std::path::Path;
+#[cfg(windows)]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
 use std::sync::Arc;
 
 #[cfg(windows)]
@@ -218,6 +222,7 @@ pub fn get_libmpv_path(app_data_dir: &Path) -> Option<std::path::PathBuf> {
 
 /// 从 GitHub Releases JSON 中解析最新 mpv-dev-x86_64-*.7z 的下载 URL（排除 lgpl/v3/aarch64）
 /// JSON 中 assets 数组每项含 name 与 browser_download_url 字段
+#[cfg(windows)]
 fn parse_latest_dev_url(releases_json: &str) -> Option<String> {
     let parsed: serde_json::Value = serde_json::from_str(releases_json).ok()?;
     let assets = parsed.get("assets")?.as_array()?;
@@ -463,6 +468,7 @@ pub fn delete_libmpv(app_data_dir: &Path) -> Result<(), AppError> {
 }
 
 /// 递归查找指定文件名的文件
+#[cfg(windows)]
 fn find_file(dir: &Path, name: &str) -> Option<std::path::PathBuf> {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -522,6 +528,7 @@ pub struct PlayerIcon {
 }
 
 /// 视频扩展名 → 注册表查询用的扩展名（带点）
+#[cfg(windows)]
 fn video_ext_with_dot(video_path: &str) -> Option<String> {
     let path = std::path::Path::new(video_path);
     path.extension().map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
@@ -587,11 +594,6 @@ fn enum_assoc_handlers(ext: &str) -> Vec<(String, String, bool)> {
     result
 }
 
-#[cfg(not(windows))]
-fn enum_assoc_handlers(_ext: &str) -> Vec<(String, String, bool)> {
-    Vec::new()
-}
-
 /// 从 ProgID 解析出 exe 路径和显示名
 /// ProgID 注册在 HKCR\<ProgID>\shell\open\command，默认值形如:
 ///   "C:\Program Files\VLC\vlc.exe" --started-from-file "%1"
@@ -647,6 +649,7 @@ fn resolve_prog_id(prog_id: &str) -> Option<(String, String)> {
 
 /// 从命令行字符串中提取 exe 路径
 /// 处理: "C:\path\app.exe" args...  或  C:\path\app.exe args...
+#[cfg(windows)]
 fn parse_exe_from_command(cmd: &str) -> Option<String> {
     let trimmed = cmd.trim();
     if trimmed.starts_with('"') {
@@ -2463,7 +2466,7 @@ mod macos {
                     // 然后 transmute 为具体签名的函数指针
                     extern "C" { fn objc_msgSendSuper(); }
                     let func: extern "C" fn(*const ObjcSuper, Sel, *mut Object) =
-                        unsafe { std::mem::transmute(objc_msgSendSuper as *const ()) };
+                        std::mem::transmute(objc_msgSendSuper as *const ());
                     func(&sup, sel!(sendEvent:), event);
                 }
             }
@@ -2716,7 +2719,10 @@ mod macos {
         /// - `parent_window`: Tauri 主窗口的 NSWindow 指针
         /// - `app_handle`: Tauri AppHandle，用于 emit 事件
         /// - `x, y, w, h`: 视频区域在父窗口内容区中的位置和大小（物理像素）
-        pub fn new(
+        ///
+        /// # Safety
+        /// `parent_window` 必须是有效的 NSWindow 指针。
+        pub unsafe fn new(
             dylib_path: &str,
             parent_window: *mut Object,
             app_handle: tauri::AppHandle,
@@ -3215,15 +3221,6 @@ fn create_child_window(parent: HWND, x: i32, y: i32, w: i32, h: i32) -> Result<H
         tracing::info!("悬浮窗口创建成功: 屏幕坐标=({},{}), 大小={}x{}", point.x, point.y, w, h);
         Ok(hwnd)
     }
-}
-
-// === SECTION: create_child_window stub (非 Windows) ===
-
-#[cfg(not(windows))]
-fn create_child_window(_parent: (), _x: i32, _y: i32, _w: i32, _h: i32) -> Result<(), AppError> {
-    Err(AppError::PlayerInitFailed {
-        code: "播放预览暂不支持当前平台".to_string(),
-    })
 }
 
 /// 窗口位置同步：用 SetWinEventHook 监听父窗口位置变化，

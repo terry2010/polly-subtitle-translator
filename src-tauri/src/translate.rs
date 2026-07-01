@@ -1764,7 +1764,7 @@ impl<'a> TranslateScheduler<'a> {
 /// 独立的带重试翻译函数（可在 spawned task 中调用，不依赖 &self）
 /// 指数退避：1s/2s/4s，最多 3 次
 async fn translate_with_retry_provider(
-    provider: &(dyn TranslateProviderTrait),
+    provider: &dyn TranslateProviderTrait,
     texts: &[String],
     source_lang: &str,
     target_lang: &str,

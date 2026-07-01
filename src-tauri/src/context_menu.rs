@@ -9,12 +9,15 @@
 use crate::error::AppError;
 
 /// 视频文件扩展名列表
+#[cfg(target_os = "windows")]
 const VIDEO_EXTENSIONS: &[&str] = &[".mkv", ".mp4", ".avi", ".mov", ".wmv", ".flv", ".ts", ".m2ts"];
 
 /// 字幕文件扩展名列表
+#[cfg(target_os = "windows")]
 const SUBTITLE_EXTENSIONS: &[&str] = &[".srt", ".ass", ".ssa", ".vtt", ".sub"];
 
 /// 右键菜单在注册表中的子键名
+#[cfg(target_os = "windows")]
 const SHELL_KEY: &str = "shell\\zimufan";
 
 #[cfg(target_os = "windows")]
