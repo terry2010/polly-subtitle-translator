@@ -1378,4 +1378,128 @@ mod tests {
         assert!(!hdr.is_dolby_vision);
         assert_eq!(hdr.hdr_format, "HDR10");
     }
+
+    // === SECTION 4 END ===
+
+    #[test]
+    fn test_detect_hlg() {
+        let stream = FfprobeStream {
+            index: 0,
+            codec_name: "h264".to_string(),
+            codec_long_name: "H.264".to_string(),
+            codec_type: "video".to_string(),
+            profile: Some("High".to_string()),
+            width: 1920, height: 1080,
+            pix_fmt: Some("yuv420p".to_string()),
+            r_frame_rate: Some("25/1".to_string()),
+            avg_frame_rate: Some("25/1".to_string()),
+            duration: None, bit_rate: None,
+            bits_per_raw_sample: Some("10".to_string()),
+            sample_rate: None, channels: None, channel_layout: None,
+            color_space: Some("bt2020nc".to_string()),
+            color_transfer: Some("arib-std-b67".to_string()),
+            color_primaries: Some("bt2020".to_string()),
+            disposition: serde_json::json!({}),
+            tags: serde_json::json!({}),
+        };
+        let hdr = detect_hdr(&stream).unwrap();
+        assert!(hdr.is_hdr);
+        assert!(!hdr.is_dolby_vision);
+        assert_eq!(hdr.hdr_format, "HLG");
+    }
+
+    // === SECTION 5 END ===
+
+    #[test]
+    fn test_detect_dolby_vision_by_codec() {
+        let stream = FfprobeStream {
+            index: 0,
+            codec_name: "dvhe".to_string(),
+            codec_long_name: "Dolby Vision HEVC".to_string(),
+            codec_type: "video".to_string(),
+            profile: None,
+            width: 3840, height: 2160,
+            pix_fmt: None,
+            r_frame_rate: None, avg_frame_rate: None,
+            duration: None, bit_rate: None,
+            bits_per_raw_sample: None,
+            sample_rate: None, channels: None, channel_layout: None,
+            color_space: None, color_transfer: None, color_primaries: None,
+            disposition: serde_json::json!({}),
+            tags: serde_json::json!({}),
+        };
+        let hdr = detect_hdr(&stream).unwrap();
+        assert!(hdr.is_dolby_vision);
+        assert_eq!(hdr.hdr_format, "Dolby Vision");
+    }
+
+    #[test]
+    fn test_detect_dolby_vision_by_profile() {
+        let stream = FfprobeStream {
+            index: 0,
+            codec_name: "hevc".to_string(),
+            codec_long_name: "H.265".to_string(),
+            codec_type: "video".to_string(),
+            profile: Some("Dolby Vision".to_string()),
+            width: 3840, height: 2160,
+            pix_fmt: None,
+            r_frame_rate: None, avg_frame_rate: None,
+            duration: None, bit_rate: None,
+            bits_per_raw_sample: None,
+            sample_rate: None, channels: None, channel_layout: None,
+            color_space: None, color_transfer: None, color_primaries: None,
+            disposition: serde_json::json!({}),
+            tags: serde_json::json!({}),
+        };
+        let hdr = detect_hdr(&stream).unwrap();
+        assert!(hdr.is_dolby_vision);
+    }
+
+    // === SECTION 6 END ===
+
+    #[test]
+    fn test_normalize_path_backslashes() {
+        let input = "C:\\Users\\test\\video.mkv";
+        let result = normalize_path_for_ffmpeg(input);
+        assert_eq!(result, "C:/Users/test/video.mkv");
+    }
+
+    #[test]
+    fn test_normalize_path_already_forward() {
+        let input = "/home/user/video.mkv";
+        let result = normalize_path_for_ffmpeg(input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_normalize_path_empty() {
+        let result = normalize_path_for_ffmpeg("");
+        assert_eq!(result, "");
+    }
+
+    // === SECTION 7 END ===
+
+    #[test]
+    fn test_is_graphic_subtitle_hdmv_text() {
+        // hdmv_text_subtitle 在白名单中（图形类）
+        assert!(is_graphic_subtitle("hdmv_text_subtitle"));
+    }
+
+    #[test]
+    fn test_is_extractable_microdvd() {
+        assert!(is_extractable_text_subtitle("microdvd"));
+    }
+
+    #[test]
+    fn test_is_extractable_subviewer() {
+        assert!(is_extractable_text_subtitle("subviewer"));
+        assert!(is_extractable_text_subtitle("subviewer1"));
+    }
+
+    #[test]
+    fn test_is_extractable_jacosub() {
+        assert!(is_extractable_text_subtitle("jacosub"));
+    }
+
+    // === SECTION 8 END ===
 }
