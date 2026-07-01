@@ -166,6 +166,23 @@ pub fn run() {
             db.migrate()?;
             app.manage(db);
 
+            // 初始化远程 prompt 配置（从 db 加载已缓存的远程配置到内存）
+            {
+                let db_state = app.state::<db::Database>();
+                translate::PromptTemplateRegistry::init_from_db(db_state.inner());
+            }
+
+            // 异步拉取最新远程 prompt 配置（不阻塞启动）
+            {
+                let app_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let db_state = app_handle.state::<db::Database>();
+                    translate::fetch_remote_prompt_config(db_state.inner()).await;
+                    // 拉取成功后重新加载到内存
+                    translate::PromptTemplateRegistry::init_from_db(db_state.inner());
+                });
+            }
+
             // 初始化翻译取消令牌
             app.manage(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)) as crate::ipc::CancelToken);
 
