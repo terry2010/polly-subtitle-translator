@@ -134,6 +134,11 @@ export interface TranslateResult {
   cached_count: number;
 }
 
+export interface TestConnectionResult {
+  original: string | null;
+  translated: string | null;
+}
+
 // === 搜索相关 ===
 export interface SubtitleSearchResult {
   file_name: string;

@@ -6,7 +6,7 @@ use crate::db::{Database, HistoryRecord, RecentFile};
 use crate::error::{ipc_result, AppError, IpcError, IpcResult, Severity};
 use crate::ffmpeg;
 use crate::subtitle;
-use crate::translate::{self, TranslateProvider, ProviderCredentials, ProxyConfig};
+use crate::translate::{self, TranslateProvider, ProviderCredentials, ProxyConfig, TestConnectionResult};
 use tauri::{Emitter, Manager, State};
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
@@ -43,6 +43,7 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         cancel_translate,
         get_cached_translations,
         test_translate_connection,
+        list_openai_models,
         save_credential,
         get_credential,
         delete_credential,
@@ -376,11 +377,13 @@ pub async fn translate_subtitle(
     source_lang: String,
     target_lang: String,
     provider: String,
+    model: Option<String>,
+    model_type: Option<String>,
     db: State<'_, Database>,
     cancel_token: State<'_, CancelToken>,
     app: tauri::AppHandle,
 ) -> Result<translate::TranslateResult, IpcError> {
-    tracing::info!("translate_subtitle 调用: provider={}, entries={}, source={}, target={}", provider, entries.len(), source_lang, target_lang);
+    tracing::info!("translate_subtitle 调用: provider={}, model={:?}, model_type={:?}, entries={}, source={}, target={}", provider, model, model_type, entries.len(), source_lang, target_lang);
 
     // 重置取消标志
     cancel_token.store(false, Ordering::Relaxed);
@@ -395,6 +398,38 @@ pub async fn translate_subtitle(
     tracing::info!("translate_subtitle app_id from config: {:?}", app_id);
     let region_ref = format!("translate_{}_region", provider);
     let region = db.get_config(&region_ref).map_err(to_ipc_err)?;
+
+    // OpenAi 专属配置：base_url / model / model_type
+    // model 优先用前端传入的值（翻译面板可切换模型），回退 db
+    let base_url = if prov == TranslateProvider::OpenAi {
+        db.get_config("translate_openai_base_url").map_err(to_ipc_err)?
+    } else { None };
+    let model = if prov == TranslateProvider::OpenAi {
+        model.or_else(|| db.get_config("translate_openai_model").ok().flatten())
+    } else { None };
+    let model_type = if prov == TranslateProvider::OpenAi {
+        // 优先用前端传入的 model_type（per-model 独立类型）
+        // 其次从 db 的 per-model JSON 映射中查找
+        // 最后根据 model id 自动识别
+        if let Some(mt) = model_type {
+            Some(mt)
+        } else if let Some(m) = &model {
+            // 从 db 读取 per-model modelType JSON: {"model_id":"qwen3",...}
+            if let Ok(Some(json)) = db.get_config("translate_openai_selected_model_types") {
+                if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&json) {
+                    if let Some(val) = map.get(m) {
+                        if let Some(s) = val.as_str() { Some(s.to_string()) } else { None }
+                    } else {
+                        Some(translate::ModelType::from_model_id(m).as_str().to_string())
+                    }
+                } else {
+                    Some(translate::ModelType::from_model_id(m).as_str().to_string())
+                }
+            } else {
+                Some(translate::ModelType::from_model_id(m).as_str().to_string())
+            }
+        } else { None }
+    } else { None };
 
     // 从 keyring 读取密钥（不降级到明文数据库，凭据仅存系统密钥环）
     let secret = match config::CredentialStore::load(&provider, "secret") {
@@ -414,7 +449,12 @@ pub async fn translate_subtitle(
     tracing::info!("translate_subtitle secret: {:?}", if secret.is_some() { "Some" } else { "None" });
 
     // 验证凭据存在
-    if app_id.is_none() && secret.is_none() {
+    // OpenAi 只要求 base_url 存在（api_key 可选，局域网无认证）
+    if prov == TranslateProvider::OpenAi {
+        if base_url.is_none() {
+            return Err(AppError::TranslateCredentialsNotConfigured.to_ipc_error());
+        }
+    } else if app_id.is_none() && secret.is_none() {
         return Err(AppError::TranslateCredentialsNotConfigured.to_ipc_error());
     }
 
@@ -422,6 +462,9 @@ pub async fn translate_subtitle(
         app_id,
         secret_key: secret,
         region,
+        base_url,
+        model,
+        model_type,
     };
 
     // 读取该 provider 的代理开关：默认跟随软件代理（proxy_mode != none 时用代理）
@@ -542,22 +585,39 @@ pub async fn get_cached_translations(
 }
 
 /// test_translate_connection：测试翻译 API 连接
+/// 返回 TestConnectionResult（OpenAi 包含原文+译文，其他 provider 字段为 None）
 #[tauri::command]
 pub async fn test_translate_connection(
     provider: String,
     app_id: Option<String>,
     secret_key: Option<String>,
     region: Option<String>,
+    base_url: Option<String>,
+    model: Option<String>,
+    model_type: Option<String>,
     db: State<'_, Database>,
-) -> Result<(), IpcError> {
+) -> Result<TestConnectionResult, IpcError> {
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
         AppError::TranslateUnknownProvider { provider: provider.clone() }
     }).map_err(to_ipc_err)?;
+
+    // OpenAi 专属：优先用前端传入的值，回退到 db
+    let (base_url, model, model_type) = if prov == TranslateProvider::OpenAi {
+        let bu = base_url.or_else(|| db.get_config("translate_openai_base_url").ok().flatten());
+        let m = model.or_else(|| db.get_config("translate_openai_model").ok().flatten());
+        let mt = model_type.or_else(|| db.get_config("translate_openai_model_type").ok().flatten());
+        (bu, m, mt)
+    } else {
+        (None, None, None)
+    };
 
     let credentials = ProviderCredentials {
         app_id,
         secret_key,
         region,
+        base_url,
+        model,
+        model_type,
     };
 
     // 测试连接也按 per-provider 代理开关决定是否用代理
@@ -570,7 +630,78 @@ pub async fn test_translate_connection(
     };
 
     let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy).map_err(to_ipc_err)?;
-    prov_instance.test_connection().await.map_err(to_ipc_err)
+
+    // OpenAi：直接翻译测试文本，返回原文+译文
+    if prov == TranslateProvider::OpenAi {
+        let test_text = "Hello";
+        let translated = prov_instance.translate(&[test_text.to_string()], "en", "zh").await.map_err(to_ipc_err)?;
+        let translated_text = translated.into_iter().next().unwrap_or_default();
+        return Ok(TestConnectionResult {
+            original: Some(test_text.to_string()),
+            translated: Some(translated_text),
+        });
+    }
+
+    // 其他 provider：仅测试连通性
+    prov_instance.test_connection().await.map_err(to_ipc_err)?;
+    Ok(TestConnectionResult { original: None, translated: None })
+}
+
+/// list_openai_models：调用 GET {base_url}/models 拉取可用模型列表
+/// 用于设置页"刷新模型列表"按钮，让用户下拉选择模型
+#[tauri::command]
+pub async fn list_openai_models(
+    base_url: String,
+    api_key: Option<String>,
+) -> Result<Vec<String>, IpcError> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": e.to_string() })))?;
+
+    let mut req = client.get(&url);
+    if let Some(key) = api_key.filter(|k| !k.is_empty()) {
+        req = req.header("Authorization", format!("Bearer {}", key));
+    }
+
+    let resp = req.send().await.map_err(|e| {
+        IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": e.to_string() }))
+    })?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(IpcError::new("translate.authFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "provider": "openai" })));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": format!("HTTP {}: {}", status, body) })));
+    }
+
+    let body: serde_json::Value = resp.json().await.map_err(|e| {
+        IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": e.to_string() }))
+    })?;
+
+    // OpenAI 标准响应：{ object: "list", data: [{ id, ... }] }
+    let models: Vec<String> = body["data"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item["id"].as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if models.is_empty() {
+        return Err(IpcError::new("openai.noModels", Severity::Recoverable));
+    }
+
+    Ok(models)
 }
 
 /// save_credential：保存凭据到 keyring

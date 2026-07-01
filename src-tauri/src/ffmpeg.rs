@@ -434,9 +434,6 @@ fn download_ffmpeg_inner(
     proxy: Option<&str>,
     app_handle: &tauri::AppHandle,
 ) -> Result<(), AppError> {
-    use tauri::Emitter;
-    use std::io::{Read, Write};
-
     let dir = ffmpeg_download_dir().ok_or(AppError::FfmpegDownloadMkdirFailed {
         detail: "app_data_dir 未初始化".to_string(),
     })?;
@@ -1410,6 +1407,7 @@ pub fn merge_subtitle_to_video(
 }
 
 /// 获取视频中已有字幕流数量
+#[allow(dead_code)]
 fn get_subtitle_stream_count(
     video_path: &str,
     ffmpeg_custom_path: Option<&str>,

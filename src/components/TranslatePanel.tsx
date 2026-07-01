@@ -14,6 +14,17 @@ export function TranslatePanel() {
   const subtitleStore = useSubtitleStore();
   const translateStore = useTranslateStore();
   const [langs, setLangs] = useState<LanguageInfo[]>([]);
+  // OpenAi：已选模型列表（含 per-model modelType）
+  const [openaiModels, setOpenaiModels] = useState<{ id: string; modelType: string }[]>([]);
+
+  // 初始化：从 db 加载保存的 provider
+  useEffect(() => {
+    api.getConfig("translate_provider").then((saved) => {
+      if (saved && saved !== translateStore.provider) {
+        translateStore.setProvider(saved);
+      }
+    }).catch(() => {});
+  }, []); // 仅挂载时执行一次
 
   useEffect(() => {
     api.getSupportedTargetLangs(translateStore.provider).then(setLangs).catch(() => {
@@ -23,6 +34,40 @@ export function TranslatePanel() {
         { code: "ja", name: "Japanese", native_name: "日本語" },
         { code: "ko", name: "Korean", native_name: "한국어" },
       ]);
+    });
+  }, [translateStore.provider]);
+
+  // OpenAi：加载勾选的模型列表 + per-model modelType + 默认模型
+  useEffect(() => {
+    if (translateStore.provider !== "openai") {
+      setOpenaiModels([]);
+      return;
+    }
+    Promise.all([
+      api.getConfig("translate_openai_selected_models").catch(() => null),
+      api.getConfig("translate_openai_selected_model_types").catch(() => null),
+      api.getConfig("translate_openai_model").catch(() => null),
+    ]).then(([savedSelected, savedModelTypes, savedDefault]) => {
+      const ids = savedSelected ? savedSelected.split(",").filter(Boolean) : [];
+      let typeMap: Record<string, string> = {};
+      if (savedModelTypes) {
+        try { typeMap = JSON.parse(savedModelTypes); } catch { /* ignore */ }
+      }
+      const models = ids.map((id) => ({
+        id,
+        modelType: typeMap[id] || "generic",
+      }));
+      setOpenaiModels(models);
+      // 设置默认模型 + modelType
+      if (!translateStore.model && savedDefault) {
+        translateStore.setModel(savedDefault);
+        const mt = typeMap[savedDefault] || "generic";
+        translateStore.setModelType(mt);
+      } else if (translateStore.model) {
+        // 已有模型时同步 modelType
+        const found = models.find((m) => m.id === translateStore.model);
+        if (found) translateStore.setModelType(found.modelType);
+      }
     });
   }, [translateStore.provider]);
 
@@ -65,9 +110,34 @@ export function TranslatePanel() {
                 <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
                 <SelectItem value="bing">{t("settings.bing")}</SelectItem>
                 <SelectItem value="google">{t("settings.google")}</SelectItem>
+                <SelectItem value="openai">{t("settings.openai", "AI 模型 (OpenAI 兼容)")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
+
+          {/* AI 模型快速切换 */}
+          {translateStore.provider === "openai" && openaiModels.length > 0 && (
+            <div>
+              <label className="text-xs text-muted-foreground">{t("translate.model", "模型")}</label>
+              <Select
+                value={translateStore.model}
+                onValueChange={(m) => {
+                  translateStore.setModel(m);
+                  const found = openaiModels.find((x) => x.id === m);
+                  translateStore.setModelType(found?.modelType || "generic");
+                }}
+              >
+                <SelectTrigger className="mt-1 h-8 text-xs">
+                  <SelectValue placeholder={t("translate.selectModel", "选择模型")} />
+                </SelectTrigger>
+                <SelectContent>
+                  {openaiModels.map((m) => (
+                    <SelectItem key={m.id} value={m.id}>{m.id}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           {/* 源语言 */}
           <div>

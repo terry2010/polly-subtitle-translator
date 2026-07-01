@@ -96,6 +96,7 @@ pub enum TranslateProvider {
     Baidu,
     Bing,
     Google,
+    OpenAi,
 }
 
 impl TranslateProvider {
@@ -104,6 +105,7 @@ impl TranslateProvider {
             TranslateProvider::Baidu => "baidu",
             TranslateProvider::Bing => "bing",
             TranslateProvider::Google => "google",
+            TranslateProvider::OpenAi => "openai",
         }
     }
 
@@ -112,17 +114,19 @@ impl TranslateProvider {
             "baidu" => Some(TranslateProvider::Baidu),
             "bing" => Some(TranslateProvider::Bing),
             "google" => Some(TranslateProvider::Google),
+            "openai" => Some(TranslateProvider::OpenAi),
             _ => None,
         }
     }
 
     /// 各引擎的 QPS 上限（免费/默认档位）
-    /// 百度免费版 1 QPS、Bing 10 QPS、Google 100 QPS
+    /// 百度免费版 1 QPS、Bing 10 QPS、Google 100 QPS、OpenAI 兼容 5（按 RPM 限流，保守取 5）
     pub fn qps_limit(&self) -> usize {
         match self {
             TranslateProvider::Baidu => 1,
             TranslateProvider::Bing => 10,
             TranslateProvider::Google => 100,
+            TranslateProvider::OpenAi => 5,
         }
     }
 
@@ -161,11 +165,16 @@ pub struct TranslateEntry {
 }
 
 /// 翻译提供商凭据
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ProviderCredentials {
     pub app_id: Option<String>,
     pub secret_key: Option<String>,
     pub region: Option<String>,
+    /// OpenAI 兼容 provider 专属：base_url / model / model_type
+    /// 其他 provider 忽略这些字段
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub model_type: Option<String>,
 }
 
 /// 翻译提供商 trait
@@ -192,6 +201,134 @@ pub struct LanguageInfo {
     pub code: String,
     pub name: String,
     pub native_name: String,
+}
+
+/// 测试连接结果（OpenAi 返回原文+译文，其他 provider 字段为 None）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestConnectionResult {
+    pub original: Option<String>,
+    pub translated: Option<String>,
+}
+
+/// AI 模型类型（用于 prompt 分发）
+/// 初期支持 qwen3 / deepseek，其他模型用 Generic 通用 prompt
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelType {
+    Qwen3,
+    Deepseek,
+    Generic,
+}
+
+impl ModelType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ModelType::Qwen3 => "qwen3",
+            ModelType::Deepseek => "deepseek",
+            ModelType::Generic => "generic",
+        }
+    }
+
+    /// 从 serde 字符串构造（用于从 db config 读取的值）
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "qwen3" => Some(ModelType::Qwen3),
+            "deepseek" => Some(ModelType::Deepseek),
+            "generic" => Some(ModelType::Generic),
+            _ => None,
+        }
+    }
+
+    /// 根据模型 id 自动识别模型类型（大小写不敏感）
+    /// qwen3-14b → Qwen3、deepseek-v4 → Deepseek、gemma-3 → Generic
+    pub fn from_model_id(id: &str) -> Self {
+        let lower = id.to_lowercase();
+        if lower.contains("qwen3") {
+            ModelType::Qwen3
+        } else if lower.contains("deepseek") {
+            ModelType::Deepseek
+        } else {
+            ModelType::Generic
+        }
+    }
+}
+
+/// 内置 prompt 模板（编译进二进制，远程不可用时的兜底）
+pub struct PromptTemplate {
+    pub system: &'static str,
+    pub user_line_format: &'static str,
+}
+
+impl PromptTemplate {
+    /// 渲染 system prompt，替换 {src} / {tgt} 占位符
+    pub fn render_system(&self, src: &str, tgt: &str) -> String {
+        self.system.replace("{src}", src).replace("{tgt}", tgt)
+    }
+}
+
+/// 内置模板表（按 ModelType::as_str() 索引）
+/// 顺序：qwen3 / deepseek / generic
+const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
+    ("qwen3", PromptTemplate {
+        system: "You are a professional subtitle translator.\n\
+                 Translate the following {src} subtitles into {tgt}.\n\n\
+                 Rules:\n\
+                 - Output ONLY the translations, one per line, prefixed with the line number.\n\
+                 - Format: \"N. <translation>\"\n\
+                 - Keep the same line numbering as the input.\n\
+                 - Preserve special Unicode characters (like \u{E001}) exactly as-is.\n\
+                 - Do not merge or split lines.\n\
+                 - Do not add explanations, notes, or any extra text.",
+        user_line_format: "{index}. {text}",
+    }),
+    ("deepseek", PromptTemplate {
+        system: "You are a professional subtitle translator.\n\
+                 Translate from {src} to {tgt}.\n\n\
+                 Output format:\n\
+                 - One translation per line, prefixed with the input line number.\n\
+                 - Format: \"N. <translation>\"\n\
+                 - Preserve all special characters and placeholders unchanged.\n\
+                 - Do not merge, split, or skip any lines.\n\
+                 - Output ONLY the numbered translations, nothing else.",
+        user_line_format: "{index}. {text}",
+    }),
+    ("generic", PromptTemplate {
+        system: "You are a professional subtitle translator.\n\
+                 Translate the following {src} subtitles into {tgt}.\n\n\
+                 Rules:\n\
+                 - Output ONLY the translations, one per line, prefixed with the line number.\n\
+                 - Format: \"N. <translation>\"\n\
+                 - Preserve special Unicode characters exactly as-is.\n\
+                 - Do not merge or split lines.\n\
+                 - Do not add any extra text.",
+        user_line_format: "{index}. {text}",
+    }),
+];
+
+/// ISO 639-1 语言码 → 英文全称（用于 prompt 占位符 {src} / {tgt}）
+fn lang_full_name(code: &str) -> &'static str {
+    match code.to_lowercase().as_str() {
+        "zh" | "zh-cn" | "zh-hans" | "zhs" => "Chinese",
+        "zh-tw" | "zh-hant" | "zht" => "Traditional Chinese",
+        "en" => "English",
+        "ja" => "Japanese",
+        "ko" => "Korean",
+        "fr" => "French",
+        "de" => "German",
+        "es" => "Spanish",
+        "ru" => "Russian",
+        "it" => "Italian",
+        "pt" => "Portuguese",
+        "th" => "Thai",
+        "vi" => "Vietnamese",
+        "ar" => "Arabic",
+        "hi" => "Hindi",
+        "tr" => "Turkish",
+        "nl" => "Dutch",
+        "pl" => "Polish",
+        "auto" => "the source language",
+        _ => "the source language",
+    }
 }
 
 // === SECTION 1 END ===
@@ -959,6 +1096,244 @@ impl TranslateProviderTrait for GoogleProvider {
 
 // === SECTION 5 END ===
 
+/// OpenAI 兼容翻译 provider
+/// 通过标准 OpenAI Chat Completions 协议调用任意兼容端点：
+/// 局域网 LM Studio / Ollama / vLLM、云 API DeepSeek / Qwen / OpenAI / Kimi / 智谱 等
+/// 认证可选：api_key 留空时不带 Authorization header（适配局域网无认证场景）
+pub struct OpenAiProvider {
+    base_url: String,
+    model: String,
+    model_type: ModelType,
+    api_key: Option<String>,
+    client: reqwest::Client,
+}
+
+/// 编号行正则：匹配 "1. text" / "1、text" / "1: text" / "1) text"
+static NUMBERED_LINE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+
+impl OpenAiProvider {
+    pub fn new(
+        base_url: String,
+        model: String,
+        model_type: ModelType,
+        api_key: Option<String>,
+    ) -> Self {
+        Self::with_client(base_url, model, model_type, api_key, reqwest::Client::new())
+    }
+
+    pub fn with_client(
+        base_url: String,
+        model: String,
+        model_type: ModelType,
+        api_key: Option<String>,
+        client: reqwest::Client,
+    ) -> Self {
+        Self { base_url, model, model_type, api_key, client }
+    }
+
+    /// 构建 system prompt（优先远程模板，回退内置）
+    fn build_system_prompt(&self, source_lang: &str, target_lang: &str) -> String {
+        let src = lang_full_name(source_lang);
+        let tgt = lang_full_name(target_lang);
+        let view = PromptTemplateRegistry::get_template(&self.model_type);
+        view.render_system(src, tgt)
+    }
+
+    /// 构建 user prompt（编号列表格式）
+    fn build_user_prompt(&self, texts: &[&String]) -> String {
+        let view = PromptTemplateRegistry::get_template(&self.model_type);
+        view.render_user(texts)
+    }
+
+    /// 解析模型返回的编号列表响应，按编号对齐回输入
+    fn parse_numbered_response(
+        content: &str,
+        expected_count: usize,
+    ) -> Result<Vec<String>, AppError> {
+        let re = NUMBERED_LINE_RE.get_or_init(|| {
+            regex::Regex::new(r"^(\d+)[.、:)]\s*(.+)$").unwrap()
+        });
+
+        // 1. 尝试按编号解析
+        let mut translations: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Some(captures) = re.captures(line) {
+                let num: usize = captures[1].parse().unwrap_or(0);
+                let text = captures.get(2).map(|m| m.as_str().trim()).unwrap_or("");
+                if num > 0 && num <= expected_count {
+                    translations.insert(num, text.to_string());
+                }
+            }
+        }
+
+        // 2. 按编号顺序组装结果
+        if translations.len() == expected_count {
+            let result: Vec<String> = (1..=expected_count)
+                .map(|i| translations.remove(&i).unwrap_or_default())
+                .collect();
+            return Ok(result);
+        }
+
+        // 3. 编号解析失败 → 退化为按行对齐
+        let lines: Vec<String> = content
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        if lines.len() == expected_count {
+            return Ok(lines);
+        }
+
+        // 4. 行数也不对 → 返回对齐失败，由调度器触发逐条重试
+        Err(AppError::TranslateAlignFailed {
+            missing: expected_count.saturating_sub(lines.len()),
+        })
+    }
+
+    /// 单批翻译（构造 chat completion 请求）
+    async fn translate_single_batch(
+        &self,
+        texts: &[&String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        let system_prompt = self.build_system_prompt(source_lang, target_lang);
+        let user_prompt = self.build_user_prompt(texts);
+
+        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        let mut req = self
+            .client
+            .post(&url)
+            .timeout(std::time::Duration::from_secs(120))
+            .json(&serde_json::json!({
+                "model": self.model,
+                "messages": [
+                    { "role": "system", "content": system_prompt },
+                    { "role": "user",   "content": user_prompt },
+                ],
+                "temperature": 0.3,
+                "stream": false,
+            }));
+
+        // api_key 非空时才带认证头（局域网无认证场景）
+        if let Some(ref key) = self.api_key {
+            if !key.is_empty() {
+                req = req.header("Authorization", format!("Bearer {}", key));
+            }
+        }
+
+        let resp = req.send().await.map_err(|e| AppError::TranslateNetworkError {
+            provider: "openai".to_string(),
+            detail: e.to_string(),
+        })?;
+
+        let status = resp.status();
+
+        // 限流
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(AppError::TranslateRateLimit {
+                provider: "openai".to_string(),
+                retry_after: Some(60),
+            });
+        }
+
+        // 认证失败
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::TranslateAuthFailed {
+                provider: "openai".to_string(),
+            });
+        }
+
+        let response_body = resp.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "openai".to_string(),
+                detail: format!("HTTP {}: {}", status, response_body),
+            });
+        }
+
+        // 解析响应
+        let body: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            AppError::TranslateResponseParseFailed {
+                detail: format!("JSON parse error: {}", e),
+            }
+        })?;
+
+        let content = body["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| AppError::TranslateResponseParseFailed {
+                detail: "choices[0].message.content missing".to_string(),
+            })?;
+
+        Self::parse_numbered_response(content, texts.len())
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for OpenAiProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        // token 预算分块：粗估 token = chars / 3，预留响应空间
+        const MAX_INPUT_TOKENS: usize = 3000;
+
+        let mut chunks: Vec<Vec<&String>> = Vec::new();
+        let mut current: Vec<&String> = Vec::new();
+        let mut current_tokens = 0usize;
+        for text in texts {
+            let tokens = text.chars().count() / 3 + 1;
+            if !current.is_empty() && current_tokens + tokens > MAX_INPUT_TOKENS {
+                chunks.push(std::mem::take(&mut current));
+                current_tokens = 0;
+            }
+            current.push(text);
+            current_tokens += tokens;
+        }
+        if !current.is_empty() {
+            chunks.push(current);
+        }
+
+        let mut results = Vec::with_capacity(texts.len());
+        for chunk in &chunks {
+            let translated = self.translate_single_batch(chunk, source_lang, target_lang).await?;
+            results.extend(translated);
+        }
+        Ok(results)
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        // AI 模型支持任意语言，返回常用列表
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
+            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
+            LanguageInfo { code: "es".into(), name: "Spanish".into(), native_name: "Español".into() },
+            LanguageInfo { code: "ru".into(), name: "Russian".into(), native_name: "Русский".into() },
+            LanguageInfo { code: "it".into(), name: "Italian".into(), native_name: "Italiano".into() },
+            LanguageInfo { code: "pt".into(), name: "Portuguese".into(), native_name: "Português".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        // 发一个最小翻译请求验证连通性
+        self.translate(&["Hello".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 5.5 END ===
+
 /// 翻译调度器
 /// 负责缓存查询、分段、占位符保护、限流重试
 pub struct TranslateScheduler<'a> {
@@ -1482,10 +1857,185 @@ pub fn create_provider_with_proxy(
             })?;
             Ok(std::sync::Arc::new(GoogleProvider::with_client(api_key, client)))
         }
+        TranslateProvider::OpenAi => {
+            let base_url = credentials.base_url.clone().ok_or_else(|| {
+                AppError::TranslateNotConfigured
+            })?;
+            let model = credentials.model.clone().ok_or_else(|| {
+                AppError::TranslateNotConfigured
+            })?;
+            let model_type = credentials
+                .model_type
+                .as_deref()
+                .and_then(ModelType::from_str)
+                .unwrap_or(ModelType::Generic);
+            // api_key 可选：None 或空字符串 = 无认证
+            let api_key = credentials
+                .secret_key
+                .clone()
+                .filter(|s| !s.is_empty());
+            Ok(std::sync::Arc::new(OpenAiProvider::with_client(
+                base_url, model, model_type, api_key, client,
+            )))
+        }
     }
 }
 
 // === SECTION 6 END ===
+
+// === 远程 Prompt 配置 ===
+
+/// 远程 prompt 配置文件结构
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemotePromptConfig {
+    pub version: String,
+    pub templates: std::collections::HashMap<String, RemotePromptTemplate>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemotePromptTemplate {
+    pub system: String,
+    pub user_line_format: String,
+}
+
+/// 远程 prompt 配置的 GitHub raw URL
+/// 改 prompt 只需更新此文件并 git push，所有客户端下次启动自动生效
+const REMOTE_PROMPT_URL: &str = "https://raw.githubusercontent.com/zimufan/ai-subtrans/main/config/prompts.json";
+
+/// 远程 prompt 配置缓存 key（db config 表）
+const PROMPT_CONFIG_DB_KEY: &str = "translate_prompt_remote_config";
+const PROMPT_CONFIG_VERSION_DB_KEY: &str = "translate_prompt_remote_version";
+
+/// 全局远程配置缓存（启动时拉取后写入，翻译时读取）
+static REMOTE_CONFIG: std::sync::OnceLock<std::sync::RwLock<Option<RemotePromptConfig>>> = std::sync::OnceLock::new();
+
+/// 模板视图（统一远程和内置的渲染接口）
+pub enum PromptTemplateView {
+    Builtin(&'static PromptTemplate),
+    Remote(RemotePromptTemplate),
+}
+
+impl PromptTemplateView {
+    pub fn render_system(&self, src: &str, tgt: &str) -> String {
+        match self {
+            Self::Builtin(t) => t.render_system(src, tgt),
+            Self::Remote(t) => t.system.replace("{src}", src).replace("{tgt}", tgt),
+        }
+    }
+
+    pub fn render_user(&self, texts: &[&String]) -> String {
+        match self {
+            Self::Builtin(t) => texts
+                .iter()
+                .enumerate()
+                .map(|(i, txt)| {
+                    t.user_line_format
+                        .replace("{index}", &(i + 1).to_string())
+                        .replace("{text}", txt)
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Self::Remote(t) => texts
+                .iter()
+                .enumerate()
+                .map(|(i, txt)| {
+                    t.user_line_format
+                        .replace("{index}", &(i + 1).to_string())
+                        .replace("{text}", txt)
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
+/// 模板注册表：优先远程，回退内置
+pub struct PromptTemplateRegistry;
+
+impl PromptTemplateRegistry {
+    /// 初始化（启动时调用，从 db 加载已缓存的远程配置到内存）
+    pub fn init_from_db(db: &Database) {
+        let config = db
+            .get_config(PROMPT_CONFIG_DB_KEY)
+            .ok()
+            .flatten()
+            .and_then(|json| serde_json::from_str::<RemotePromptConfig>(&json).ok());
+        let lock = REMOTE_CONFIG.get_or_init(|| std::sync::RwLock::new(None));
+        *lock.write().unwrap() = config;
+        if let Some(ref c) = *lock.read().unwrap() {
+            tracing::info!("远程 prompt 配置已加载: version={}", c.version);
+        } else {
+            tracing::info!("无远程 prompt 配置，使用内置模板");
+        }
+    }
+
+    /// 获取模板：远程优先，回退内置
+    pub fn get_template(model_type: &ModelType) -> PromptTemplateView {
+        let key = model_type.as_str();
+
+        // 尝试远程
+        if let Some(lock) = REMOTE_CONFIG.get() {
+            if let Some(ref config) = *lock.read().unwrap() {
+                if let Some(tmpl) = config.templates.get(key) {
+                    return PromptTemplateView::Remote(tmpl.clone());
+                }
+            }
+        }
+
+        // 回退内置
+        let builtin = BUILTIN_TEMPLATES
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, t)| t)
+            .unwrap_or(&BUILTIN_TEMPLATES[2].1); // 兜底 generic
+        PromptTemplateView::Builtin(builtin)
+    }
+}
+
+/// 拉取远程 prompt 配置（应用启动时调用，失败静默回退内置）
+pub async fn fetch_remote_prompt_config(db: &Database) {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    match client.get(REMOTE_PROMPT_URL).send().await {
+        Ok(resp) if resp.status().is_success() => match resp.text().await {
+            Ok(text) => {
+                // 校验 JSON 合法性
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                    let version = json["version"].as_str().unwrap_or("");
+                    let cached_version = db
+                        .get_config(PROMPT_CONFIG_VERSION_DB_KEY)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_default();
+
+                    if version != cached_version {
+                        let _ = db.set_config(PROMPT_CONFIG_DB_KEY, &text);
+                        let _ = db.set_config(PROMPT_CONFIG_VERSION_DB_KEY, version);
+                        tracing::info!("远程 prompt 配置已更新: version={}", version);
+                    } else {
+                        tracing::info!("远程 prompt 配置版本未变: {}", version);
+                    }
+                }
+            }
+            Err(e) => tracing::warn!("远程 prompt 配置读取失败: {}", e),
+        },
+        Ok(resp) => tracing::warn!("远程 prompt 配置 HTTP {}", resp.status()),
+        Err(e) => tracing::warn!("远程 prompt 配置拉取失败（使用内置模板）: {}", e),
+    }
+    // 任何失败都静默处理，翻译时回退内置模板
+}
+
+/// 获取当前已加载的远程 prompt 配置版本（供前端显示）
+pub fn get_remote_prompt_version() -> Option<String> {
+    REMOTE_CONFIG.get().and_then(|lock| {
+        lock.read().unwrap().as_ref().map(|c| c.version.clone())
+    })
+}
+
+// === SECTION 6.5 END ===
 
 #[cfg(test)]
 mod tests {
@@ -1571,7 +2121,150 @@ mod tests {
             TranslateProvider::from_str("google"),
             Some(TranslateProvider::Google)
         );
+        assert_eq!(
+            TranslateProvider::from_str("openai"),
+            Some(TranslateProvider::OpenAi)
+        );
+        assert_eq!(
+            TranslateProvider::from_str("OpenAI"),
+            Some(TranslateProvider::OpenAi)
+        );
         assert_eq!(TranslateProvider::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_provider_openai_as_str_and_qps() {
+        assert_eq!(TranslateProvider::OpenAi.as_str(), "openai");
+        assert_eq!(TranslateProvider::OpenAi.qps_limit(), 5);
+    }
+
+    #[test]
+    fn test_model_type_from_model_id() {
+        assert_eq!(ModelType::from_model_id("qwen3-14b"), ModelType::Qwen3);
+        assert_eq!(ModelType::from_model_id("Qwen3-32B-Instruct"), ModelType::Qwen3);
+        assert_eq!(ModelType::from_model_id("deepseek-v4"), ModelType::Deepseek);
+        assert_eq!(ModelType::from_model_id("DeepSeek-R1"), ModelType::Deepseek);
+        assert_eq!(ModelType::from_model_id("gemma-3-12b"), ModelType::Generic);
+        assert_eq!(ModelType::from_model_id("llama-3.1-8b"), ModelType::Generic);
+    }
+
+    #[test]
+    fn test_model_type_from_str() {
+        assert_eq!(ModelType::from_str("qwen3"), Some(ModelType::Qwen3));
+        assert_eq!(ModelType::from_str("Deepseek"), Some(ModelType::Deepseek));
+        assert_eq!(ModelType::from_str("generic"), Some(ModelType::Generic));
+        assert_eq!(ModelType::from_str("unknown"), None);
+    }
+
+    #[test]
+    fn test_parse_numbered_response_exact() {
+        let content = "1. 你好\n2. 世界\n3. 测试";
+        let result = OpenAiProvider::parse_numbered_response(content, 3).unwrap();
+        assert_eq!(result, vec!["你好", "世界", "测试"]);
+    }
+
+    #[test]
+    fn test_parse_numbered_response_chinese_punct() {
+        // 中文顿号分隔
+        let content = "1、你好\n2、世界";
+        let result = OpenAiProvider::parse_numbered_response(content, 2).unwrap();
+        assert_eq!(result, vec!["你好", "世界"]);
+    }
+
+    #[test]
+    fn test_parse_numbered_response_out_of_order() {
+        // 编号乱序也能按编号对齐
+        let content = "3. 三\n1. 一\n2. 二";
+        let result = OpenAiProvider::parse_numbered_response(content, 3).unwrap();
+        assert_eq!(result, vec!["一", "二", "三"]);
+    }
+
+    #[test]
+    fn test_parse_numbered_response_fallback_to_lines() {
+        // 无编号 → 退化为按行对齐
+        let content = "你好\n世界\n测试";
+        let result = OpenAiProvider::parse_numbered_response(content, 3).unwrap();
+        assert_eq!(result, vec!["你好", "世界", "测试"]);
+    }
+
+    #[test]
+    fn test_parse_numbered_response_count_mismatch() {
+        // 数量不对 → 返回对齐失败
+        let content = "1. 你好\n2. 世界";
+        let result = OpenAiProvider::parse_numbered_response(content, 3);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_numbered_response_with_extra_text() {
+        // 模型可能加额外说明行，编号解析应忽略非编号行
+        let content = "Here are the translations:\n1. 你好\n2. 世界\n\nDone.";
+        let result = OpenAiProvider::parse_numbered_response(content, 2).unwrap();
+        assert_eq!(result, vec!["你好", "世界"]);
+    }
+
+    #[test]
+    fn test_builtin_templates_render() {
+        let tmpl = BUILTIN_TEMPLATES.iter().find(|(k, _)| *k == "qwen3").map(|(_, t)| t).unwrap();
+        let system = tmpl.render_system("English", "Chinese");
+        assert!(system.contains("English"));
+        assert!(system.contains("Chinese"));
+    }
+
+    #[test]
+    fn test_prompt_template_registry_builtin_fallback() {
+        // 未初始化远程配置时，应回退到内置模板
+        let view = PromptTemplateRegistry::get_template(&ModelType::Generic);
+        let system = view.render_system("English", "Chinese");
+        assert!(system.contains("English"));
+        assert!(system.contains("Chinese"));
+    }
+
+    #[test]
+    fn test_prompt_template_view_render_user() {
+        let view = PromptTemplateRegistry::get_template(&ModelType::Qwen3);
+        let hello = "Hello".to_string();
+        let world = "World".to_string();
+        let texts = vec![&hello, &world];
+        let user = view.render_user(&texts);
+        assert!(user.contains("1. Hello"));
+        assert!(user.contains("2. World"));
+    }
+
+    #[test]
+    fn test_lang_full_name() {
+        assert_eq!(lang_full_name("en"), "English");
+        assert_eq!(lang_full_name("zh"), "Chinese");
+        assert_eq!(lang_full_name("zh-tw"), "Traditional Chinese");
+        assert_eq!(lang_full_name("ja"), "Japanese");
+        assert_eq!(lang_full_name("auto"), "the source language");
+        assert_eq!(lang_full_name("xx"), "the source language");
+    }
+
+    #[test]
+    fn test_create_openai_provider_no_key() {
+        // 无 api_key 应成功创建（局域网无认证场景）
+        let creds = ProviderCredentials {
+            base_url: Some("http://localhost:1234/v1".into()),
+            model: Some("qwen3-14b".into()),
+            model_type: Some("qwen3".into()),
+            secret_key: None,
+            ..Default::default()
+        };
+        let provider = create_provider(&TranslateProvider::OpenAi, &creds);
+        assert!(provider.is_ok());
+    }
+
+    #[test]
+    fn test_create_openai_provider_missing_config() {
+        // 缺少 base_url 应返回 TranslateNotConfigured
+        let creds = ProviderCredentials {
+            base_url: None,
+            model: Some("qwen3-14b".into()),
+            ..Default::default()
+        };
+        let result = create_provider(&TranslateProvider::OpenAi, &creds);
+        assert!(matches!(result, Err(AppError::TranslateNotConfigured)));
     }
 
     #[test]

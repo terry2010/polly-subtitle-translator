@@ -165,3 +165,11 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: hsl(var(--muted-foreground) / 0.5);
 }
+
+/* Sonner toast：禁用 hover 缩放动画，避免鼠标在边缘时上下抖动 */
+[data-sonner-toast] {
+  transition: transform 0s !important;
+}
+[data-sonner-toast]:hover {
+  transform: none !important;
+}

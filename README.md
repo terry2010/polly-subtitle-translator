@@ -172,7 +172,10 @@ ai-subtrans/
 │   ├── license-compatibility.md       # 许可证兼容性分析
 │   ├── ass-parser-selection.md        # ASS 解析器选型
 │   ├── video-player-refactor-plan.md  # 播放器重构方案
-│   └── video-player-webcodecs-plan.md # WebCodecs 方案
+│   ├── video-player-webcodecs-plan.md # WebCodecs 方案
+│   ├── gen-all-icons.cjs              # 图标一键生成脚本（软件 ico/icns + 网站 favicon）
+│   ├── 卡通Q版鹦鹉吉祥物-1024.png     # 软件图标源图
+│   └── 卡通Q版鹦鹉吉祥物-512.png      # 网站 favicon 源图
 ├── scripts/
 │   └── publish.mjs                    # 发布脚本（改版本号+构建+GitHub Release+latest.json）
 ├── src/                               # 前端 React 源码
@@ -338,6 +341,55 @@ npm run preview  # 预览构建产物
 - 日志目录：`<app_data_dir>/logs/zimufan.log`（按天滚动，保留 7 天）。
 - 默认级别 `info`，`zimufan_lib` 模块为 `debug`，可通过 `RUST_LOG` 环境变量覆盖。
 - 同时输出到 stderr 与文件。
+
+### 图标生成
+
+应用图标（吉祥物 Polly 鹦鹉）通过 `docs/gen-all-icons.cjs` 一键生成，包含软件图标和网站 favicon 全套。
+
+**源图准备**
+
+在 `docs/` 下放两张源图（文件名固定）：
+
+| 文件 | 尺寸 | 用途 |
+| --- | --- | --- |
+| `卡通Q版鹦鹉吉祥物-1024.png` | 1024x1024 | 软件图标源图（生成 ico/icns/各尺寸 PNG/iOS/Android） |
+| `卡通Q版鹦鹉吉祥物-512.png` | 512x512 | 网站 favicon 源图 |
+
+**执行生成**
+
+```bash
+node docs/gen-all-icons.cjs
+```
+
+脚本会依次完成三步：
+
+1. **软件图标**：调用 `tauri icon` 从 1024 源图生成到 `src-tauri/icons/`
+   - `icon.ico`（Windows，含 16/24/32/48/64/256 六尺寸）
+   - `icon.icns`（macOS）
+   - `icon.png`（512x512）+ 各尺寸 PNG + iOS/Android 全套
+2. **网站 favicon**：从 512 源图生成到 `public/`
+   - `favicon.ico`（16/32/48 三合一）
+   - `favicon-{16,32,48,180,192,512}.png`
+   - `apple-touch-icon.png`（180x180）
+3. **UI 用图**：把 `icon.png` / `icon-128.png` 复制到 `public/` 供 Web UI 使用
+
+**重新构建前清缓存**
+
+`tauri icon` 只更新 `src-tauri/icons/` 里的文件，Cargo 增量编译不会自动重嵌图标。换图标后必须清 debug 目录再构建：
+
+```bash
+rmdir /s /q C:\Users\<用户名>\.cargo-target\zimufan\debug
+npm run start
+```
+
+同时建议清一下 Windows 图标缓存（任务栏/桌面显示旧图标时）：
+
+```cmd
+taskkill /f /im explorer.exe
+del /a /q %localappdata%\IconCache.db
+del /a /f /q %localappdata%\Microsoft\Windows\Explorer\iconcache*.db
+start explorer.exe
+```
 
 ---
 
