@@ -663,6 +663,7 @@ fn download_ffmpeg_inner(
 }
 
 /// 在目录中递归查找指定文件名
+#[cfg(not(target_os = "macos"))]
 fn find_file_in_dir(dir: &Path, name: &str) -> Option<PathBuf> {
     if !dir.is_dir() { return None; }
     for entry in fs::read_dir(dir).ok()? {

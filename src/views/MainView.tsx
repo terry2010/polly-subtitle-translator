@@ -486,11 +486,13 @@ export default function MainView() {
     Promise.all(providers.map(async (p) => {
       try {
         if (p === "openai") {
-          const [baseUrl, model] = await Promise.all([
+          const [baseUrl, model, selectedModels] = await Promise.all([
             api.getConfig("translate_openai_base_url").catch(() => null),
             api.getConfig("translate_openai_model").catch(() => null),
+            api.getConfig("translate_openai_selected_models").catch(() => null),
           ]);
-          return [p, !!(baseUrl && model)] as [string, boolean];
+          // 放宽判定：只要 baseUrl 存在，且有默认模型或已选模型，即认为已配置
+          return [p, !!(baseUrl && (model || selectedModels))] as [string, boolean];
         }
         const [appId, secretKeyring, secretConfig] = await Promise.all([
           api.getConfig(`translate_${p}_app_id`).catch(() => null),
@@ -503,7 +505,16 @@ export default function MainView() {
         return [p, false] as [string, boolean];
       }
     })).then((results) => {
-      setProviderConfigured(Object.fromEntries(results));
+      const configured = Object.fromEntries(results);
+      setProviderConfigured(configured);
+      // 兜底：如果当前 provider 未配置，自动切换到第一个已配置的引擎
+      // 避免"只配了 AI 模型但 provider 默认是 baidu"时翻译引擎下拉框为空
+      if (!configured[translateStore.provider]) {
+        const firstConfigured = providers.find((p) => configured[p]);
+        if (firstConfigured) {
+          translateStore.setProvider(firstConfigured);
+        }
+      }
     });
   }, []);
 
@@ -518,6 +529,7 @@ export default function MainView() {
 
   // OpenAi：加载勾选的模型列表 + per-model modelType + 默认模型
   // 不依赖 translateStore.provider，因为用户可能只配了 AI 模型而 provider 默认还是 baidu
+  // 此 useEffect 仅在挂载时执行一次，加载模型列表和默认模型
   useEffect(() => {
     Promise.all([
       api.getConfig("translate_openai_selected_models").catch(() => null),
@@ -534,19 +546,34 @@ export default function MainView() {
         modelType: typeMap[id] || "generic",
       }));
       setOpenaiModels(models);
-      // 仅当当前 provider 是 openai 时才自动设置默认模型
-      if (translateStore.provider === "openai") {
-        if (!translateStore.model && savedDefault) {
-          translateStore.setModel(savedDefault);
-          const mt = typeMap[savedDefault] || "generic";
+      // 始终设置默认模型（不检查 provider，因为 provider 可能还没从 config 加载完）
+      // model 只在 provider 为 openai 时使用，不会影响其他引擎
+      if (!translateStore.model) {
+        // 优先用显式保存的默认模型；如果未保存，则使用已选模型中的第一个
+        const defaultModel = savedDefault || (models.length > 0 ? models[0].id : "");
+        if (defaultModel) {
+          translateStore.setModel(defaultModel);
+          const mt = typeMap[defaultModel] || "generic";
           translateStore.setModelType(mt);
-        } else if (translateStore.model) {
-          const found = models.find((m) => m.id === translateStore.model);
-          if (found) translateStore.setModelType(found.modelType);
         }
+      } else if (translateStore.model) {
+        const found = models.find((m) => m.id === translateStore.model);
+        if (found) translateStore.setModelType(found.modelType);
       }
     });
   }, []);
+
+  // 兜底：如果 provider 是 openai 且 model 已设置，但 model 不在 openaiModels 列表中，
+  // 自动将 model 加入列表，避免下拉框找不到匹配项显示为空
+  // 注意：此 effect 只依赖 provider/model，列表通过函数式更新读取，避免 openaiModels 变化触发循环
+  useEffect(() => {
+    if (translateStore.provider === "openai" && translateStore.model) {
+      setOpenaiModels((prev) => {
+        if (prev.find((m) => m.id === translateStore.model)) return prev;
+        return [...prev, { id: translateStore.model, modelType: translateStore.modelType || "generic" }];
+      });
+    }
+  }, [translateStore.provider, translateStore.model]);
 
   // === SECTION 1 END ===
 
@@ -1151,40 +1178,42 @@ export default function MainView() {
                     }
                   }}
                 >
-                  <SelectTrigger className="h-8 text-xs flex-1">
-                    <SelectValue />
+                  <SelectTrigger className="h-8 text-xs flex-1 overflow-hidden">
+                    <SelectValue className="truncate min-w-0" />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* 已配置的传统引擎 */}
-                    {providerConfigured["baidu"] && (
+                    {/* 传统引擎：只显示已配置或当前选中的 */}
+                    {(providerConfigured["baidu"] || translateStore.provider === "baidu") && (
                       <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
                     )}
-                    {providerConfigured["bing"] && (
+                    {(providerConfigured["bing"] || translateStore.provider === "bing") && (
                       <SelectItem value="bing">Bing</SelectItem>
                     )}
-                    {providerConfigured["google"] && (
+                    {(providerConfigured["google"] || translateStore.provider === "google") && (
                       <SelectItem value="google">Google</SelectItem>
                     )}
-                    {/* 已配置的 AI 模型：每个模型一个选项；没选模型时显示通用项 */}
-                    {providerConfigured["openai"] && openaiModels.length === 0 && (
-                      <SelectItem value="openai">{t("settings.openai", "AI 模型")}</SelectItem>
+                    {/* AI 模型：只显示已配置或当前选中的；没选模型时显示通用项 */}
+                    {(providerConfigured["openai"] || translateStore.provider === "openai") && (
+                      <>
+                        {openaiModels.length === 0 && (
+                          <SelectItem value="openai">{t("settings.openai", "AI 模型")}</SelectItem>
+                        )}
+                        {openaiModels.map((m) => (
+                          <SelectItem key={m.id} value={`openai:${m.id}`}>
+                            <span className="block truncate" title={`AI模型 - ${m.id}`}>
+                              AI模型 - {m.id}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </>
                     )}
-                    {providerConfigured["openai"] && openaiModels.map((m) => (
-                      <SelectItem key={m.id} value={`openai:${m.id}`}>
-                        <span className="block truncate" title={`AI模型 - ${m.id}`}>
-                          AI模型 - {m.id}
-                        </span>
-                      </SelectItem>
-                    ))}
-                    {/* 添加更多引擎（全部已配置过则隐藏） */}
-                    {(!providerConfigured["baidu"] || !providerConfigured["bing"] || !providerConfigured["google"] || !providerConfigured["openai"]) && (
-                      <SelectItem value="__add_more__">
-                        <span className="flex items-center gap-1 text-primary">
-                          <Plus className="h-3 w-3" />
-                          {t("translate.addMoreEngines", "添加更多引擎")}
-                        </span>
-                      </SelectItem>
-                    )}
+                    {/* 添加更多引擎 */}
+                    <SelectItem value="__add_more__">
+                      <span className="flex items-center gap-1 text-primary">
+                        <Plus className="h-3 w-3" />
+                        {t("translate.addMoreEngines", "添加更多引擎")}
+                      </span>
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>

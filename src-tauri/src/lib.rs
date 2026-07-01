@@ -89,10 +89,8 @@ fn cleanup_old_logs(log_dir: &std::path::Path, retain_days: u64) {
             if let Ok(metadata) = entry.metadata() {
                 if let Ok(modified) = metadata.modified() {
                     if let Ok(age) = now.duration_since(modified) {
-                        if age > cutoff {
-                            if std::fs::remove_file(&path).is_ok() {
-                                removed += 1;
-                            }
+                        if age > cutoff && std::fs::remove_file(&path).is_ok() {
+                            removed += 1;
                         }
                     }
                 }

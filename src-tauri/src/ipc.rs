@@ -1107,7 +1107,7 @@ pub async fn player_init(
     let ns_window_addr = ns_window as usize;
     let result = tauri::async_runtime::spawn_blocking(move || {
         let ns_window = ns_window_addr as *mut Object;
-        crate::player::Player::new(&dll_path, ns_window, app, x, y, w, h)
+        unsafe { crate::player::Player::new(&dll_path, ns_window, app, x, y, w, h) }
     }).await;
     match result {
         Ok(Ok(player)) => {

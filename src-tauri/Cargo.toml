@@ -75,3 +75,8 @@ tar = "0.4"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+
+[lints.rust]
+# objc 0.2 宏内部使用 cfg(cargo-clippy)，在新版 rustc 下触发 unexpected_cfgs 警告；
+# 该 crate 最新仍是 0.2.7，暂时允许此 lint 以清理命令行噪音。
+unexpected_cfgs = "allow"

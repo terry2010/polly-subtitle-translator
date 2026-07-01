@@ -38,11 +38,8 @@ export function TranslatePanel() {
   }, [translateStore.provider]);
 
   // OpenAi：加载勾选的模型列表 + per-model modelType + 默认模型
+  // 不依赖 translateStore.provider，因为 provider 可能还没从 config 加载完
   useEffect(() => {
-    if (translateStore.provider !== "openai") {
-      setOpenaiModels([]);
-      return;
-    }
     Promise.all([
       api.getConfig("translate_openai_selected_models").catch(() => null),
       api.getConfig("translate_openai_selected_model_types").catch(() => null),
@@ -58,18 +55,17 @@ export function TranslatePanel() {
         modelType: typeMap[id] || "generic",
       }));
       setOpenaiModels(models);
-      // 设置默认模型 + modelType
+      // 始终设置默认模型（不检查 provider，因为 provider 可能还没加载完）
       if (!translateStore.model && savedDefault) {
         translateStore.setModel(savedDefault);
         const mt = typeMap[savedDefault] || "generic";
         translateStore.setModelType(mt);
       } else if (translateStore.model) {
-        // 已有模型时同步 modelType
         const found = models.find((m) => m.id === translateStore.model);
         if (found) translateStore.setModelType(found.modelType);
       }
     });
-  }, [translateStore.provider]);
+  }, []);
 
   const handleTranslate = useCallback(async () => {
     if (!subtitleStore.file) return;
