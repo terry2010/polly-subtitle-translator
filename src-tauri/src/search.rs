@@ -987,7 +987,7 @@ fn zimuku_parse_and_fetch_sublist(
     search_url: &str,
     all_cookies: &[String],
     client: &reqwest::blocking::Client,
-    proxy_info: &str,
+    _proxy_info: &str,
 ) -> Result<Vec<SubtitleSearchResult>, AppError> {
     // 解析搜索结果，获取第一个影片的字幕列表页链接
     let sublist_url = match zimuku_parse_search_results(html_text) {

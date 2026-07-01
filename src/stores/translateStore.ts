@@ -12,10 +12,14 @@ interface TranslateState {
   sourceLang: string;
   targetLang: string;
   provider: string;
+  model: string;
+  modelType: string;
 
   setSourceLang: (lang: string) => void;
   setTargetLang: (lang: string) => void;
   setProvider: (provider: string) => void;
+  setModel: (model: string) => void;
+  setModelType: (modelType: string) => void;
   startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void) => Promise<TranslateResult | null>;
   cancelTranslate: () => Promise<void>;
   reset: () => void;
@@ -30,10 +34,14 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
   sourceLang: "en",
   targetLang: "zh",
   provider: "baidu",
+  model: "",
+  modelType: "",
 
   setSourceLang: (lang) => set({ sourceLang: lang }),
   setTargetLang: (lang) => set({ targetLang: lang }),
   setProvider: (provider) => set({ provider }),
+  setModel: (model) => set({ model }),
+  setModelType: (modelType) => set({ modelType }),
 
   startTranslate: async (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void) => {
     // 如果正在翻译，不允许启动新的翻译任务
@@ -41,7 +49,7 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
       console.warn("翻译正在进行中，跳过新任务");
       return null;
     }
-    const { sourceLang, targetLang, provider } = get();
+    const { sourceLang, targetLang, provider, model, modelType } = get();
     set({ translating: true, progress: 0, total: entries.length, error: null, result: null });
 
     // 监听进度事件
@@ -70,7 +78,7 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
     }
 
     try {
-      const result = await api.translateSubtitle(entries, sourceLang, targetLang, provider);
+      const result = await api.translateSubtitle(entries, sourceLang, targetLang, provider, model || undefined, modelType || undefined);
       set({ translating: false, progress: entries.length, result });
       return result;
     } catch (e: any) {

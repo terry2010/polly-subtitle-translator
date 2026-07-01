@@ -30,6 +30,7 @@ use windows::Win32::UI::Accessibility::*;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 
 /// 跨平台辅助：Windows 上隐藏控制台窗口，其他平台直接返回原命令
+#[allow(dead_code)]
 #[cfg(windows)]
 fn no_window(mut cmd: std::process::Command) -> std::process::Command {
     use std::os::windows::process::CommandExt;
@@ -37,6 +38,7 @@ fn no_window(mut cmd: std::process::Command) -> std::process::Command {
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
 }
+#[allow(dead_code)]
 #[cfg(not(windows))]
 fn no_window(cmd: std::process::Command) -> std::process::Command { cmd }
 
@@ -1509,10 +1511,10 @@ struct MpvApi {
     set_option_string: FnMpvSetOptionString,
     set_property_string: FnMpvSetPropertyString,
     get_property_string: FnMpvGetPropertyString,
-    get_property: FnMpvGetPropertyDouble,
+    _get_property: FnMpvGetPropertyDouble,
     command: FnMpvCommand,
     free: FnMpvFree,
-    wait_event: FnMpvWaitEvent,
+    _wait_event: FnMpvWaitEvent,
     wakeup: FnMpvWakeup,
 }
 
@@ -1536,10 +1538,10 @@ impl MpvApi {
             set_option_string: sym!("mpv_set_option_string", FnMpvSetOptionString),
             set_property_string: sym!("mpv_set_property_string", FnMpvSetPropertyString),
             get_property_string: sym!("mpv_get_property_string", FnMpvGetPropertyString),
-            get_property: sym!("mpv_get_property", FnMpvGetPropertyDouble),
+            _get_property: sym!("mpv_get_property", FnMpvGetPropertyDouble),
             command: sym!("mpv_command", FnMpvCommand),
             free: sym!("mpv_free", FnMpvFree),
-            wait_event: sym!("mpv_wait_event", FnMpvWaitEvent),
+            _wait_event: sym!("mpv_wait_event", FnMpvWaitEvent),
             wakeup: sym!("mpv_wakeup", FnMpvWakeup),
             _lib: lib,
         })
@@ -2657,10 +2659,10 @@ mod macos {
         set_option_string: FnMpvSetOptionString,
         set_property_string: FnMpvSetPropertyString,
         get_property_string: FnMpvGetPropertyString,
-        get_property: FnMpvGetPropertyDouble,
+        _get_property: FnMpvGetPropertyDouble,
         command: FnMpvCommand,
         free: FnMpvFree,
-        wait_event: FnMpvWaitEvent,
+        _wait_event: FnMpvWaitEvent,
         wakeup: FnMpvWakeup,
     }
 
@@ -2682,10 +2684,10 @@ mod macos {
                 set_option_string: sym!("mpv_set_option_string", FnMpvSetOptionString),
                 set_property_string: sym!("mpv_set_property_string", FnMpvSetPropertyString),
                 get_property_string: sym!("mpv_get_property_string", FnMpvGetPropertyString),
-                get_property: sym!("mpv_get_property", FnMpvGetPropertyDouble),
+                _get_property: sym!("mpv_get_property", FnMpvGetPropertyDouble),
                 command: sym!("mpv_command", FnMpvCommand),
                 free: sym!("mpv_free", FnMpvFree),
-                wait_event: sym!("mpv_wait_event", FnMpvWaitEvent),
+                _wait_event: sym!("mpv_wait_event", FnMpvWaitEvent),
                 wakeup: sym!("mpv_wakeup", FnMpvWakeup),
                 _lib: lib,
             })
@@ -3234,6 +3236,7 @@ fn position_sync_loop(parent: HWND, child: HWND, stop_flag: Arc<AtomicBool>) {
         HOOK_CHILD = child;
     }
     // 回调函数：父窗口位置变化时，用 delta 移动悬浮窗口
+    #[allow(non_snake_case)]
     unsafe extern "system" fn hook_callback(
         _hWinEventHook: HWINEVENTHOOK,
         event: u32,

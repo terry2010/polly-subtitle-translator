@@ -1,13 +1,14 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { setWindowSizeInitialized } from "./MainView";
-import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../components/ui/dialog";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
 import { useThemeStore } from "../stores/themeStore";
 import { useDevModeStore } from "../stores/devModeStore";
@@ -15,6 +16,7 @@ import { useLibmpvStore } from "../stores/libmpvStore";
 import { useFfmpegStore } from "../stores/ffmpegStore";
 import { useUpdateStore } from "../stores/updateStore";
 import { api, formatIpcError } from "../lib/api";
+import { cn } from "../lib/utils";
 
 type SettingsTab = "general" | "translate" | "player" | "advanced" | "about";
 
@@ -90,6 +92,7 @@ export default function SettingsView() {
 
   const [activeTab, setActiveTab] = useState<SettingsTab>(
     searchParams.get("provider") ? "translate"
+    : searchParams.get("tab") === "translate" ? "translate"
     : searchParams.get("tab") === "advanced" ? "advanced"
     : "general"
   );
@@ -320,7 +323,7 @@ function DefaultLangSettings() {
 // === SECTION 2 END ===
 
 // === 翻译 API 设置 ===
-const PROVIDER_LINKS: Record<string, { url: string; appIdLabel?: string; appIdPlaceholder?: string; hasRegion?: boolean }> = {
+const PROVIDER_LINKS: Record<string, { url: string; appIdLabel?: string; appIdPlaceholder?: string; hasRegion?: boolean; isOpenAi?: boolean }> = {
   baidu: {
     url: "https://fanyi-api.baidu.com/",
     appIdLabel: "App ID",
@@ -337,11 +340,16 @@ const PROVIDER_LINKS: Record<string, { url: string; appIdLabel?: string; appIdPl
     appIdLabel: "API Key",
     appIdPlaceholder: "Google Cloud Translation API Key",
   },
+  openai: {
+    url: "https://github.com/zimufan/ai-subtrans",
+    isOpenAi: true,
+  },
 };
 
 function TranslateApiSettings() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const devMode = useDevModeStore((s) => s.devMode);
   const [provider, setProvider] = useState("baidu");
   const [searchParams] = useSearchParams();
   const [appId, setAppId] = useState("");
@@ -349,12 +357,26 @@ function TranslateApiSettings() {
   const [region, setRegion] = useState("global");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
-  const [testError, setTestError] = useState("");
-  const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
+  // 删除配置确认弹窗
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   // 代理状态：proxyMode=none 时无代理；useProxy=null=未设置(默认跟随), true/false=显式
   const [proxyMode, setProxyMode] = useState("none");
   const [useProxy, setUseProxy] = useState<boolean | null>(null);
+  // OpenAi 专属
+  const [baseUrl, setBaseUrl] = useState("");
+  const [model, setModel] = useState(""); // 默认模型 id
+  const [modelList, setModelList] = useState<string[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  // 多选：每个模型有独立的 modelType
+  const [selectedModels, setSelectedModels] = useState<{ id: string; modelType: string }[]>([]);
+  // 模型可搜索下拉
+  const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
+  const [modelFilter, setModelFilter] = useState("");
+  const modelDropdownRef = useRef<HTMLDivElement>(null);
+  // 记录上次自动刷新模型时使用的 baseUrl，避免重复请求
+  const lastAutoFetchUrlRef = useRef<string>("");
 
   // 加载已保存的配置（URL 参数优先）
   useEffect(() => {
@@ -368,67 +390,394 @@ function TranslateApiSettings() {
     });
   }, [searchParams]);
 
+  // OpenAi：刷新模型列表核心逻辑（接受 url 参数，便于加载配置后直接调用）
+  const fetchModels = useCallback(async (urlToFetch: string, keyForFetch?: string) => {
+    const trimmedUrl = urlToFetch.trim();
+    if (!trimmedUrl) return;
+    try { new URL(trimmedUrl); } catch { return; }
+
+    setLoadingModels(true);
+    setModelDropdownOpen(false);
+    try {
+      const candidateUrls: string[] = [];
+      const normalized = trimmedUrl.replace(/\/$/, "");
+      if (normalized.includes("/v1")) {
+        candidateUrls.push(normalized);
+        const withoutV1 = normalized.replace(/\/v1\/?$/, "");
+        if (withoutV1 && withoutV1 !== normalized) candidateUrls.push(withoutV1);
+      } else {
+        candidateUrls.push(normalized);
+        candidateUrls.push(`${normalized}/v1`);
+      }
+      const uniqueUrls = Array.from(new Set(candidateUrls));
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 3000)
+      );
+
+      let successUrl = "";
+      let allModels: string[] = [];
+      for (const url of uniqueUrls) {
+        try {
+          const models = await Promise.race([
+            api.listOpenaiModels(url, keyForFetch),
+            timeoutPromise,
+          ]);
+          if (models.length > 0) {
+            successUrl = url;
+            allModels = models;
+            break;
+          }
+        } catch {
+          // 静默
+        }
+      }
+
+      if (!successUrl) return;
+
+      if (successUrl !== trimmedUrl) {
+        setBaseUrl(successUrl);
+      }
+      setModelList(allModels);
+      lastAutoFetchUrlRef.current = successUrl;
+
+      // 清理已选模型中不在新列表中的
+      setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
+      // 清理默认模型如果不在新列表中
+      setModel((prevModel) => {
+        if (prevModel && !allModels.includes(prevModel)) {
+          return "";
+        }
+        return prevModel;
+      });
+    } catch {
+      // 静默
+    } finally {
+      setLoadingModels(false);
+    }
+  }, []);
+
   useEffect(() => {
     setLoading(true);
     setAppId("");
     setSecretKey("");
     setRegion("global");
+    setModel("");
+    setModelList([]);
+    setModelFilter("");
+    setModelDropdownOpen(false);
+    setSelectedModels([]);
+    lastAutoFetchUrlRef.current = "";
+    const isOpenAi = provider === "openai";
     Promise.all([
       api.getConfig(`translate_${provider}_app_id`).catch(() => null),
       api.getConfig(`translate_${provider}_region`).catch(() => null),
       api.getCredential(provider, "secret").catch(() => null),
       api.getTranslateUseProxy(provider).catch(() => null),
-    ]).then(([savedAppId, savedRegion, savedSecretKeyring, savedUseProxy]) => {
+      isOpenAi ? api.getConfig("translate_openai_base_url").catch(() => null) : Promise.resolve(null),
+      isOpenAi ? api.getConfig("translate_openai_model").catch(() => null) : Promise.resolve(null),
+      isOpenAi ? api.getConfig("translate_openai_selected_models").catch(() => null) : Promise.resolve(null),
+      isOpenAi ? api.getConfig("translate_openai_selected_model_types").catch(() => null) : Promise.resolve(null),
+    ]).then(([savedAppId, savedRegion, savedSecretKeyring, savedUseProxy, savedBaseUrl, savedModel, savedSelectedModels, savedModelTypes]) => {
       if (savedAppId) setAppId(savedAppId);
       if (savedRegion) setRegion(savedRegion);
-      // 凭据仅从 keyring 读取（不降级到明文数据库）
       if (savedSecretKeyring) setSecretKey("••••••••");
       setUseProxy(savedUseProxy ?? null);
+      if (savedBaseUrl) {
+        setBaseUrl(savedBaseUrl);
+        if (isOpenAi) {
+          fetchModels(savedBaseUrl);
+        }
+      }
+      if (savedModel) {
+        setModel(savedModel);
+      }
+      // 解析已选模型 + 每个模型的 modelType
+      if (savedSelectedModels) {
+        const ids = savedSelectedModels.split(",").filter(Boolean);
+        // modelTypes 存 JSON: {"model_id":"qwen3",...}
+        let typeMap: Record<string, string> = {};
+        if (savedModelTypes) {
+          try { typeMap = JSON.parse(savedModelTypes); } catch { /* 旧格式忽略 */ }
+        }
+        setSelectedModels(ids.map((id) => ({
+          id,
+          modelType: typeMap[id] || autoDetectModelTypeStr(id),
+        })));
+      }
       setLoading(false);
     });
-  }, [provider]);
+  }, [provider, fetchModels]);
 
   // 加载软件代理模式（判断是否配置了代理）
   useEffect(() => {
     api.getProxy().then((cfg) => setProxyMode(cfg.mode)).catch(() => {});
   }, []);
 
+  // 点击模型下拉外部时关闭下拉
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
+        setModelDropdownOpen(false);
+      }
+    }
+    if (modelDropdownOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [modelDropdownOpen]);
+
   const handleSave = useCallback(async () => {
     try {
       await api.setConfig("translate_provider", provider);
-      await api.setConfig(`translate_${provider}_app_id`, appId);
-      await api.setConfig(`translate_${provider}_region`, region);
+      if (provider === "openai") {
+        await api.setConfig("translate_openai_base_url", baseUrl);
+        await api.setConfig("translate_openai_model", model);
+        await api.setConfig("translate_openai_selected_models", selectedModels.map((x) => x.id).join(","));
+        // per-model modelType 存 JSON
+        const typeMap: Record<string, string> = {};
+        selectedModels.forEach((x) => { typeMap[x.id] = x.modelType; });
+        await api.setConfig("translate_openai_selected_model_types", JSON.stringify(typeMap));
+      } else {
+        await api.setConfig(`translate_${provider}_app_id`, appId);
+        await api.setConfig(`translate_${provider}_region`, region);
+      }
       if (secretKey && secretKey !== "••••••••") {
         // 凭据仅存 keyring（系统密钥环），不写入明文数据库
         try {
           await api.saveCredential(provider, "secret", secretKey);
-        } catch (e) {
-          console.error("keyring 保存失败:", e);
-          throw e;
+        } catch (e: any) {
+          toast.error(t("settings.saveFailed", "保存失败") + ": " + formatIpcError(e));
+          return;
         }
       }
-      setSaved(true);
-      setTimeout(() => setSaved(false), 3000);
+      toast.success(t("settings.saveSuccess", "已保存"));
     } catch (e: any) {
-      console.error("保存失败:", e);
+      toast.error(t("settings.saveFailed", "保存失败") + ": " + formatIpcError(e));
     }
-  }, [provider, appId, secretKey, region]);
+  }, [provider, appId, secretKey, region, baseUrl, model, selectedModels, t]);
 
   const handleTest = useCallback(async () => {
+    // OpenAi 前置校验
+    if (provider === "openai") {
+      const trimmedUrl = baseUrl.trim();
+      if (!trimmedUrl) {
+        toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
+        return;
+      }
+      // URL 合法性校验
+      try {
+        new URL(trimmedUrl);
+      } catch {
+        toast.error(t("settings.openaiInvalidUrl", "API 地址格式无效"));
+        return;
+      }
+      if (!model.trim()) {
+        toast.error(t("settings.openaiModelRequired", "请先选择模型"));
+        return;
+      }
+    }
+
     setTesting(true);
     setTestResult(null);
     try {
       const actualSecret = secretKey === "••••••••" ? undefined : secretKey;
-      await api.testTranslateConnection(provider, appId || undefined, actualSecret, region || undefined);
+      // OpenAi：从 selectedModels 中查找默认模型的 modelType
+      const defaultModelType = provider === "openai" && model
+        ? selectedModels.find((x) => x.id === model)?.modelType
+        : undefined;
+      const result = await api.testTranslateConnection(
+        provider,
+        appId || undefined,
+        actualSecret,
+        region || undefined,
+        provider === "openai" ? baseUrl.trim() : undefined,
+        provider === "openai" ? model.trim() : undefined,
+        provider === "openai" ? defaultModelType : undefined,
+      );
       setTestResult("ok");
+      // OpenAi 返回原文+译文，用 toast 显示
+      if (result.original && result.translated) {
+        toast.success(
+          t("settings.openaiTestSuccess", "连接成功") + "\n" +
+          `${result.original} → ${result.translated}`,
+          { duration: 8000 }
+        );
+      } else {
+        toast.success(t("settings.testSuccess", "连接成功"));
+      }
     } catch (e: any) {
       setTestResult("fail");
-      const msg = formatIpcError(e);
-      setTestError(msg);
+      toast.error(formatIpcError(e));
     } finally {
       setTesting(false);
     }
-  }, [provider, appId, secretKey, region]);
+  }, [provider, appId, secretKey, region, baseUrl, model, selectedModels, t]);
+
+  // 删除当前 provider 的所有配置
+  const handleDeleteConfig = useCallback(async () => {
+    setDeleting(true);
+    try {
+      if (provider === "openai") {
+        await api.setConfig("translate_openai_base_url", "");
+        await api.setConfig("translate_openai_model", "");
+        await api.setConfig("translate_openai_selected_models", "");
+        await api.setConfig("translate_openai_selected_model_types", "");
+      } else {
+        await api.setConfig(`translate_${provider}_app_id`, "");
+        await api.setConfig(`translate_${provider}_region`, "");
+      }
+      // 删除 keyring 凭据
+      try {
+        await api.deleteCredential(provider, "secret");
+      } catch {
+        // 凭据可能不存在，忽略
+      }
+      // 清空表单
+      setAppId("");
+      setSecretKey("");
+      setRegion("global");
+      setBaseUrl("");
+      setModel("");
+      setModelFilter("");
+      setModelList([]);
+      setSelectedModels([]);
+      setTestResult(null);
+      toast.success(t("settings.configDeleted", "配置已删除"));
+    } catch (e: any) {
+      toast.error(formatIpcError(e));
+    } finally {
+      setDeleting(false);
+      setDeleteConfirmOpen(false);
+    }
+  }, [provider, t]);
+
+  // 根据模型 id 自动识别 model_type（返回字符串，不依赖 state）
+  const autoDetectModelTypeStr = useCallback((m: string): string => {
+    const lower = m.toLowerCase();
+    if (lower.includes("qwen3")) return "qwen3";
+    if (lower.includes("deepseek")) return "deepseek";
+    return "generic";
+  }, []);
+
+  // 根据模型 id 自动识别 model_type（旧接口，设置 state）
+  const autoDetectModelType = useCallback((m: string) => {
+    // 不再设置全局 modelType，per-model 独立
+  }, []);
+
+  // 多选：勾选/取消勾选模型
+  const toggleModelSelection = useCallback((m: string) => {
+    setSelectedModels((prev) => {
+      const exists = prev.find((x) => x.id === m);
+      if (exists) return prev.filter((x) => x.id !== m);
+      return [...prev, { id: m, modelType: autoDetectModelTypeStr(m) }];
+    });
+  }, [autoDetectModelTypeStr]);
+
+  // 修改某个模型的 modelType
+  const setModelTypeForModel = useCallback((modelId: string, newType: string) => {
+    setSelectedModels((prev) =>
+      prev.map((x) => x.id === modelId ? { ...x, modelType: newType } : x)
+    );
+  }, []);
+
+  // OpenAi：手动刷新模型列表（带校验和 toast 报错）
+  const handleRefreshModels = useCallback(async () => {
+    const trimmedUrl = baseUrl.trim();
+    if (!trimmedUrl) {
+      toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
+      return;
+    }
+    try {
+      new URL(trimmedUrl);
+    } catch {
+      toast.error(t("settings.openaiInvalidUrl", "API 地址格式无效"));
+      return;
+    }
+
+    setLoadingModels(true);
+    setModelDropdownOpen(false);
+    try {
+      const actualSecret = secretKey === "••••••••" ? undefined : secretKey;
+
+      // 构造候选 URL
+      const candidateUrls: string[] = [];
+      const normalized = trimmedUrl.replace(/\/$/, "");
+      if (normalized.includes("/v1")) {
+        candidateUrls.push(normalized);
+        const withoutV1 = normalized.replace(/\/v1\/?$/, "");
+        if (withoutV1 && withoutV1 !== normalized) candidateUrls.push(withoutV1);
+      } else {
+        candidateUrls.push(normalized);
+        candidateUrls.push(`${normalized}/v1`);
+      }
+      const uniqueUrls = Array.from(new Set(candidateUrls));
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("timeout")), 3000)
+      );
+
+      let lastError = "";
+      let successUrl = "";
+      let allModels: string[] = [];
+      for (const url of uniqueUrls) {
+        try {
+          const models = await Promise.race([
+            api.listOpenaiModels(url, actualSecret),
+            timeoutPromise,
+          ]);
+          if (models.length > 0) {
+            successUrl = url;
+            allModels = models;
+            break;
+          }
+        } catch (e: any) {
+          lastError = e.message === "timeout"
+            ? t("settings.openaiFetchTimeout", "获取超时，请检查地址是否正确")
+            : formatIpcError(e);
+        }
+      }
+
+      if (!successUrl) {
+        toast.error(lastError || t("settings.openaiNoModels", "未能获取模型列表"));
+        return;
+      }
+
+      if (successUrl !== trimmedUrl) {
+        setBaseUrl(successUrl);
+      }
+      setModelList(allModels);
+      lastAutoFetchUrlRef.current = successUrl;
+
+      // 清理已选模型中不在新列表中的
+      setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
+      if (model && !allModels.includes(model)) {
+        setModel("");
+      }
+
+      toast.success(t("settings.openaiModelsLoaded", "已加载 {{count}} 个模型", { count: allModels.length }));
+    } catch (e: any) {
+      toast.error(formatIpcError(e));
+    } finally {
+      setLoadingModels(false);
+    }
+  }, [baseUrl, secretKey, model, t]);
+
+  // API 地址失焦时自动获取模型列表（地址有变化且合法才触发）
+  const handleBaseUrlBlur = useCallback(() => {
+    const trimmedUrl = baseUrl.trim();
+    if (!trimmedUrl) return;
+    // URL 合法性校验
+    try {
+      new URL(trimmedUrl);
+    } catch {
+      return; // 格式不合法时不报错，等用户继续输入
+    }
+    // 地址没变化则不重复请求
+    if (trimmedUrl === lastAutoFetchUrlRef.current) return;
+    lastAutoFetchUrlRef.current = trimmedUrl;
+    handleRefreshModels();
+  }, [baseUrl, handleRefreshModels]);
 
   const providerInfo = PROVIDER_LINKS[provider] ?? PROVIDER_LINKS.baidu;
 
@@ -450,11 +799,12 @@ function TranslateApiSettings() {
               <p className="text-xs text-muted-foreground">{t("settings.providerDesc", "选择翻译服务提供商")}</p>
             </div>
             <Select value={provider} onValueChange={setProvider}>
-              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="w-56 whitespace-nowrap"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
                 <SelectItem value="bing">{t("settings.bing")}</SelectItem>
                 <SelectItem value="google">{t("settings.google")}</SelectItem>
+                <SelectItem value="openai">{t("settings.openai", "AI 模型 (OpenAI 兼容)")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -517,6 +867,153 @@ function TranslateApiSettings() {
             </div>
           )}
 
+          {/* OpenAi 专属配置 */}
+          {providerInfo.isOpenAi && (
+            <>
+              <div>
+                <label className="text-sm font-medium">{t("settings.openaiBaseUrl", "API 地址")}</label>
+                <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiBaseUrlDesc", "OpenAI 兼容端点，如 http://localhost:1234/v1 或 https://api.deepseek.com/v1")}</p>
+                <Input
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  onBlur={handleBaseUrlBlur}
+                  placeholder={t("settings.openaiBaseUrlPlaceholder", "必填，例如 http://localhost:1234/v1")}
+                  disabled={loading}
+                />
+              </div>
+
+              <div ref={modelDropdownRef}>
+                <label className="text-sm font-medium">{t("settings.openaiModel", "模型")}</label>
+                <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiModelDesc", "勾选要使用的模型，每个模型可独立设置类型，翻译时可快速切换")}</p>
+                <div className="flex gap-2">
+                  {/* Tag input：已选模型作为标签显示在输入框内 */}
+                  <div className="relative flex-1">
+                    <div
+                      className="flex min-h-[36px] flex-wrap items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-sm focus-within:ring-1 focus-within:ring-ring"
+                      onClick={() => setModelDropdownOpen(true)}
+                    >
+                      {selectedModels.map((sm) => (
+                        <span
+                          key={sm.id}
+                          className="group/tag inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground hover:border-destructive/50 [&:hover_button]:text-destructive"
+                        >
+                          {sm.id}
+                          <span className="text-muted-foreground">|</span>
+                          <span className="text-muted-foreground">{sm.modelType}</span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleModelSelection(sm.id);
+                            }}
+                            className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive hover:text-white [&:hover]:!text-white"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      ))}
+                      <input
+                        value={modelFilter}
+                        onChange={(e) => setModelFilter(e.target.value)}
+                        onFocus={() => setModelDropdownOpen(true)}
+                        placeholder={selectedModels.length === 0 ? t("settings.openaiModelPlaceholder", "搜索模型名称") : ""}
+                        className="flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                        disabled={loading}
+                      />
+                    </div>
+                    {modelDropdownOpen && (
+                      <div className="absolute z-50 mt-1 max-h-80 w-full overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md">
+                        {(() => {
+                          const filtered = modelList.filter((m) =>
+                            m.toLowerCase().includes(modelFilter.toLowerCase())
+                          );
+                          if (filtered.length === 0) {
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setModelDropdownOpen(false);
+                                  handleRefreshModels();
+                                }}
+                                className="w-full px-3 py-2 text-left text-sm text-primary hover:underline"
+                              >
+                                {modelFilter
+                                  ? t("settings.openaiNoMatch", "无匹配模型，点击刷新")
+                                  : t("settings.openaiClickRefresh", "暂无模型，点击刷新")}
+                              </button>
+                            );
+                          }
+                          return filtered.map((m) => {
+                            const selected = selectedModels.find((x) => x.id === m);
+                            return (
+                              <div
+                                key={m}
+                                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground"
+                              >
+                                <label className="flex cursor-pointer items-center gap-2 flex-1 min-w-0">
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4 cursor-pointer accent-primary flex-shrink-0"
+                                    checked={!!selected}
+                                    onChange={() => toggleModelSelection(m)}
+                                  />
+                                  <span className="truncate">{m}</span>
+                                </label>
+                                {/* 已选中的模型显示 modelType 切换 */}
+                                {selected && (
+                                  <select
+                                    value={selected.modelType}
+                                    onChange={(e) => {
+                                      e.stopPropagation();
+                                      setModelTypeForModel(m, e.target.value);
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex-shrink-0 rounded border border-input bg-background px-1 py-0.5 text-xs outline-none cursor-pointer"
+                                  >
+                                    <option value="qwen3">Qwen3</option>
+                                    <option value="deepseek">DeepSeek</option>
+                                    <option value="generic">{t("settings.openaiModelTypeGeneric", "通用")}</option>
+                                  </select>
+                                )}
+                              </div>
+                            );
+                          });
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleRefreshModels}
+                    disabled={loadingModels}
+                  >
+                    {loadingModels ? t("settings.openaiLoading", "加载中...") : t("settings.openaiRefreshModels", "刷新模型")}
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">{t("settings.openaiApiKey", "API Key（可选）")}</label>
+                <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiApiKeyDesc", "局域网部署可留空；云 API 必填，加密存储在系统密钥环")}</p>
+                <div className="flex gap-2">
+                  <Input
+                    type="password"
+                    value={secretKey}
+                    onChange={(e) => setSecretKey(e.target.value)}
+                    placeholder={t("settings.openaiApiKeyPlaceholder", "留空表示无认证")}
+                    disabled={loading}
+                  />
+                  {secretKey === "••••••••" && (
+                    <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>
+                      {t("settings.edit", "修改")}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+
           {/* 使用软件代理 */}
           <div className="flex items-center justify-between border-t pt-3">
             <div>
@@ -552,7 +1049,7 @@ function TranslateApiSettings() {
             )}
           </div>
 
-          {/* 保存 + 测试 */}
+          {/* 保存 + 测试 + 删除 */}
           <div className="flex items-center gap-3 pt-2">
             <Button size="sm" onClick={handleSave} disabled={loading}>
               {t("common.save")}
@@ -561,22 +1058,44 @@ function TranslateApiSettings() {
               {testing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
               {t("settings.testConnection")}
             </Button>
-            {saved && (
-              <span className="flex items-center gap-1 text-sm text-green-600">
-                <Check className="h-4 w-4" /> {t("settings.saved", "已保存")}
-              </span>
+            {devMode && (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => setDeleteConfirmOpen(true)}
+                disabled={loading}
+              >
+                <Trash2 className="mr-1 h-4 w-4" />
+                {t("settings.deleteConfig", "删除配置")}
+              </Button>
             )}
             {testResult === "ok" && (
               <span className="flex items-center gap-1 text-sm text-green-600">
                 <Check className="h-4 w-4" /> {t("settings.testSuccess")}
               </span>
             )}
-            {testResult === "fail" && (
-              <span className="text-sm text-destructive">
-                {t("settings.testFailed", { detail: testError })}
-              </span>
-            )}
           </div>
+
+          {/* 删除配置确认弹窗 */}
+          <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle>{t("settings.deleteConfigConfirm", "确认删除配置？")}</DialogTitle>
+              </DialogHeader>
+              <p className="text-sm text-muted-foreground">
+                {t("settings.deleteConfigDesc", "将清除当前引擎的所有配置和凭据，此操作不可撤销。")}
+              </p>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button size="sm" variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
+                  {t("common.cancel", "取消")}
+                </Button>
+                <Button size="sm" variant="destructive" onClick={handleDeleteConfig} disabled={deleting}>
+                  {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                  {t("common.confirm", "确认删除")}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
         </CardContent>
       </Card>
     </div>
