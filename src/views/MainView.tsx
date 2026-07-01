@@ -517,11 +517,8 @@ export default function MainView() {
   }, []);
 
   // OpenAi：加载勾选的模型列表 + per-model modelType + 默认模型
+  // 不依赖 translateStore.provider，因为用户可能只配了 AI 模型而 provider 默认还是 baidu
   useEffect(() => {
-    if (translateStore.provider !== "openai") {
-      setOpenaiModels([]);
-      return;
-    }
     Promise.all([
       api.getConfig("translate_openai_selected_models").catch(() => null),
       api.getConfig("translate_openai_selected_model_types").catch(() => null),
@@ -537,16 +534,19 @@ export default function MainView() {
         modelType: typeMap[id] || "generic",
       }));
       setOpenaiModels(models);
-      if (!translateStore.model && savedDefault) {
-        translateStore.setModel(savedDefault);
-        const mt = typeMap[savedDefault] || "generic";
-        translateStore.setModelType(mt);
-      } else if (translateStore.model) {
-        const found = models.find((m) => m.id === translateStore.model);
-        if (found) translateStore.setModelType(found.modelType);
+      // 仅当当前 provider 是 openai 时才自动设置默认模型
+      if (translateStore.provider === "openai") {
+        if (!translateStore.model && savedDefault) {
+          translateStore.setModel(savedDefault);
+          const mt = typeMap[savedDefault] || "generic";
+          translateStore.setModelType(mt);
+        } else if (translateStore.model) {
+          const found = models.find((m) => m.id === translateStore.model);
+          if (found) translateStore.setModelType(found.modelType);
+        }
       }
     });
-  }, [translateStore.provider]);
+  }, []);
 
   // === SECTION 1 END ===
 

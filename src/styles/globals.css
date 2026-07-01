@@ -173,3 +173,7 @@ body {
 [data-sonner-toast]:hover {
   transform: none !important;
 }
+/* sonner 内部 wrapper 也禁用 transform 动画 */
+[data-sonner-toaster] [data-sonner-toast] [data-sonner-toast-inner] {
+  transition: none !important;
+}
