@@ -5,7 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check } from "lucide-react";
+import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check, Plus } from "lucide-react";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { Button } from "../components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -227,6 +227,8 @@ export default function MainView() {
   const extractCancelledRef = useRef(false);
   // 各翻译引擎是否已配置凭据
   const [providerConfigured, setProviderConfigured] = useState<Record<string, boolean>>({});
+  // OpenAi：已选模型列表（含 per-model modelType）
+  const [openaiModels, setOpenaiModels] = useState<{ id: string; modelType: string }[]>([]);
   // 当前选中的导入字幕路径（用于高亮）
   const [selectedImportedPath, setSelectedImportedPath] = useState<string | null>(null);
 
@@ -480,15 +482,21 @@ export default function MainView() {
 
   // 查询各翻译引擎是否已配置凭据
   useEffect(() => {
-    const providers = ["baidu", "bing", "google"];
+    const providers = ["baidu", "bing", "google", "openai"];
     Promise.all(providers.map(async (p) => {
       try {
+        if (p === "openai") {
+          const [baseUrl, model] = await Promise.all([
+            api.getConfig("translate_openai_base_url").catch(() => null),
+            api.getConfig("translate_openai_model").catch(() => null),
+          ]);
+          return [p, !!(baseUrl && model)] as [string, boolean];
+        }
         const [appId, secretKeyring, secretConfig] = await Promise.all([
           api.getConfig(`translate_${p}_app_id`).catch(() => null),
           api.getCredential(p, "secret").catch(() => null),
           api.getConfig(`translate_${p}_secret`).catch(() => null),
         ]);
-        // app_id 和 secret 都有值才算已配置
         const configured = !!(appId && (secretKeyring || secretConfig));
         return [p, configured] as [string, boolean];
       } catch {
@@ -498,6 +506,47 @@ export default function MainView() {
       setProviderConfigured(Object.fromEntries(results));
     });
   }, []);
+
+  // 加载保存的 provider + OpenAi 模型列表
+  useEffect(() => {
+    api.getConfig("translate_provider").then((saved) => {
+      if (saved && saved !== translateStore.provider) {
+        translateStore.setProvider(saved);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // OpenAi：加载勾选的模型列表 + per-model modelType + 默认模型
+  useEffect(() => {
+    if (translateStore.provider !== "openai") {
+      setOpenaiModels([]);
+      return;
+    }
+    Promise.all([
+      api.getConfig("translate_openai_selected_models").catch(() => null),
+      api.getConfig("translate_openai_selected_model_types").catch(() => null),
+      api.getConfig("translate_openai_model").catch(() => null),
+    ]).then(([savedSelected, savedModelTypes, savedDefault]) => {
+      const ids = savedSelected ? savedSelected.split(",").filter(Boolean) : [];
+      let typeMap: Record<string, string> = {};
+      if (savedModelTypes) {
+        try { typeMap = JSON.parse(savedModelTypes); } catch { /* ignore */ }
+      }
+      const models = ids.map((id) => ({
+        id,
+        modelType: typeMap[id] || "generic",
+      }));
+      setOpenaiModels(models);
+      if (!translateStore.model && savedDefault) {
+        translateStore.setModel(savedDefault);
+        const mt = typeMap[savedDefault] || "generic";
+        translateStore.setModelType(mt);
+      } else if (translateStore.model) {
+        const found = models.find((m) => m.id === translateStore.model);
+        if (found) translateStore.setModelType(found.modelType);
+      }
+    });
+  }, [translateStore.provider]);
 
   // === SECTION 1 END ===
 
@@ -1081,56 +1130,61 @@ export default function MainView() {
                 />
               </div>
 
-              {/* 翻译引擎 + API 下拉框 */}
+              {/* 翻译引擎 + AI 模型 下拉框 */}
               <div className="flex items-center gap-2">
                 <label className="text-xs text-muted-foreground flex-shrink-0">{t("translate.engine")}</label>
                 <Select
-                  value={translateStore.provider}
-                  onValueChange={translateStore.setProvider}
+                  value={translateStore.provider === "openai" && translateStore.model ? `openai:${translateStore.model}` : translateStore.provider}
+                  onValueChange={(val) => {
+                    if (val === "__add_more__") {
+                      navigate("/settings?tab=translate");
+                      return;
+                    }
+                    if (val.startsWith("openai:")) {
+                      const m = val.slice("openai:".length);
+                      translateStore.setProvider("openai");
+                      translateStore.setModel(m);
+                      const found = openaiModels.find((x) => x.id === m);
+                      translateStore.setModelType(found?.modelType || "generic");
+                    } else {
+                      translateStore.setProvider(val);
+                    }
+                  }}
                 >
                   <SelectTrigger className="h-8 text-xs flex-1">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="baidu">
-                      <span className="flex items-center justify-between w-full">
-                        <span>{t("settings.baidu")}</span>
-                        {!providerConfigured["baidu"] && (
-                          <span
-                            className="text-amber-600 ml-2 text-xs cursor-pointer hover:underline"
-                            onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); navigate("/settings?provider=baidu"); }}
-                          >
-                            {t("common.notConfigured")}
-                          </span>
-                        )}
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="bing">
-                      <span className="flex items-center justify-between w-full">
-                        <span>Bing</span>
-                        {!providerConfigured["bing"] && (
-                          <span
-                            className="text-amber-600 ml-2 text-xs cursor-pointer hover:underline"
-                            onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); navigate("/settings?provider=bing"); }}
-                          >
-                            {t("common.notConfigured")}
-                          </span>
-                        )}
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="google">
-                      <span className="flex items-center justify-between w-full">
-                        <span>Google</span>
-                        {!providerConfigured["google"] && (
-                          <span
-                            className="text-amber-600 ml-2 text-xs cursor-pointer hover:underline"
-                            onPointerDownCapture={(e) => { e.preventDefault(); e.stopPropagation(); navigate("/settings?provider=google"); }}
-                          >
-                            {t("common.notConfigured")}
-                          </span>
-                        )}
-                      </span>
-                    </SelectItem>
+                    {/* 已配置的传统引擎 */}
+                    {providerConfigured["baidu"] && (
+                      <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
+                    )}
+                    {providerConfigured["bing"] && (
+                      <SelectItem value="bing">Bing</SelectItem>
+                    )}
+                    {providerConfigured["google"] && (
+                      <SelectItem value="google">Google</SelectItem>
+                    )}
+                    {/* 已配置的 AI 模型：每个模型一个选项；没选模型时显示通用项 */}
+                    {providerConfigured["openai"] && openaiModels.length === 0 && (
+                      <SelectItem value="openai">{t("settings.openai", "AI 模型")}</SelectItem>
+                    )}
+                    {providerConfigured["openai"] && openaiModels.map((m) => (
+                      <SelectItem key={m.id} value={`openai:${m.id}`}>
+                        <span className="block truncate" title={`AI模型 - ${m.id}`}>
+                          AI模型 - {m.id}
+                        </span>
+                      </SelectItem>
+                    ))}
+                    {/* 添加更多引擎（全部已配置过则隐藏） */}
+                    {(!providerConfigured["baidu"] || !providerConfigured["bing"] || !providerConfigured["google"] || !providerConfigured["openai"]) && (
+                      <SelectItem value="__add_more__">
+                        <span className="flex items-center gap-1 text-primary">
+                          <Plus className="h-3 w-3" />
+                          {t("translate.addMoreEngines", "添加更多引擎")}
+                        </span>
+                      </SelectItem>
+                    )}
                   </SelectContent>
                 </Select>
               </div>

@@ -309,6 +309,7 @@ pub fn detect_bilingual(file: &SubtitleFile) -> BilingualDetectResult {
 }
 
 /// 从多个语言类别中取主导语言
+#[allow(dead_code)]
 fn dominant_lang(langs: &[LangClass]) -> LangClass {
     let mut counts: std::collections::HashMap<LangClass, usize> = std::collections::HashMap::new();
     for l in langs {

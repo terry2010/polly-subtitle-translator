@@ -8,6 +8,7 @@ import type {
   SubtitleFile,
   TranslateResult,
   TranslateEntry,
+  TestConnectionResult,
   LanguageInfo,
   RecentFile,
   HistoryRecord,
@@ -122,8 +123,8 @@ export const api = {
     callIpc<SubtitleFile>("split_bilingual_subtitle", { file, splitMode }),
 
   // === 翻译命令 ===
-  translateSubtitle: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string) =>
-    callIpc<TranslateResult>("translate_subtitle", { entries, sourceLang, targetLang, provider }),
+  translateSubtitle: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string) =>
+    callIpc<TranslateResult>("translate_subtitle", { entries, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null }),
 
   getCachedTranslations: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string) =>
     callIpc<TranslateEntry[]>("get_cached_translations", { entries, sourceLang, targetLang, provider }),
@@ -145,8 +146,27 @@ export const api = {
     });
   },
 
-  testTranslateConnection: (provider: string, appId?: string, secretKey?: string, region?: string) =>
-    callIpc<void>("test_translate_connection", { provider, appId: appId ?? null, secretKey: secretKey ?? null, region: region ?? null }),
+  testTranslateConnection: (
+    provider: string,
+    appId?: string,
+    secretKey?: string,
+    region?: string,
+    baseUrl?: string,
+    model?: string,
+    modelType?: string,
+  ) =>
+    callIpc<TestConnectionResult>("test_translate_connection", {
+      provider,
+      appId: appId ?? null,
+      secretKey: secretKey ?? null,
+      region: region ?? null,
+      baseUrl: baseUrl ?? null,
+      model: model ?? null,
+      modelType: modelType ?? null,
+    }),
+
+  listOpenaiModels: (baseUrl: string, apiKey?: string) =>
+    callIpc<string[]>("list_openai_models", { baseUrl, apiKey: apiKey ?? null }),
 
   getSupportedTargetLangs: (provider: string) =>
     callIpc<LanguageInfo[]>("get_supported_target_langs", { provider }),
