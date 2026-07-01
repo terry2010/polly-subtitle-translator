@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -46,6 +47,34 @@ export default defineConfig({
         "**/src-tauri/**",
         "**/*.srt", "**/*.ass", "**/*.ssa", "**/*.vtt",
         "**/*.mkv", "**/*.mp4", "**/*.avi", "**/*.mov",
+      ],
+    },
+  },
+  test: {
+    globals: true,
+    environment: "jsdom",
+    setupFiles: ["./src/__tests__/setup.ts"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/src-tauri/**",
+    ],
+    // 分平台过滤：通过 VITEST_PLATFORM 环境变量只运行特定平台测试
+    // 例如：VITEST_PLATFORM=macos npm test
+    name: process.env.VITEST_PLATFORM ? `frontend-${process.env.VITEST_PLATFORM}` : "frontend",
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "html", "lcov"],
+      reportsDirectory: "./coverage",
+      exclude: [
+        "node_modules/",
+        "src-tauri/",
+        "dist/",
+        "src/__tests__/**",
+        "src/vite-env.d.ts",
+        "**/*.config.*",
+        "**/*.d.ts",
       ],
     },
   },
