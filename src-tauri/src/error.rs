@@ -697,3 +697,329 @@ impl<T: Serialize> From<Result<T, AppError>> for IpcResult<T> {
 pub fn ipc_result<T: Serialize>(result: Result<T, AppError>) -> IpcResult<T> {
     result.into()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === SECTION 3 END ===
+
+    // 辅助：断言 IpcError 的 code 和 severity
+    fn assert_ipc(err: AppError, expected_code: &str, expected_severity: Severity) {
+        let ipc = err.to_ipc_error();
+        assert_eq!(ipc.code, expected_code, "code mismatch for {:?}", err);
+        assert_eq!(ipc.severity, expected_severity, "severity mismatch for {:?}", err);
+    }
+
+    // 辅助：断言 IpcError 的 code + severity + args 中某个 key 的值
+    fn assert_ipc_with_arg(
+        err: AppError,
+        expected_code: &str,
+        expected_severity: Severity,
+        arg_key: &str,
+        expected_arg: &serde_json::Value,
+    ) {
+        let ipc = err.to_ipc_error();
+        assert_eq!(ipc.code, expected_code);
+        assert_eq!(ipc.severity, expected_severity);
+        let args = ipc.args.expect("args should be present");
+        let actual = args.get(arg_key).expect(&format!("arg '{}' missing", arg_key));
+        assert_eq!(actual, expected_arg);
+    }
+
+    // === SECTION 4 END ===
+
+    // === FFmpeg ===
+    #[test]
+    fn test_err_ffmpeg_not_found() {
+        assert_ipc(AppError::FfmpegNotFound { path: "/usr/bin/ffmpeg".into() }, "ffmpeg.notFound", Severity::Reinstall);
+    }
+
+    #[test]
+    fn test_err_ffmpeg_execution_failed() {
+        assert_ipc_with_arg(AppError::FfmpegExecutionFailed { detail: "exit code 1".into() }, "ffmpeg.executionFailed", Severity::Recoverable, "detail", &serde_json::json!("exit code 1"));
+    }
+
+    #[test]
+    fn test_err_ffmpeg_graphic_subtitle() {
+        assert_ipc_with_arg(AppError::FfmpegGraphicSubtitle { codec: "hdmv_pgs".into() }, "ffmpeg.graphicSubtitle", Severity::Recoverable, "codec", &serde_json::json!("hdmv_pgs"));
+    }
+
+    #[test]
+    fn test_err_ffmpeg_extract_cancelled() {
+        assert_ipc(AppError::FfmpegExtractCancelled, "ffmpeg.extractCancelled", Severity::Recoverable);
+    }
+
+    #[test]
+    fn test_err_ffmpeg_extract_timeout() {
+        assert_ipc_with_arg(AppError::FfmpegExtractTimeout { timeout: 30 }, "ffmpeg.extractTimeout", Severity::Recoverable, "timeout", &serde_json::json!(30));
+    }
+
+    #[test]
+    fn test_err_ffmpeg_no_streams_kept() {
+        assert_ipc(AppError::FfmpegNoStreamsKept, "ffmpeg.noStreamsKept", Severity::Recoverable);
+    }
+
+    // === SECTION 5 END ===
+
+    // === Translate ===
+    #[test]
+    fn test_err_translate_rate_limit() {
+        assert_ipc_with_arg(AppError::TranslateRateLimit { provider: "baidu".into(), retry_after: Some(5) }, "translate.rateLimit", Severity::Recoverable, "provider", &serde_json::json!("baidu"));
+    }
+
+    #[test]
+    fn test_err_translate_auth_failed() {
+        assert_ipc_with_arg(AppError::TranslateAuthFailed { provider: "google".into() }, "translate.authFailed", Severity::Recoverable, "provider", &serde_json::json!("google"));
+    }
+
+    #[test]
+    fn test_err_translate_not_configured() {
+        assert_ipc(AppError::TranslateNotConfigured, "translate.notConfigured", Severity::Recoverable);
+    }
+
+    #[test]
+    fn test_err_translate_credentials_not_configured() {
+        assert_ipc(AppError::TranslateCredentialsNotConfigured, "translate.credentialsNotConfigured", Severity::Recoverable);
+    }
+
+    #[test]
+    fn test_err_translate_align_failed() {
+        assert_ipc_with_arg(AppError::TranslateAlignFailed { missing: 3 }, "translate.alignFailed", Severity::Recoverable, "missing", &serde_json::json!(3));
+    }
+
+    #[test]
+    fn test_err_translate_unknown_provider() {
+        assert_ipc_with_arg(AppError::TranslateUnknownProvider { provider: "deepl".into() }, "translate.unknownProvider", Severity::Recoverable, "provider", &serde_json::json!("deepl"));
+    }
+
+    #[test]
+    fn test_err_translate_retries_exhausted() {
+        assert_ipc(AppError::TranslateRetriesExhausted, "translate.retriesExhausted", Severity::Recoverable);
+    }
+
+    // === SECTION 6 END ===
+
+    // === Search ===
+    #[test]
+    fn test_err_search_quota_exhausted() {
+        assert_ipc_with_arg(AppError::SearchQuotaExhausted { provider: "opensubtitles".into() }, "search.quotaExhausted", Severity::Recoverable, "provider", &serde_json::json!("opensubtitles"));
+    }
+
+    #[test]
+    fn test_err_search_not_configured() {
+        assert_ipc(AppError::SearchNotConfigured, "search.notConfigured", Severity::Recoverable);
+    }
+
+    #[test]
+    fn test_err_search_captcha_required() {
+        let err = AppError::SearchCaptchaRequired {
+            provider: "zimuku".into(),
+            captcha_image: "base64data".into(),
+            session_cookie: "cookie123".into(),
+            original_url: "https://zimuku.org/search".into(),
+            verify_path: "/verify".into(),
+        };
+        let ipc = err.to_ipc_error();
+        assert_eq!(ipc.code, "search.captchaRequired");
+        assert_eq!(ipc.severity, Severity::Recoverable);
+        let args = ipc.args.unwrap();
+        assert_eq!(args["provider"], "zimuku");
+        assert_eq!(args["captchaImage"], "base64data");
+        assert_eq!(args["sessionCookie"], "cookie123");
+    }
+
+    // === SECTION 7 END ===
+
+    // === Subtitle ===
+    #[test]
+    fn test_err_subtitle_parse_failed() {
+        assert_ipc_with_arg(AppError::SubtitleParseFailed { path: "/test.srt".into() }, "subtitle.parseFailed", Severity::Recoverable, "path", &serde_json::json!("/test.srt"));
+    }
+
+    #[test]
+    fn test_err_subtitle_format_unsupported() {
+        assert_ipc_with_arg(AppError::SubtitleFormatUnsupported { codec: "microdvd".into() }, "subtitle.formatUnsupported", Severity::Recoverable, "codec", &serde_json::json!("microdvd"));
+    }
+
+    // === SECTION 8 END ===
+
+    // === Storage ===
+    #[test]
+    fn test_err_storage_sqlite_corrupted() {
+        assert_ipc_with_arg(AppError::StorageSqliteCorrupted { path: "/data.db".into() }, "storage.sqliteCorrupted", Severity::Restart, "path", &serde_json::json!("/data.db"));
+    }
+
+    #[test]
+    fn test_err_storage_keyring_unavailable() {
+        assert_ipc(AppError::StorageKeyringUnavailable, "storage.keyringUnavailable", Severity::Recoverable);
+    }
+
+    #[test]
+    fn test_err_storage_credential_not_found() {
+        assert_ipc_with_arg(AppError::StorageCredentialNotFound { provider: "baidu".into() }, "storage.credentialNotFound", Severity::Recoverable, "provider", &serde_json::json!("baidu"));
+    }
+
+    // === SECTION 9 END ===
+
+    // === System ===
+    #[test]
+    fn test_err_system_webview2_missing() {
+        assert_ipc(AppError::SystemWebview2Missing, "system.webview2Missing", Severity::Reinstall);
+    }
+
+    #[test]
+    fn test_err_system_single_instance_forward() {
+        assert_ipc(AppError::SystemSingleInstanceForwardFailed, "system.singleInstanceForwardFailed", Severity::Recoverable);
+    }
+
+    // === SECTION 10 END ===
+
+    // === Common ===
+    #[test]
+    fn test_err_file_not_found() {
+        assert_ipc_with_arg(AppError::FileNotFound { path: "/missing.mkv".into() }, "common.fileNotFound", Severity::Recoverable, "path", &serde_json::json!("/missing.mkv"));
+    }
+
+    #[test]
+    fn test_err_file_too_large() {
+        let err = AppError::FileTooLarge { size: 500_000_000, limit: 100_000_000 };
+        let ipc = err.to_ipc_error();
+        assert_eq!(ipc.code, "common.fileTooLarge");
+        let args = ipc.args.unwrap();
+        assert_eq!(args["size"], 500_000_000);
+        assert_eq!(args["limit"], 100_000_000);
+    }
+
+    #[test]
+    fn test_err_task_cancelled() {
+        assert_ipc(AppError::TaskCancelled, "common.taskCancelled", Severity::Recoverable);
+    }
+
+    #[test]
+    fn test_err_permission_denied() {
+        assert_ipc_with_arg(AppError::PermissionDenied { path: "/secret".into() }, "common.permissionDenied", Severity::Recoverable, "path", &serde_json::json!("/secret"));
+    }
+
+    #[test]
+    fn test_err_unknown() {
+        assert_ipc_with_arg(AppError::Unknown { detail: "something".into() }, "common.unknown", Severity::Recoverable, "detail", &serde_json::json!("something"));
+    }
+
+    // === SECTION 11 END ===
+
+    // === Player ===
+    #[test]
+    fn test_err_player_libmpv_not_downloaded() {
+        assert_ipc(AppError::PlayerLibmpvNotDownloaded, "player.libmpvNotDownloaded", Severity::Recoverable);
+    }
+
+    #[test]
+    fn test_err_player_libmpv_checksum_mismatch() {
+        assert_ipc(AppError::PlayerLibmpvChecksumMismatch, "player.libmpvChecksumMismatch", Severity::Reinstall);
+    }
+
+    #[test]
+    fn test_err_player_load_video_failed() {
+        let err = AppError::PlayerLoadVideoFailed { path: "/video.mkv".into(), code: "-1".into() };
+        let ipc = err.to_ipc_error();
+        assert_eq!(ipc.code, "player.loadVideoFailed");
+        let args = ipc.args.unwrap();
+        assert_eq!(args["path"], "/video.mkv");
+        assert_eq!(args["code"], "-1");
+    }
+
+    // === SECTION 12 END ===
+
+    // === IpcError 构造 ===
+    #[test]
+    fn test_ipc_error_new() {
+        let err = IpcError::new("test.code", Severity::Recoverable);
+        assert_eq!(err.code, "test.code");
+        assert_eq!(err.severity, Severity::Recoverable);
+        assert!(err.args.is_none());
+    }
+
+    #[test]
+    fn test_ipc_error_with_args() {
+        let err = IpcError::new("test.code", Severity::Recoverable)
+            .with_args(serde_json::json!({ "key": "value" }));
+        assert!(err.args.is_some());
+        assert_eq!(err.args.unwrap()["key"], "value");
+    }
+
+    // === SECTION 13 END ===
+
+    // === IpcResult 转换 ===
+    #[test]
+    fn test_ipc_result_ok() {
+        let result: Result<i32, AppError> = Ok(42);
+        let ipc = IpcResult::from(result);
+        assert!(ipc.ok);
+        assert_eq!(ipc.value, Some(42));
+        assert!(ipc.error.is_none());
+    }
+
+    #[test]
+    fn test_ipc_result_err() {
+        let result: Result<i32, AppError> = Err(AppError::TaskCancelled);
+        let ipc = IpcResult::from(result);
+        assert!(!ipc.ok);
+        assert!(ipc.value.is_none());
+        assert!(ipc.error.is_some());
+        assert_eq!(ipc.error.unwrap().code, "common.taskCancelled");
+    }
+
+    #[test]
+    fn test_ipc_result_wrapper() {
+        let ok_result: Result<i32, AppError> = Ok(10);
+        let ipc = ipc_result(ok_result);
+        assert!(ipc.ok);
+        assert_eq!(ipc.value, Some(10));
+    }
+
+    // === SECTION 14 END ===
+
+    // === Severity 序列化 ===
+    #[test]
+    fn test_severity_serialize() {
+        assert_eq!(serde_json::to_string(&Severity::Recoverable).unwrap(), "\"recoverable\"");
+        assert_eq!(serde_json::to_string(&Severity::Restart).unwrap(), "\"restart\"");
+        assert_eq!(serde_json::to_string(&Severity::Reinstall).unwrap(), "\"reinstall\"");
+    }
+
+    #[test]
+    fn test_severity_deserialize() {
+        let s: Severity = serde_json::from_str("\"restart\"").unwrap();
+        assert_eq!(s, Severity::Restart);
+    }
+
+    #[test]
+    fn test_severity_eq() {
+        assert_eq!(Severity::Recoverable, Severity::Recoverable);
+        assert_ne!(Severity::Recoverable, Severity::Restart);
+    }
+
+    // === SECTION 15 END ===
+
+    // === Io / SerdeJson / Rusqlite 透明转发 ===
+    #[test]
+    fn test_err_io_error() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let err = AppError::Io(io_err);
+        let ipc = err.to_ipc_error();
+        assert_eq!(ipc.code, "common.ioError");
+        assert_eq!(ipc.severity, Severity::Recoverable);
+    }
+
+    #[test]
+    fn test_err_serde_json_error() {
+        let json_err = serde_json::from_str::<serde_json::Value>("{bad}").unwrap_err();
+        let err = AppError::SerdeJson(json_err);
+        let ipc = err.to_ipc_error();
+        assert_eq!(ipc.code, "common.jsonError");
+        assert_eq!(ipc.severity, Severity::Recoverable);
+    }
+
+    // === SECTION 16 END ===
+}

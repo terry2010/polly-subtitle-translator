@@ -1585,4 +1585,135 @@ mod tests {
         // 实际翻译 API 会保留占位符字符
         let _ = translated;
     }
+
+    // === SECTION 7 END ===
+
+    // === 百度语言码映射 ===
+    #[test]
+    fn test_baidu_lang_ja() {
+        assert_eq!(BaiduProvider::to_baidu_lang("ja"), "jp");
+    }
+
+    #[test]
+    fn test_baidu_lang_ko() {
+        assert_eq!(BaiduProvider::to_baidu_lang("ko"), "kor");
+    }
+
+    #[test]
+    fn test_baidu_lang_fr() {
+        assert_eq!(BaiduProvider::to_baidu_lang("fr"), "fra");
+    }
+
+    #[test]
+    fn test_baidu_lang_es() {
+        assert_eq!(BaiduProvider::to_baidu_lang("es"), "spa");
+    }
+
+    #[test]
+    fn test_baidu_lang_vi() {
+        assert_eq!(BaiduProvider::to_baidu_lang("vi"), "vie");
+    }
+
+    #[test]
+    fn test_baidu_lang_ar() {
+        assert_eq!(BaiduProvider::to_baidu_lang("ar"), "ara");
+    }
+
+    #[test]
+    fn test_baidu_lang_sv() {
+        assert_eq!(BaiduProvider::to_baidu_lang("sv"), "swe");
+    }
+
+    #[test]
+    fn test_baidu_lang_fi() {
+        assert_eq!(BaiduProvider::to_baidu_lang("fi"), "fin");
+    }
+
+    #[test]
+    fn test_baidu_lang_da() {
+        assert_eq!(BaiduProvider::to_baidu_lang("da"), "dan");
+    }
+
+    #[test]
+    fn test_baidu_lang_auto() {
+        assert_eq!(BaiduProvider::to_baidu_lang("auto"), "auto");
+    }
+
+    #[test]
+    fn test_baidu_lang_passthrough() {
+        // 未列出的语言原样传递
+        assert_eq!(BaiduProvider::to_baidu_lang("en"), "en");
+        assert_eq!(BaiduProvider::to_baidu_lang("zh"), "zh");
+        assert_eq!(BaiduProvider::to_baidu_lang("de"), "de");
+    }
+
+    // === SECTION 8 END ===
+
+    // === split_text 边界 ===
+    #[test]
+    fn test_split_text_empty() {
+        let result = split_text("", 100);
+        assert!(result.is_empty() || (result.len() == 1 && result[0].is_empty()));
+    }
+
+    #[test]
+    fn test_split_text_single_short() {
+        let result = split_text("hello", 100);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], "hello");
+    }
+
+    #[test]
+    fn test_split_text_exact_limit() {
+        let text = "abcdefghij"; // 10 chars
+        let result = split_text(text, 10);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_split_text_exceeds_limit() {
+        let text = "aaaaaaaaaaaaaaaaaaaa"; // 20 chars
+        let result = split_text(text, 10);
+        assert!(result.len() >= 2);
+    }
+
+    // === SECTION 9 END ===
+
+    // === PlaceholderProtector 边界 ===
+    #[test]
+    fn test_protector_empty_string() {
+        let mut p = PlaceholderProtector::new();
+        let protected = p.protect("");
+        assert!(protected.is_empty());
+    }
+
+    #[test]
+    fn test_protector_plain_text_no_tags() {
+        let mut p = PlaceholderProtector::new();
+        let input = "Hello World";
+        let protected = p.protect(input);
+        // 无标签，不应插入占位符
+        assert_eq!(protected, input);
+    }
+
+    #[test]
+    fn test_protector_multiple_newlines() {
+        let mut p = PlaceholderProtector::new();
+        let input = "Line1\\NLine2\\NLine3";
+        let protected = p.protect(input);
+        // 应保护 \\N 标记
+        let restored = p.restore(&protected);
+        assert_eq!(restored, input);
+    }
+
+    #[test]
+    fn test_protector_nested_braces() {
+        let mut p = PlaceholderProtector::new();
+        let input = r"{\an8}{\b1}Text{\b0}";
+        let protected = p.protect(input);
+        let restored = p.restore(&protected);
+        assert_eq!(restored, input);
+    }
+
+    // === SECTION 10 END ===
 }

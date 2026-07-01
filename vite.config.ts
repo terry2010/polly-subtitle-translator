@@ -5,8 +5,7 @@ import path from "path";
 
 const host = process.env.TAURI_DEV_HOST;
 
-export default defineConfig(async () => ({
-  plugins: [react(), tailwindcss()],
+export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -50,4 +49,4 @@ export default defineConfig(async () => ({
       ],
     },
   },
-}));
+});
