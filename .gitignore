@@ -10,6 +10,10 @@ node_modules
 /dist/
 /release/
 
+# 测试产物
+/coverage/
+*.tsbuildinfo
+
 # 测试用媒体文件
 *.mkv
 *.srt
