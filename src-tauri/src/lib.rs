@@ -209,6 +209,26 @@ pub fn run() {
                         }
                     }
                 }
+                #[cfg(not(windows))]
+                {
+                    // macOS/Linux：用 Tauri 跨平台 API 居中到主显示器
+                    // available_monitors 返回所有显示器，第一个通常是主显示器
+                    if let Ok(monitors) = window.available_monitors() {
+                        if let Some(monitor) = monitors.first() {
+                            let pos = monitor.position();
+                            let size = monitor.size();
+                            let scale = window.scale_factor().unwrap_or(1.0);
+                            let win_w = 520.0 * scale;
+                            let win_h = 325.0 * scale;
+                            let x = pos.x as f64 + ((size.width as f64 - win_w) / 2.0).round();
+                            let y = pos.y as f64 + ((size.height as f64 - win_h) / 2.0).round();
+                            let _ = window.set_position(tauri::PhysicalPosition {
+                                x: x.max(0.0) as i32,
+                                y: y.max(0.0) as i32,
+                            });
+                        }
+                    }
+                }
                 let _ = window.show();
                 let _ = window.set_focus();
             }

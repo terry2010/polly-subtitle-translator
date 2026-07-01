@@ -43,7 +43,6 @@ function ExportPreview({ file, options, assStyle }: {
   options: ExportOptions;
   assStyle: AssBilingualStyle;
 }) {
-  const videoWidth = useVideoStore((s) => s.probeResult?.video_stream?.width ?? null);
   // 取非删除条目，优先有译文的；按译文+原文总长度降序，挑长度够长的做预览样本
   // （短字幕看不出双语/样式效果，挑长的更有代表性）
   const activeEntries = file.entries.filter((e) => !e._deleted);
@@ -60,13 +59,16 @@ function ExportPreview({ file, options, assStyle }: {
 
   // ASS 样式 → CSS 样式映射
   // - ASS + 双语：用 assStyle 的 primary/secondary 参数
-  // - ASS + 单语：套 §4.4 硬编码 Default 样式（字号 24/白色/描边 2/阴影 1）
+  // - ASS + 单语：套 §4.4 硬编码 Default 样式（字号 48/白色/描边 2/阴影 1）
   // - SRT/VTT：无样式（color 由外层 text-white 提供，避免黑字黑底）
   //
-  // 预览缩放：ASS 导出 PlayResX 跟随视频分辨率，字号是该分辨率下的绝对像素。
-  // 预览区宽度约 450px，按 PlayResX 缩放使预览比例接近实际视频中的视觉效果。
-  const playResX = videoWidth ?? 1280;
-  const PREVIEW_SCALE = 0.6 * (1280 / playResX);
+  // 预览缩放：不再按视频分辨率绝对缩放，而是把预览第一行字号缩放到 24-32px 区间，
+  // 这样无论视频是 720p 还是 4K，预览都保持可读，同时保留原/译文字号比例。
+  const baseFontSize =
+    options.format === "ass" && options.mode === "bilingual"
+      ? assStyle.primary_font_size
+      : 48;
+  const PREVIEW_SCALE = Math.min(0.8, Math.max(0.5, 28 / baseFontSize));
   const lineStyle = (isPrimary: boolean): React.CSSProperties => {
     if (options.format !== "ass") return {};
     if (options.mode !== "bilingual") {
@@ -81,6 +83,8 @@ function ExportPreview({ file, options, assStyle }: {
         paintOrder: "stroke",
         textShadow: `1px 1px 0 rgba(0,0,0,0.7)`,
         fontWeight: "bold",
+        fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
+        lineHeight: 1.5,
         whiteSpace: "pre-line",
       };
     }
@@ -107,6 +111,8 @@ function ExportPreview({ file, options, assStyle }: {
       textDecoration: (isPrimary ? s.primary_underline : s.secondary_underline) ? "underline" : "none",
       WebkitTextStroke: `${scaledOutline}px ${outlineCss}`,
       textShadow: scaledShadow > 0 ? `${scaledShadow}px ${scaledShadow}px 0 ${shadowCss}` : "none",
+      fontFamily: 'Arial, "Helvetica Neue", Helvetica, sans-serif',
+      lineHeight: 1.5,
       whiteSpace: "pre-line",
     };
   };
@@ -122,7 +128,7 @@ function ExportPreview({ file, options, assStyle }: {
 
   if (samples.length === 0) {
     return (
-      <div className="rounded-md p-4 min-h-[160px] flex items-center justify-center text-white/50 text-sm w-full"
+      <div className="rounded-md p-4 min-h-[200px] flex items-center justify-center text-white/50 text-sm w-full"
         style={{ background: "linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)" }}
       >
         —
@@ -132,7 +138,7 @@ function ExportPreview({ file, options, assStyle }: {
 
   return (
     <div
-      className="rounded-md p-4 min-h-[160px] flex flex-col justify-center gap-1 w-full text-white"
+      className="rounded-md p-4 min-h-[200px] flex flex-col justify-center gap-1 w-full text-white"
       style={{ background: "linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)" }}
     >
       {samples.map((entry, i) => (

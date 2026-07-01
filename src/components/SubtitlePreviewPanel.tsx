@@ -64,6 +64,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   const rowVirtualizer = useVirtualizer({
     count: file?.entries.length ?? 0,
     getScrollElement: () => parentRef.current,
+    // 用 entry.index 作为测量缓存 key，避免插入/删除条目后虚拟索引移位导致
+    // 旧测量值（如新增字幕的 280px）残留在移位后的索引上，产生大块空白
+    getItemKey: (index) => file?.entries[index]?.index ?? index,
     estimateSize: (index) => {
       if (file && file.entries[index]?.index === editingIndex) return 200;
       if (file && file.entries[index]?.index === offsetRowIndex) return 120;

@@ -216,7 +216,32 @@ const FFMPEG_DOWNLOAD_URLS: &[&str] = &[
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip",
     "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z",
 ];
-#[cfg(not(windows))]
+/// macOS arm64 (Apple Silicon) 下载源
+/// eugeneware/ffmpeg-static 提供单独的 gzip 压缩二进制文件（非归档）
+/// release tag b6.1.1，提供 ffmpeg + ffprobe 两个独立 .gz 文件
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const FFMPEG_DOWNLOAD_URLS: &[&str] = &[
+    "https://gh-proxy.com/https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64.gz",
+    "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64.gz",
+];
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const FFPROBE_DOWNLOAD_URLS: &[&str] = &[
+    "https://gh-proxy.com/https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-arm64.gz",
+    "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-arm64.gz",
+];
+/// macOS x86_64 (Intel) 下载源
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const FFMPEG_DOWNLOAD_URLS: &[&str] = &[
+    "https://gh-proxy.com/https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-x64.gz",
+    "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-x64.gz",
+];
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const FFPROBE_DOWNLOAD_URLS: &[&str] = &[
+    "https://gh-proxy.com/https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-x64.gz",
+    "https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-x64.gz",
+];
+/// Linux 下载源（保留兼容）
+#[cfg(all(not(windows), not(target_os = "macos")))]
 const FFMPEG_DOWNLOAD_URLS: &[&str] = &[
     "https://gh-proxy.com/https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz",
@@ -249,6 +274,162 @@ pub fn download_ffmpeg(
     result
 }
 
+/// macOS 专用下载：eugeneware/ffmpeg-static 提供单独的 gzip 压缩二进制文件
+/// 需要分别下载 ffmpeg.gz 和 ffprobe.gz，gunzip 后放到 ffmpeg 目录
+#[cfg(target_os = "macos")]
+fn download_ffmpeg_macos(
+    dir: &Path,
+    proxy: Option<&str>,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), AppError> {
+    use tauri::Emitter;
+    use std::io::{Read, Write};
+
+    let mut client_builder = reqwest::blocking::Client::builder()
+        .user_agent("zimufan/1.0")
+        .timeout(std::time::Duration::from_secs(600));
+    if let Some(p) = proxy {
+        if !p.is_empty() {
+            client_builder = client_builder.proxy(
+                reqwest::Proxy::all(p).map_err(|e| AppError::FfmpegDownloadProxyFailed {
+                    detail: e.to_string(),
+                })?,
+            );
+        }
+    }
+    let client = client_builder.build().map_err(|e| AppError::FfmpegDownloadHttpClientFailed {
+        detail: e.to_string(),
+    })?;
+
+    let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
+        "stage": "downloading", "progress": 0, "message": "开始下载 FFmpeg..."
+    }));
+
+    // 下载单个 .gz 文件，返回下载的文件路径
+    let download_gz = |urls: &[&str], out_name: &str, label: &str| -> Result<std::path::PathBuf, AppError> {
+        let mut last_err = None;
+        for url in urls {
+            tracing::info!("尝试下载 {}: {}", label, url);
+            let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
+                "stage": "downloading", "progress": 0, "message": format!("下载{}...", label),
+            }));
+            match client.get(*url).send() {
+                Ok(resp) if resp.status().is_success() => {
+                    let total_size = resp.content_length().unwrap_or(0);
+                    let gz_path = dir.join(format!("{}.gz", out_name));
+                    let mut file = fs::File::create(&gz_path).map_err(|e| AppError::FfmpegDownloadCreateFileFailed {
+                        detail: e.to_string(),
+                    })?;
+                    let mut stream = resp;
+                    let mut buf = [0u8; 65536];
+                    let mut downloaded: u64 = 0;
+                    let mut last_emit = std::time::Instant::now();
+                    let download_start = std::time::Instant::now();
+                    loop {
+                        let n = stream.read(&mut buf).map_err(|e| AppError::FfmpegDownloadStreamReadFailed {
+                            detail: e.to_string(),
+                        })?;
+                        if n == 0 { break; }
+                        file.write_all(&buf[..n]).map_err(|e| AppError::FfmpegDownloadWriteFailed {
+                            detail: e.to_string(),
+                        })?;
+                        downloaded += n as u64;
+                        if last_emit.elapsed() > std::time::Duration::from_millis(200) {
+                            let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+                            let elapsed = download_start.elapsed().as_secs_f64();
+                            let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
+                            let speed_mb = speed_bps / 1024.0 / 1024.0;
+                            let remaining_bytes = total_size.saturating_sub(downloaded);
+                            let eta_secs = if speed_bps > 0.0 { remaining_bytes as f64 / speed_bps } else { 0.0 };
+                            let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
+                                "stage": "downloading", "progress": pct,
+                                "downloaded": downloaded, "total": total_size,
+                                "speed_mbps": (speed_mb * 10.0).round() / 10.0,
+                                "eta_secs": eta_secs.round() as u64,
+                                "message": format!("下载{} {}% ({} / {} MB)",
+                                    label, pct, downloaded / 1024 / 1024, total_size / 1024 / 1024)
+                            }));
+                            last_emit = std::time::Instant::now();
+                        }
+                    }
+                    return Ok(gz_path);
+                }
+                Ok(resp) => {
+                    tracing::warn!("下载源 {} 返回 HTTP {}", url, resp.status());
+                    last_err = Some(format!("HTTP {}", resp.status()));
+                }
+                Err(e) => {
+                    tracing::warn!("下载源 {} 连接失败: {}", url, e);
+                    last_err = Some(e.to_string());
+                }
+            }
+        }
+        Err(AppError::FfmpegDownloadRequestFailed {
+            detail: last_err.unwrap_or_else(|| format!("所有{}下载源均不可用", label)),
+        })
+    };
+
+    // 1. 下载 ffmpeg.gz
+    let ffmpeg_gz = download_gz(FFMPEG_DOWNLOAD_URLS, "ffmpeg", "ffmpeg")?;
+    let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
+        "stage": "downloading", "progress": 100, "message": "ffmpeg 下载完成"
+    }));
+
+    // 2. 下载 ffprobe.gz
+    let ffprobe_gz = download_gz(FFPROBE_DOWNLOAD_URLS, "ffprobe", "ffprobe")?;
+
+    // 3. gunzip 解压
+    let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
+        "stage": "extracting", "progress": -1, "message": "正在解压安装..."
+    }));
+
+    let gunzip_file = |gz_path: &Path, out_name: &str| -> Result<(), AppError> {
+        let out_path = dir.join(out_name);
+        // 用系统 gunzip 命令解压
+        let output = no_window(std::process::Command::new("gunzip"))
+            .arg("-f")
+            .arg(gz_path)
+            .output()
+            .map_err(|e| AppError::FfmpegDownloadExtractFailed {
+                detail: format!("gunzip 失败: {}", e),
+            })?;
+        if !output.status.success() {
+            return Err(AppError::FfmpegDownloadExtractFailed {
+                detail: format!("gunzip 失败: {}", String::from_utf8_lossy(&output.stderr)),
+            });
+        }
+        // gunzip 会把 ffmpeg.gz 解压为 ffmpeg（同目录）
+        if !out_path.exists() {
+            return Err(AppError::FfmpegDownloadExeNotFound);
+        }
+        Ok(())
+    };
+
+    gunzip_file(&ffmpeg_gz, "ffmpeg")?;
+    gunzip_file(&ffprobe_gz, "ffprobe")?;
+
+    // 4. 设置可执行权限
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for name in ["ffmpeg", "ffprobe"] {
+            let path = dir.join(name);
+            if path.exists() {
+                let mut perms = fs::metadata(&path)
+                    .map_err(|e| AppError::FfmpegDownloadCopyFailed { detail: e.to_string() })?
+                    .permissions();
+                perms.set_mode(0o755);
+                let _ = fs::set_permissions(&path, perms);
+            }
+        }
+    }
+
+    let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
+        "stage": "done", "progress": 100, "message": "安装完成"
+    }));
+    tracing::info!("ffmpeg 下载完成: {}", dir.display());
+    Ok(())
+}
+
 fn download_ffmpeg_inner(
     proxy: Option<&str>,
     app_handle: &tauri::AppHandle,
@@ -262,6 +443,18 @@ fn download_ffmpeg_inner(
     fs::create_dir_all(&dir).map_err(|e| AppError::FfmpegDownloadMkdirFailed {
         detail: e.to_string(),
     })?;
+
+    // macOS：eugeneware/ffmpeg-static 提供单独的 gzip 二进制文件，走专用下载路径
+    #[cfg(target_os = "macos")]
+    {
+        return download_ffmpeg_macos(&dir, proxy, app_handle);
+    }
+
+    // 以下为 Windows/Linux 的归档下载逻辑
+    #[cfg(not(target_os = "macos"))]
+    {
+    use tauri::Emitter as _;
+    use std::io::{Read as _, Write as _};
 
     let mut client_builder = reqwest::blocking::Client::builder()
         .user_agent("zimufan/1.0")
@@ -313,9 +506,10 @@ fn download_ffmpeg_inner(
     })?;
     tracing::info!("使用下载源: {}", used_url);
     let total_size = response.content_length().unwrap_or(0);
-    // 根据下载源判断压缩格式
+    // 根据下载源判断压缩格式：zip / 7z / tar.xz
     let is_zip = used_url.ends_with(".zip");
-    let archive_ext = if is_zip { "zip" } else { "7z" };
+    let is_tar_xz = used_url.ends_with(".tar.xz");
+    let archive_ext = if is_zip { "zip" } else if is_tar_xz { "tar.xz" } else { "7z" };
     let archive_path = dir.join(format!("ffmpeg.{}", archive_ext));
     let mut file = fs::File::create(&archive_path).map_err(|e| AppError::FfmpegDownloadCreateFileFailed {
         detail: e.to_string(),
@@ -401,6 +595,20 @@ fn download_ffmpeg_inner(
                 })?;
             }
         }
+    } else if is_tar_xz {
+        // BtbN macOS/Linux tar.xz 格式：用系统 tar 命令解压
+        // 内结构 ffmpeg-master-latest-macos-arm64-gpl/bin/ffmpeg
+        let output = no_window(std::process::Command::new("tar"))
+            .args(["-xf", &archive_path.to_string_lossy(), "-C", &extract_dir.to_string_lossy()])
+            .output()
+            .map_err(|e| AppError::FfmpegDownloadExtractFailed {
+                detail: format!("tar 解压失败: {}", e),
+            })?;
+        if !output.status.success() {
+            return Err(AppError::FfmpegDownloadExtractFailed {
+                detail: format!("tar 解压失败: {}", String::from_utf8_lossy(&output.stderr)),
+            });
+        }
     } else {
         // gyan.dev 7z 格式
         sevenz_rust::decompress_file(&archive_path, &extract_dir)
@@ -409,22 +617,41 @@ fn download_ffmpeg_inner(
             })?;
     }
 
-    // 3. 查找 ffmpeg.exe 和 ffprobe.exe（在解压目录的 bin/ 子目录下）
+    // 3. 查找 ffmpeg 和 ffprobe（在解压目录的 bin/ 子目录下）
+    // Windows: ffmpeg.exe / ffprobe.exe，macOS/Linux: ffmpeg / ffprobe
     let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
         "stage": "extracting", "progress": 90, "message": "正在安装..."
     }));
-    let ffmpeg_src = find_file_in_dir(&extract_dir, "ffmpeg.exe")
+    let ffmpeg_name = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    let ffprobe_name = if cfg!(windows) { "ffprobe.exe" } else { "ffprobe" };
+    let ffmpeg_src = find_file_in_dir(&extract_dir, ffmpeg_name)
         .ok_or(AppError::FfmpegDownloadExeNotFound)?;
-    let ffprobe_src = find_file_in_dir(&extract_dir, "ffprobe.exe")
+    let ffprobe_src = find_file_in_dir(&extract_dir, ffprobe_name)
         .ok_or(AppError::FfmpegDownloadExeNotFound)?;
 
     // 4. 复制到 ffmpeg 目录
-    fs::copy(&ffmpeg_src, dir.join("ffmpeg.exe")).map_err(|e| AppError::FfmpegDownloadCopyFailed {
+    fs::copy(&ffmpeg_src, dir.join(ffmpeg_name)).map_err(|e| AppError::FfmpegDownloadCopyFailed {
         detail: e.to_string(),
     })?;
-    fs::copy(&ffprobe_src, dir.join("ffprobe.exe")).map_err(|e| AppError::FfmpegDownloadCopyFailed {
+    fs::copy(&ffprobe_src, dir.join(ffprobe_name)).map_err(|e| AppError::FfmpegDownloadCopyFailed {
         detail: e.to_string(),
     })?;
+
+    // 4.5 macOS/Linux：设置可执行权限
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        for name in [ffmpeg_name, ffprobe_name] {
+            let path = dir.join(name);
+            if path.exists() {
+                let mut perms = fs::metadata(&path)
+                    .map_err(|e| AppError::FfmpegDownloadCopyFailed { detail: e.to_string() })?
+                    .permissions();
+                perms.set_mode(0o755);
+                let _ = fs::set_permissions(&path, perms);
+            }
+        }
+    }
 
     // 5. 清理解压目录和 zip 文件
     let _ = fs::remove_dir_all(&extract_dir);
@@ -435,6 +662,7 @@ fn download_ffmpeg_inner(
     }));
     tracing::info!("ffmpeg 下载完成: {}", dir.display());
     Ok(())
+    } // end #[cfg(not(target_os = "macos"))]
 }
 
 /// 在目录中递归查找指定文件名
