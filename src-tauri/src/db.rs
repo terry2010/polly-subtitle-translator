@@ -428,4 +428,174 @@ mod tests {
         let key2 = translate_cache_key("world", "en", "zh", "baidu");
         assert_ne!(key1, key2);
     }
+
+    // === SECTION 4 END ===
+
+    use rusqlite::Connection;
+
+    /// 创建内存测试数据库并执行迁移
+    fn test_db() -> Database {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        Database { conn: Mutex::new(conn) }
+    }
+
+    #[test]
+    fn test_config_set_get_delete() {
+        let db = test_db();
+        // 初始不存在
+        assert_eq!(db.get_config("key1").unwrap(), None);
+        // 写入
+        db.set_config("key1", "value1").unwrap();
+        assert_eq!(db.get_config("key1").unwrap(), Some("value1".to_string()));
+        // 更新（UPSERT）
+        db.set_config("key1", "value2").unwrap();
+        assert_eq!(db.get_config("key1").unwrap(), Some("value2".to_string()));
+        // 删除
+        db.delete_config("key1").unwrap();
+        assert_eq!(db.get_config("key1").unwrap(), None);
+    }
+
+    #[test]
+    fn test_config_get_all() {
+        let db = test_db();
+        db.set_config("b", "2").unwrap();
+        db.set_config("a", "1").unwrap();
+        db.set_config("c", "3").unwrap();
+        let all = db.get_all_config().unwrap();
+        assert_eq!(all.len(), 3);
+        // 按 key 排序
+        assert_eq!(all[0].0, "a");
+        assert_eq!(all[1].0, "b");
+        assert_eq!(all[2].0, "c");
+    }
+
+    // === SECTION 5 END ===
+
+    #[test]
+    fn test_recent_files_add_and_query() {
+        let db = test_db();
+        db.add_recent_file("/video1.mkv", "video").unwrap();
+        db.add_recent_file("/sub1.srt", "subtitle").unwrap();
+        db.add_recent_file("/video2.mkv", "video").unwrap();
+
+        // 查全部
+        let all = db.get_recent_files(None).unwrap();
+        assert_eq!(all.len(), 3);
+
+        // 按类型筛选
+        let videos = db.get_recent_files(Some("video")).unwrap();
+        assert_eq!(videos.len(), 2);
+        assert!(videos.iter().all(|f| f.file_type == "video"));
+
+        let subs = db.get_recent_files(Some("subtitle")).unwrap();
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].file_path, "/sub1.srt");
+    }
+
+    #[test]
+    fn test_recent_files_dedup_and_update_time() {
+        let db = test_db();
+        db.add_recent_file("/video.mkv", "video").unwrap();
+        db.add_recent_file("/video.mkv", "video").unwrap();
+        let all = db.get_recent_files(None).unwrap();
+        assert_eq!(all.len(), 1); // 同路径去重
+    }
+
+    #[test]
+    fn test_recent_files_limit_20() {
+        let db = test_db();
+        for i in 0..25 {
+            db.add_recent_file(&format!("/file{}.mkv", i), "video").unwrap();
+        }
+        let all = db.get_recent_files(None).unwrap();
+        assert_eq!(all.len(), 20); // 只保留最近 20 条
+    }
+
+    // === SECTION 6 END ===
+
+    #[test]
+    fn test_history_add() {
+        let db = test_db();
+        let record = HistoryRecord {
+            video_path: Some("/video.mkv".into()),
+            subtitle_path: Some("/sub.srt".into()),
+            source_lang: Some("en".into()),
+            target_lang: Some("zh".into()),
+            provider: Some("baidu".into()),
+            action: "translate".into(),
+            status: "success".into(),
+            detail: Some(r#"{"count":10}"#.into()),
+        };
+        let id = db.add_history(&record).unwrap();
+        assert!(id > 0);
+    }
+
+    #[test]
+    fn test_history_add_minimal() {
+        let db = test_db();
+        let record = HistoryRecord {
+            video_path: None,
+            subtitle_path: None,
+            source_lang: None,
+            target_lang: None,
+            provider: None,
+            action: "extract".into(),
+            status: "failed".into(),
+            detail: None,
+        };
+        let id = db.add_history(&record).unwrap();
+        assert!(id > 0);
+    }
+
+    // === SECTION 7 END ===
+
+    #[test]
+    fn test_translate_cache_set_get() {
+        let db = test_db();
+        let key = translate_cache_key("hello", "en", "zh", "baidu");
+        // 初始无缓存
+        assert_eq!(db.get_translate_cache(&key).unwrap(), None);
+        // 写入缓存
+        db.set_translate_cache(&key, "hello", "你好", "en", "zh", "baidu").unwrap();
+        // 读取缓存
+        assert_eq!(db.get_translate_cache(&key).unwrap(), Some("你好".to_string()));
+    }
+
+    #[test]
+    fn test_translate_cache_replace() {
+        let db = test_db();
+        let key = "test_key";
+        db.set_translate_cache(key, "hello", "你好", "en", "zh", "baidu").unwrap();
+        db.set_translate_cache(key, "hello", "您好", "en", "zh", "baidu").unwrap();
+        // OR REPLACE 覆盖
+        assert_eq!(db.get_translate_cache(key).unwrap(), Some("您好".to_string()));
+    }
+
+    #[test]
+    fn test_translate_cache_clear() {
+        let db = test_db();
+        db.set_translate_cache("k1", "a", "甲", "en", "zh", "baidu").unwrap();
+        db.set_translate_cache("k2", "b", "乙", "en", "zh", "baidu").unwrap();
+        let count = db.clear_translate_cache().unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(db.get_translate_cache("k1").unwrap(), None);
+        assert_eq!(db.get_translate_cache("k2").unwrap(), None);
+    }
+
+    // === SECTION 8 END ===
+
+    #[test]
+    fn test_migrate_idempotent() {
+        let db = test_db();
+        // 再次执行 migrate 不应报错
+        db.migrate().unwrap();
+        // schema_migrations 应只有一条 v1
+        let count: i64 = db.with_conn(|conn| {
+            Ok(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))?)
+        }).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    // === SECTION 9 END ===
 }
