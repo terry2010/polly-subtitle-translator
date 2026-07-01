@@ -75,11 +75,14 @@ describe("translateStore - startTranslate", () => {
   });
 
   it("翻译中不允许启动新任务", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     useTranslateStore.setState({ translating: true });
     const entries = [makeEntry(0, "hello")];
     const result = await useTranslateStore.getState().startTranslate(entries);
     expect(result).toBeNull();
     expect(mockTranslateSubtitle).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith("翻译正在进行中，跳过新任务");
+    warnSpy.mockRestore();
   });
 
   it("翻译失败设置 error", async () => {

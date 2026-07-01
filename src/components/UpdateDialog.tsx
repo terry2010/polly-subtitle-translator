@@ -94,13 +94,15 @@ export function UpdateDialog({ open, version, notes, onClose }: UpdateDialogProp
             {t("update.title")}
           </DialogTitle>
           {stage === "prompt" && (
-            <DialogDescription className="text-left pt-2 space-y-2">
-              <p>{t("update.newVersionAvailable", { version })}</p>
-              {notes && (
-                <div className="mt-2 p-3 bg-muted rounded-md text-xs max-h-40 overflow-auto whitespace-pre-wrap">
-                  {notes}
-                </div>
-              )}
+            <DialogDescription asChild>
+              <div className="text-left pt-2 space-y-2">
+                <p>{t("update.newVersionAvailable", { version })}</p>
+                {notes && (
+                  <div className="mt-2 p-3 bg-muted rounded-md text-xs max-h-40 overflow-auto whitespace-pre-wrap">
+                    {notes}
+                  </div>
+                )}
+              </div>
             </DialogDescription>
           )}
         </DialogHeader>
