@@ -97,6 +97,14 @@ pub enum TranslateProvider {
     Bing,
     Google,
     OpenAi,
+    DeepL,
+    Youdao,
+    Caiyun,
+    Niutrans,
+    Tencent,
+    Volcengine,
+    Aliyun,
+    Amazon,
 }
 
 impl TranslateProvider {
@@ -106,6 +114,14 @@ impl TranslateProvider {
             TranslateProvider::Bing => "bing",
             TranslateProvider::Google => "google",
             TranslateProvider::OpenAi => "openai",
+            TranslateProvider::DeepL => "deepl",
+            TranslateProvider::Youdao => "youdao",
+            TranslateProvider::Caiyun => "caiyun",
+            TranslateProvider::Niutrans => "niutrans",
+            TranslateProvider::Tencent => "tencent",
+            TranslateProvider::Volcengine => "volcengine",
+            TranslateProvider::Aliyun => "aliyun",
+            TranslateProvider::Amazon => "amazon",
         }
     }
 
@@ -115,27 +131,54 @@ impl TranslateProvider {
             "bing" => Some(TranslateProvider::Bing),
             "google" => Some(TranslateProvider::Google),
             "openai" => Some(TranslateProvider::OpenAi),
+            "deepl" => Some(TranslateProvider::DeepL),
+            "youdao" => Some(TranslateProvider::Youdao),
+            "caiyun" => Some(TranslateProvider::Caiyun),
+            "niutrans" => Some(TranslateProvider::Niutrans),
+            "tencent" => Some(TranslateProvider::Tencent),
+            "volcengine" => Some(TranslateProvider::Volcengine),
+            "aliyun" => Some(TranslateProvider::Aliyun),
+            "amazon" => Some(TranslateProvider::Amazon),
             _ => None,
         }
     }
 
     /// 各引擎的 QPS 上限（免费/默认档位）
-    /// 百度免费版 1 QPS、Bing 10 QPS、Google 100 QPS、OpenAI 兼容 5（按 RPM 限流，保守取 5）
     pub fn qps_limit(&self) -> usize {
         match self {
             TranslateProvider::Baidu => 1,
             TranslateProvider::Bing => 10,
             TranslateProvider::Google => 100,
             TranslateProvider::OpenAi => 5,
+            TranslateProvider::DeepL => 5,
+            TranslateProvider::Youdao => 1,
+            TranslateProvider::Caiyun => 5,
+            TranslateProvider::Niutrans => 5,
+            TranslateProvider::Tencent => 5,
+            TranslateProvider::Volcengine => 5,
+            TranslateProvider::Aliyun => 5,
+            TranslateProvider::Amazon => 10,
         }
     }
 
     /// 计算实际并发 = min(用户配置并发, QPS 上限)，至少 1
-    pub fn effective_concurrency(user_config: usize, provider: &TranslateProvider) -> usize {
-        let qps = provider.qps_limit();
-        let c = user_config.min(qps).max(1);
-        c
+    /// 旧签名 effective_concurrency(user_config, &provider) 已删除，
+    /// 改为传入已算好的 qps，避免两套 QPS 计算逻辑并存
+    pub fn effective_concurrency(user_config: usize, qps: usize) -> usize {
+        user_config.min(qps).max(1)
     }
+}
+
+/// 将字段内的 `|` 双写转义，确保拼接后可无歧义还原
+pub fn escape_field(s: &str) -> String {
+    s.replace('|', "||")
+}
+
+/// 拼接无歧义的缓存 provider_name：seg1|seg2|seg3，每段先转义
+/// 用于 translate_subtitle / get_cached_translations 构造缓存 key 的 provider 字段
+/// 保证不同输入产生不同字符串（无碰撞），从而缓存 key 自然隔离
+pub fn build_cache_provider_name(segments: &[&str]) -> String {
+    segments.iter().map(|s| escape_field(s)).collect::<Vec<_>>().join("|")
 }
 
 /// 翻译请求
@@ -175,6 +218,65 @@ pub struct ProviderCredentials {
     pub base_url: Option<String>,
     pub model: Option<String>,
     pub model_type: Option<String>,
+}
+
+/// 检测响应是否为余额不足/额度耗尽
+/// 返回 Some(detail) 表示余额不足，None 表示不是
+pub fn check_insufficient_balance(status: reqwest::StatusCode, body: &str) -> Option<String> {
+    // HTTP 402 Payment Required
+    if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+        return Some(extract_error_message(body));
+    }
+    // 响应体关键词检测（各服务商余额不足时的常见关键词）
+    let lower = body.to_lowercase();
+    let keywords = [
+        "insufficient balance",
+        "insufficient_balance",
+        "insufficient quota",
+        "insufficient_quota",
+        "insufficientquota",
+        "insufficientbalance",
+        "quota exhausted",
+        "quota_exhausted",
+        "quota exceeded",
+        "quota_exceeded",
+        "out of quota",
+        "no credit",
+        "no_credit",
+        "out of credit",
+        "out_of_credit",
+        "credit exhausted",
+        "credit_exhausted",
+        "account suspended",
+        "account_suspended",
+        "payment required",
+        "billing",
+        "余额不足",
+        "额度耗尽",
+        "额度已用尽",
+        "额度不足",
+        "欠费",
+        "账户已停用",
+    ];
+    for kw in &keywords {
+        if lower.contains(kw) {
+            return Some(extract_error_message(body));
+        }
+    }
+    None
+}
+
+/// 从 JSON 响应体中提取 error.message 字段，失败则返回前 200 字符
+fn extract_error_message(body: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+                .map(String::from)
+        })
+        .unwrap_or_else(|| body.chars().take(200).collect())
 }
 
 /// 翻译提供商 trait
@@ -665,6 +767,12 @@ impl TranslateProviderTrait for BaiduProvider {
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
+                if let Some(detail) = check_insufficient_balance(status, &body) {
+                    return Err(AppError::TranslateInsufficientBalance {
+                        provider: "baidu".to_string(),
+                        detail,
+                    });
+                }
                 if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
                     return Err(AppError::TranslateAuthFailed {
                         provider: "baidu".to_string(),
@@ -699,9 +807,17 @@ impl TranslateProviderTrait for BaiduProvider {
                         retry_after: Some(1),
                     });
                 }
+                // 54003 之外的错误，检查余额不足
+                let full_msg = format!("error_code: {}, msg: {}", code, msg);
+                if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
+                    return Err(AppError::TranslateInsufficientBalance {
+                        provider: "baidu".to_string(),
+                        detail,
+                    });
+                }
                 return Err(AppError::TranslateNetworkError {
                     provider: "baidu".to_string(),
-                    detail: format!("error_code: {}, msg: {}", code, msg),
+                    detail: full_msg,
                 });
             }
 
@@ -831,6 +947,13 @@ impl BingProvider {
 
         let status = resp.status();
         let response_body = resp.text().await.unwrap_or_default();
+
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "bing".to_string(),
+                detail,
+            });
+        }
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AppError::TranslateAuthFailed {
@@ -992,6 +1115,13 @@ impl GoogleProvider {
         let status = resp.status();
         let response_body = resp.text().await.unwrap_or_default();
 
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "google".to_string(),
+                detail,
+            });
+        }
+
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(AppError::TranslateAuthFailed {
                 provider: "google".to_string(),
@@ -1105,6 +1235,8 @@ pub struct OpenAiProvider {
     model: String,
     model_type: ModelType,
     api_key: Option<String>,
+    /// 服务商显示名（如 "DeepSeek" / "LM Studio"），用于错误消息
+    service_name: String,
     client: reqwest::Client,
 }
 
@@ -1128,7 +1260,13 @@ impl OpenAiProvider {
         api_key: Option<String>,
         client: reqwest::Client,
     ) -> Self {
-        Self { base_url, model, model_type, api_key, client }
+        Self { base_url, model, model_type, api_key, service_name: "OpenAI".to_string(), client }
+    }
+
+    /// 设置服务商显示名（用于错误消息中显示真实服务商名而非 "openai"）
+    pub fn with_service_name(mut self, name: String) -> Self {
+        self.service_name = name;
+        self
     }
 
     /// 构建 system prompt（优先远程模板，回退内置）
@@ -1220,14 +1358,19 @@ impl OpenAiProvider {
             }));
 
         // api_key 非空时才带认证头（局域网无认证场景）
+        // Azure OpenAI 使用 api-key 头而非 Authorization: Bearer
         if let Some(ref key) = self.api_key {
             if !key.is_empty() {
-                req = req.header("Authorization", format!("Bearer {}", key));
+                if self.base_url.contains("openai.azure.com") {
+                    req = req.header("api-key", key);
+                } else {
+                    req = req.header("Authorization", format!("Bearer {}", key));
+                }
             }
         }
 
         let resp = req.send().await.map_err(|e| AppError::TranslateNetworkError {
-            provider: "openai".to_string(),
+            provider: self.service_name.clone(),
             detail: e.to_string(),
         })?;
 
@@ -1236,23 +1379,31 @@ impl OpenAiProvider {
         // 限流
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             return Err(AppError::TranslateRateLimit {
-                provider: "openai".to_string(),
+                provider: self.service_name.clone(),
                 retry_after: Some(60),
-            });
-        }
-
-        // 认证失败
-        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-            return Err(AppError::TranslateAuthFailed {
-                provider: "openai".to_string(),
             });
         }
 
         let response_body = resp.text().await.unwrap_or_default();
 
+        // 余额不足：优先于认证失败判断（部分服务商余额不足时返回 403 而非 402）
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: self.service_name.clone(),
+                detail,
+            });
+        }
+
+        // 认证失败（401/403）：排除了余额不足后才判定为认证失败
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::TranslateAuthFailed {
+                provider: self.service_name.clone(),
+            });
+        }
+
         if !status.is_success() {
             return Err(AppError::TranslateNetworkError {
-                provider: "openai".to_string(),
+                provider: self.service_name.clone(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
@@ -1811,19 +1962,1668 @@ async fn translate_with_retry_provider(
         Err(last_error.unwrap_or(AppError::TranslateRetriesExhausted))
 }
 
+
+// === 新增传统翻译 Provider ===
+
+/// DeepL 翻译 API
+/// 文档：https://developers.deepl.com/docs/api-reference/translate/openapi-spec-for-text-translate
+/// 认证：Authorization: DeepL-Auth-Key xxx
+/// Free 版用 https://api-free.deepl.com，Pro 版用 https://api.deepl.com
+pub struct DeepLProvider {
+    auth_key: String,
+    client: reqwest::Client,
+}
+
+impl DeepLProvider {
+    pub fn new(auth_key: String) -> Self {
+        Self::with_client(auth_key, reqwest::Client::new())
+    }
+    pub fn with_client(auth_key: String, client: reqwest::Client) -> Self {
+        Self { auth_key, client }
+    }
+
+    /// 根据 Auth Key 自动选择 Free / Pro 端点
+    /// Free key 以 ":fx" 结尾
+    fn api_url(&self) -> &str {
+        if self.auth_key.ends_with(":fx") {
+            "https://api-free.deepl.com/v2/translate"
+        } else {
+            "https://api.deepl.com/v2/translate"
+        }
+    }
+
+    /// DeepL 使用大写语言码（EN, ZH, JA），且部分语言有特殊映射
+    fn to_deepl_lang(lang: &str) -> String {
+        match lang.to_uppercase().as_str() {
+            "AUTO" => "".to_string(),
+            "EN" => "EN".to_string(),
+            "ZH" => "ZH".to_string(),
+            "JA" => "JA".to_string(),
+            "KO" => "KO".to_string(),
+            "FR" => "FR".to_string(),
+            "DE" => "DE".to_string(),
+            "ES" => "ES".to_string(),
+            "PT" => "PT".to_string(),
+            "IT" => "IT".to_string(),
+            "RU" => "RU".to_string(),
+            "NL" => "NL".to_string(),
+            "PL" => "PL".to_string(),
+            other => other.to_string(),
+        }
+    }
+
+    async fn translate_single_batch(
+        &self,
+        texts: &[&String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        let url = self.api_url();
+        let target = Self::to_deepl_lang(target_lang);
+        if target.is_empty() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "deepl".to_string(),
+                detail: "target_lang is empty".to_string(),
+            });
+        }
+
+        // DeepL 接受 text=xxx 多次传递（form-encoded）
+        let mut form = vec![("target_lang".to_string(), target.clone())];
+        let src = Self::to_deepl_lang(source_lang);
+        if !src.is_empty() {
+            form.push(("source_lang".to_string(), src));
+        }
+        for t in texts {
+            form.push(("text".to_string(), t.as_str().to_string()));
+        }
+
+        let resp = self
+            .client
+            .post(url)
+            .header("Authorization", format!("DeepL-Auth-Key {}", self.auth_key))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&form)
+            .send()
+            .await
+            .map_err(|e| AppError::TranslateNetworkError {
+                provider: "deepl".to_string(),
+                detail: e.to_string(),
+            })?;
+
+        if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(AppError::TranslateRateLimit {
+                provider: "deepl".to_string(),
+                retry_after: Some(60),
+            });
+        }
+
+        let status = resp.status();
+        let response_body = resp.text().await.unwrap_or_default();
+
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "deepl".to_string(),
+                detail,
+            });
+        }
+
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::TranslateAuthFailed {
+                provider: "deepl".to_string(),
+            });
+        }
+
+        if !status.is_success() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "deepl".to_string(),
+                detail: format!("HTTP {}: {}", status, response_body),
+            });
+        }
+
+        let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        let translations = result["translations"]
+            .as_array()
+            .ok_or_else(|| AppError::TranslateAlignFailed {
+                missing: texts.len(),
+            })?;
+
+        let results: Vec<String> = translations
+            .iter()
+            .map(|item| {
+                item.get("text")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect();
+
+        if results.len() != texts.len() {
+            return Err(AppError::TranslateAlignFailed {
+                missing: texts.len().saturating_sub(results.len()),
+            });
+        }
+
+        Ok(results)
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for DeepLProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        const DEEPL_MAX_TEXTS: usize = 50; // DeepL 一次最多 50 条文本
+        let mut results = vec![String::new(); texts.len()];
+        let non_empty: Vec<(usize, &String)> = texts
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.trim().is_empty())
+            .collect();
+
+        if non_empty.is_empty() {
+            return Ok(results);
+        }
+
+        for chunk in non_empty.chunks(DEEPL_MAX_TEXTS) {
+            let refs: Vec<&String> = chunk.iter().map(|(_, t)| *t).collect();
+            let translated = self
+                .translate_single_batch(&refs, source_lang, target_lang)
+                .await?;
+            for (i, tr) in translated.into_iter().enumerate() {
+                results[chunk[i].0] = tr;
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
+            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
+            LanguageInfo { code: "es".into(), name: "Spanish".into(), native_name: "Español".into() },
+            LanguageInfo { code: "pt".into(), name: "Portuguese".into(), native_name: "Português".into() },
+            LanguageInfo { code: "it".into(), name: "Italian".into(), native_name: "Italiano".into() },
+            LanguageInfo { code: "ru".into(), name: "Russian".into(), native_name: "Русский".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        self.translate(&["test".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 7 END ===
+
+/// 有道翻译 API
+/// 文档：https://ai.youdao.com/DOCSIRMA/html/trans/api/wbfy/index.html
+/// 签名算法：SHA256(appKey + q + salt + curtime + appSecret)
+pub struct YoudaoProvider {
+    app_key: String,
+    app_secret: String,
+    client: reqwest::Client,
+}
+
+impl YoudaoProvider {
+    pub fn new(app_key: String, app_secret: String) -> Self {
+        Self::with_client(app_key, app_secret, reqwest::Client::new())
+    }
+    pub fn with_client(app_key: String, app_secret: String, client: reqwest::Client) -> Self {
+        Self { app_key, app_secret, client }
+    }
+
+    fn sign(&self, query: &str, salt: &str, curtime: &str) -> String {
+        use sha2::{Digest, Sha256};
+        let input = format!("{}{}{}{}{}", self.app_key, query, salt, curtime, self.app_secret);
+        let mut hasher = Sha256::new();
+        hasher.update(input.as_bytes());
+        format!("{:x}", hasher.finalize())
+    }
+
+    /// 有道语言码映射
+    fn to_youdao_lang(lang: &str) -> &str {
+        match lang {
+            "auto" => "auto",
+            "zh" => "zh-CHS",
+            "en" => "en",
+            "ja" => "ja",
+            "ko" => "ko",
+            "fr" => "fr",
+            "de" => "de",
+            "es" => "es",
+            "pt" => "pt",
+            "it" => "it",
+            "ru" => "ru",
+            "vi" => "vi",
+            "th" => "th",
+            "ar" => "ar",
+            other => other,
+        }
+    }
+
+    async fn translate_single(
+        &self,
+        text: &str,
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<String, AppError> {
+        let salt = uuid::Uuid::new_v4().simple().to_string();
+        let curtime = chrono::Utc::now().timestamp().to_string();
+        let sign = self.sign(text, &salt, &curtime);
+
+        let from = Self::to_youdao_lang(source_lang);
+        let to = Self::to_youdao_lang(target_lang);
+
+        let params = [
+            ("q", text.to_string()),
+            ("from", from.to_string()),
+            ("to", to.to_string()),
+            ("appKey", self.app_key.clone()),
+            ("salt", salt.clone()),
+            ("sign", sign),
+            ("signType", "v3".to_string()),
+            ("curtime", curtime),
+        ];
+
+        let resp = self
+            .client
+            .post("https://openapi.youdao.com/api")
+            .form(&params)
+            .send()
+            .await
+            .map_err(|e| AppError::TranslateNetworkError {
+                provider: "youdao".to_string(),
+                detail: e.to_string(),
+            })?;
+
+        let status = resp.status();
+        let response_body = resp.text().await.unwrap_or_default();
+
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "youdao".to_string(),
+                detail,
+            });
+        }
+
+        if !status.is_success() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "youdao".to_string(),
+                detail: format!("HTTP {}: {}", status, response_body),
+            });
+        }
+
+        let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        // 检查错误码
+        if let Some(error_code) = result.get("errorCode").and_then(|c| c.as_str()) {
+            if error_code != "0" {
+                let full_msg = format!("errorCode: {}", error_code);
+                if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
+                    return Err(AppError::TranslateInsufficientBalance {
+                        provider: "youdao".to_string(),
+                        detail,
+                    });
+                }
+                return Err(AppError::TranslateNetworkError {
+                    provider: "youdao".to_string(),
+                    detail: full_msg,
+                });
+            }
+        }
+
+        let translation = result["translation"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+
+        Ok(translation.to_string())
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for YoudaoProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        // 有道不支持批量，逐条翻译
+        let mut results = Vec::with_capacity(texts.len());
+        for text in texts {
+            if text.trim().is_empty() {
+                results.push(String::new());
+                continue;
+            }
+            let tr = self.translate_single(text, source_lang, target_lang).await?;
+            results.push(tr);
+        }
+        Ok(results)
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
+            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        self.translate(&["test".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 8 END ===
+
+/// 彩云小译 API
+/// 文档：https://docs.caiyunapp.com/docs/tables/overall
+/// 认证：token 方式，JSON body 请求
+pub struct CaiyunProvider {
+    token: String,
+    client: reqwest::Client,
+}
+
+impl CaiyunProvider {
+    pub fn new(token: String) -> Self {
+        Self::with_client(token, reqwest::Client::new())
+    }
+    pub fn with_client(token: String, client: reqwest::Client) -> Self {
+        Self { token, client }
+    }
+
+    /// 彩云语言对映射：source_lang→target_lang 格式
+    fn trans_type(source: &str, target: &str) -> Result<String, AppError> {
+        let pair = match (source, target) {
+            ("auto", "zh") => "auto2zh",
+            ("auto", "en") => "auto2en",
+            ("zh", "en") => "zh2en",
+            ("en", "zh") => "en2zh",
+            ("zh", "ja") => "zh2ja",
+            ("ja", "zh") => "ja2zh",
+            ("zh", "ko") => "zh2ko",
+            ("ko", "zh") => "ko2zh",
+            ("zh", "fr") => "zh2fr",
+            ("fr", "zh") => "fr2zh",
+            ("zh", "de") => "zh2de",
+            ("de", "zh") => "de2zh",
+            ("zh", "es") => "zh2es",
+            ("es", "zh") => "es2zh",
+            ("zh", "it") => "zh2it",
+            ("it", "zh") => "it2zh",
+            ("zh", "ru") => "zh2ru",
+            ("ru", "zh") => "ru2zh",
+            ("en", "ja") => "en2ja",
+            ("ja", "en") => "ja2en",
+            ("en", "ko") => "en2ko",
+            ("ko", "en") => "ko2en",
+            _ => return Err(AppError::TranslateNetworkError {
+                provider: "caiyun".to_string(),
+                detail: format!("unsupported language pair: {}→{}", source, target),
+            }),
+        };
+        Ok(pair.to_string())
+    }
+
+    async fn translate_batch(
+        &self,
+        texts: &[&String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        let trans_type = Self::trans_type(source_lang, target_lang)?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let text_list: Vec<&str> = texts.iter().map(|t| t.as_str()).collect();
+
+        let body = serde_json::json!({
+            "source": text_list,
+            "trans_type": trans_type,
+            "request_id": request_id,
+            "detect": true,
+        });
+
+        let url = "https://api.interpreter.caiyunai.com/v1/translator";
+        let resp = self
+            .client
+            .post(url)
+            .header("Content-Type", "application/json")
+            .header("X-Authorization", format!("token {}", self.token))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AppError::TranslateNetworkError {
+                provider: "caiyun".to_string(),
+                detail: e.to_string(),
+            })?;
+
+        let status = resp.status();
+        let response_body = resp.text().await.unwrap_or_default();
+
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "caiyun".to_string(),
+                detail,
+            });
+        }
+
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::TranslateAuthFailed {
+                provider: "caiyun".to_string(),
+            });
+        }
+
+        if !status.is_success() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "caiyun".to_string(),
+                detail: format!("HTTP {}: {}", status, response_body),
+            });
+        }
+
+        let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        let target = result["target"]
+            .as_array()
+            .ok_or_else(|| AppError::TranslateAlignFailed {
+                missing: texts.len(),
+            })?;
+
+        let results: Vec<String> = target
+            .iter()
+            .map(|t| t.as_str().unwrap_or("").to_string())
+            .collect();
+
+        if results.len() != texts.len() {
+            return Err(AppError::TranslateAlignFailed {
+                missing: texts.len().saturating_sub(results.len()),
+            });
+        }
+
+        Ok(results)
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for CaiyunProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        const CAIYUN_MAX_TEXTS: usize = 20;
+        let mut results = vec![String::new(); texts.len()];
+        let non_empty: Vec<(usize, &String)> = texts
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.trim().is_empty())
+            .collect();
+
+        if non_empty.is_empty() {
+            return Ok(results);
+        }
+
+        for chunk in non_empty.chunks(CAIYUN_MAX_TEXTS) {
+            let refs: Vec<&String> = chunk.iter().map(|(_, t)| *t).collect();
+            let translated = self
+                .translate_batch(&refs, source_lang, target_lang)
+                .await?;
+            for (i, tr) in translated.into_iter().enumerate() {
+                results[chunk[i].0] = tr;
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
+            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        self.translate(&["test".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 9 END ===
+
+/// 小牛翻译 API
+/// 文档：https://niutrans.com/Document
+/// 认证：apikey 参数
+pub struct NiutransProvider {
+    api_key: String,
+    client: reqwest::Client,
+}
+
+impl NiutransProvider {
+    pub fn new(api_key: String) -> Self {
+        Self::with_client(api_key, reqwest::Client::new())
+    }
+    pub fn with_client(api_key: String, client: reqwest::Client) -> Self {
+        Self { api_key, client }
+    }
+
+    /// 小牛翻译语言码映射
+    fn to_niutrans_lang(lang: &str) -> &str {
+        match lang {
+            "auto" => "auto",
+            "zh" => "zh",
+            "en" => "en",
+            "ja" => "ja",
+            "ko" => "ko",
+            "fr" => "fr",
+            "de" => "de",
+            "es" => "es",
+            "pt" => "pt",
+            "it" => "it",
+            "ru" => "ru",
+            "vi" => "vi",
+            "th" => "th",
+            "ar" => "ar",
+            other => other,
+        }
+    }
+
+    async fn translate_single(
+        &self,
+        text: &str,
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<String, AppError> {
+        let from = Self::to_niutrans_lang(source_lang);
+        let to = Self::to_niutrans_lang(target_lang);
+
+        let body = serde_json::json!({
+            "apikey": self.api_key,
+            "src_text": text,
+            "from": from,
+            "to": to,
+        });
+
+        let resp = self
+            .client
+            .post("https://nmt-api.niutrans.com/NMT/translate")
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AppError::TranslateNetworkError {
+                provider: "niutrans".to_string(),
+                detail: e.to_string(),
+            })?;
+
+        let status = resp.status();
+        let response_body = resp.text().await.unwrap_or_default();
+
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "niutrans".to_string(),
+                detail,
+            });
+        }
+
+        if !status.is_success() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "niutrans".to_string(),
+                detail: format!("HTTP {}: {}", status, response_body),
+            });
+        }
+
+        let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        // 检查错误码
+        if let Some(code) = result.get("error_code").and_then(|c| c.as_i64()) {
+            if code != 0 {
+                let msg = result.get("error_msg").and_then(|m| m.as_str()).unwrap_or("unknown");
+                let full_msg = format!("error_code: {}, error_msg: {}", code, msg);
+                if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
+                    return Err(AppError::TranslateInsufficientBalance {
+                        provider: "niutrans".to_string(),
+                        detail,
+                    });
+                }
+                return Err(AppError::TranslateNetworkError {
+                    provider: "niutrans".to_string(),
+                    detail: full_msg,
+                });
+            }
+        }
+
+        let tgt = result["tgt_text"]
+            .as_str()
+            .unwrap_or("");
+
+        Ok(tgt.to_string())
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for NiutransProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        // 小牛翻译不支持批量，逐条翻译
+        let mut results = Vec::with_capacity(texts.len());
+        for text in texts {
+            if text.trim().is_empty() {
+                results.push(String::new());
+                continue;
+            }
+            let tr = self.translate_single(text, source_lang, target_lang).await?;
+            results.push(tr);
+        }
+        Ok(results)
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
+            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        self.translate(&["test".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 10 END ===
+
+/// 腾讯翻译君 API（TMT）
+/// 文档：https://cloud.tencent.com/document/product/555
+/// 认证：HMAC-SHA256 签名（TC3-HMAC-SHA256）
+pub struct TencentProvider {
+    secret_id: String,
+    secret_key: String,
+    client: reqwest::Client,
+}
+
+impl TencentProvider {
+    pub fn new(secret_id: String, secret_key: String) -> Self {
+        Self::with_client(secret_id, secret_key, reqwest::Client::new())
+    }
+    pub fn with_client(secret_id: String, secret_key: String, client: reqwest::Client) -> Self {
+        Self { secret_id, secret_key, client }
+    }
+
+    /// TC3-HMAC-SHA256 签名
+    fn sign(&self, payload: &str, timestamp: i64, date: &str) -> String {
+        use sha2::{Digest, Sha256};
+        use hmac::{Hmac, Mac};
+
+        type HmacSha256 = Hmac<Sha256>;
+
+        // 1. 拼接规范请求串
+        let canonical_uri = "/";
+        let canonical_querystring = "";
+        let canonical_headers = format!(
+            "content-type:application/json; charset=utf-8\nhost:tmt.tencentcloudapi.com\nx-tc-action:texttranslate\n"
+        );
+        let signed_headers = "content-type;host;x-tc-action";
+        let hashed_payload = hex::encode(Sha256::digest(payload.as_bytes()));
+        let canonical_request = format!(
+            "POST\n{}\n{}\n{}\n{}\n{}",
+            canonical_uri, canonical_querystring, canonical_headers, signed_headers, hashed_payload
+        );
+
+        // 2. 拼接待签名字符串
+        let algorithm = "TC3-HMAC-SHA256";
+        let credential_scope = format!("{}/tmt/tc3_request", date);
+        let hashed_canonical_request = hex::encode(Sha256::digest(canonical_request.as_bytes()));
+        let string_to_sign = format!(
+            "{}\n{}\n{}\n{}",
+            algorithm, timestamp, credential_scope, hashed_canonical_request
+        );
+
+        // 3. 计算签名
+        let secret_date = {
+            let mut mac = HmacSha256::new_from_slice(format!("TC3{}", self.secret_key).as_bytes()).unwrap();
+            mac.update(date.as_bytes());
+            mac.finalize().into_bytes()
+        };
+        let secret_service = {
+            let mut mac = HmacSha256::new_from_slice(&secret_date).unwrap();
+            mac.update(b"tmt");
+            mac.finalize().into_bytes()
+        };
+        let secret_signing = {
+            let mut mac = HmacSha256::new_from_slice(&secret_service).unwrap();
+            mac.update(b"tc3_request");
+            mac.finalize().into_bytes()
+        };
+        let signature = {
+            let mut mac = HmacSha256::new_from_slice(&secret_signing).unwrap();
+            mac.update(string_to_sign.as_bytes());
+            hex::encode(mac.finalize().into_bytes())
+        };
+
+        // 4. 拼接 Authorization
+        format!(
+            "{} Credential={}/{}, SignedHeaders={}, Signature={}",
+            algorithm, self.secret_id, credential_scope, signed_headers, signature
+        )
+    }
+
+    async fn translate_batch(
+        &self,
+        texts: &[&String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        // 腾讯 TMT TextTranslate 一次只翻译一条文本
+        // 批量翻译用 TextTranslateBatch
+        let text_list: Vec<&str> = texts.iter().map(|t| t.as_str()).collect();
+        let payload = serde_json::json!({
+            "SourceTextList": text_list,
+            "Source": source_lang,
+            "Target": target_lang,
+            "ProjectId": 0,
+        }).to_string();
+
+        let timestamp = chrono::Utc::now().timestamp();
+        let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let authorization = self.sign(&payload, timestamp, &date);
+
+        let resp = self
+            .client
+            .post("https://tmt.tencentcloudapi.com/")
+            .header("Authorization", &authorization)
+            .header("Content-Type", "application/json; charset=utf-8")
+            .header("Host", "tmt.tencentcloudapi.com")
+            .header("X-TC-Action", "TextTranslateBatch")
+            .header("X-TC-Version", "2018-03-21")
+            .header("X-TC-Timestamp", timestamp.to_string())
+            .body(payload)
+            .send()
+            .await
+            .map_err(|e| AppError::TranslateNetworkError {
+                provider: "tencent".to_string(),
+                detail: e.to_string(),
+            })?;
+
+        let status = resp.status();
+        let response_body = resp.text().await.unwrap_or_default();
+
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "tencent".to_string(),
+                detail,
+            });
+        }
+
+        if !status.is_success() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "tencent".to_string(),
+                detail: format!("HTTP {}: {}", status, response_body),
+            });
+        }
+
+        let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        // 检查错误
+        if let Some(err) = result.get("Response").and_then(|r| r.get("Error")) {
+            let code = err.get("Code").and_then(|c| c.as_str()).unwrap_or("unknown");
+            let msg = err.get("Message").and_then(|m| m.as_str()).unwrap_or("");
+            let full_msg = format!("{}: {}", code, msg);
+            if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
+                return Err(AppError::TranslateInsufficientBalance {
+                    provider: "tencent".to_string(),
+                    detail,
+                });
+            }
+            return Err(AppError::TranslateNetworkError {
+                provider: "tencent".to_string(),
+                detail: full_msg,
+            });
+        }
+
+        let target_list = result["Response"]["TargetTextList"]
+            .as_array()
+            .ok_or_else(|| AppError::TranslateAlignFailed {
+                missing: texts.len(),
+            })?;
+
+        let results: Vec<String> = target_list
+            .iter()
+            .map(|t| t.as_str().unwrap_or("").to_string())
+            .collect();
+
+        if results.len() != texts.len() {
+            return Err(AppError::TranslateAlignFailed {
+                missing: texts.len().saturating_sub(results.len()),
+            });
+        }
+
+        Ok(results)
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for TencentProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        const TENCENT_MAX_BATCH: usize = 25; // 腾讯批量翻译上限
+        let mut results = vec![String::new(); texts.len()];
+        let non_empty: Vec<(usize, &String)> = texts
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.trim().is_empty())
+            .collect();
+
+        if non_empty.is_empty() {
+            return Ok(results);
+        }
+
+        for chunk in non_empty.chunks(TENCENT_MAX_BATCH) {
+            let refs: Vec<&String> = chunk.iter().map(|(_, t)| *t).collect();
+            let translated = self
+                .translate_batch(&refs, source_lang, target_lang)
+                .await?;
+            for (i, tr) in translated.into_iter().enumerate() {
+                results[chunk[i].0] = tr;
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
+            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        self.translate(&["test".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 11 END ===
+
+/// 火山翻译 API（火山引擎机器翻译）
+/// 文档：https://www.volcengine.com/docs/4640
+/// 认证：HMAC-SHA256 签名（火山引擎 OpenAPI 签名方式）
+pub struct VolcengineProvider {
+    access_key: String,
+    secret_key: String,
+    client: reqwest::Client,
+}
+
+impl VolcengineProvider {
+    pub fn new(access_key: String, secret_key: String) -> Self {
+        Self::with_client(access_key, secret_key, reqwest::Client::new())
+    }
+    pub fn with_client(access_key: String, secret_key: String, client: reqwest::Client) -> Self {
+        Self { access_key, secret_key, client }
+    }
+
+    /// 火山引擎 V4 签名
+    fn sign(&self, payload: &str, timestamp: &str, date: &str) -> (String, String) {
+        use sha2::{Digest, Sha256};
+        use hmac::{Hmac, Mac};
+
+        type HmacSha256 = Hmac<Sha256>;
+
+        let service = "translate";
+        let region = "cn-north-1";
+        let host = "open.volcengineapi.com";
+
+        // 1. 规范请求
+        let canonical_uri = "/";
+        let canonical_query = "Action=TranslateText&Version=2020-06-01";
+        let canonical_headers = format!(
+            "content-type:application/json; charset=utf-8\nhost:{}\nx-date:{}\n",
+            host, timestamp
+        );
+        let signed_headers = "content-type;host;x-date";
+        let hashed_payload = hex::encode(Sha256::digest(payload.as_bytes()));
+        let canonical_request = format!(
+            "POST\n{}\n{}\n{}\n{}\n{}",
+            canonical_uri, canonical_query, canonical_headers, signed_headers, hashed_payload
+        );
+
+        // 2. 待签名字符串
+        let credential_scope = format!("{}/{}/{}/request", date, region, service);
+        let hashed_canonical_request = hex::encode(Sha256::digest(canonical_request.as_bytes()));
+        let string_to_sign = format!(
+            "HMAC-SHA256\n{}\n{}\n{}",
+            timestamp, credential_scope, hashed_canonical_request
+        );
+
+        // 3. 计算签名
+        let k_date = {
+            let mut mac = HmacSha256::new_from_slice(self.secret_key.as_bytes()).unwrap();
+            mac.update(date.as_bytes());
+            mac.finalize().into_bytes()
+        };
+        let k_region = {
+            let mut mac = HmacSha256::new_from_slice(&k_date).unwrap();
+            mac.update(region.as_bytes());
+            mac.finalize().into_bytes()
+        };
+        let k_service = {
+            let mut mac = HmacSha256::new_from_slice(&k_region).unwrap();
+            mac.update(service.as_bytes());
+            mac.finalize().into_bytes()
+        };
+        let k_signing = {
+            let mut mac = HmacSha256::new_from_slice(&k_service).unwrap();
+            mac.update(b"request");
+            mac.finalize().into_bytes()
+        };
+        let signature = {
+            let mut mac = HmacSha256::new_from_slice(&k_signing).unwrap();
+            mac.update(string_to_sign.as_bytes());
+            hex::encode(mac.finalize().into_bytes())
+        };
+
+        // 4. Authorization
+        let auth = format!(
+            "HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+            self.access_key, credential_scope, signed_headers, signature
+        );
+
+        (auth, host.to_string())
+    }
+
+    async fn translate_batch(
+        &self,
+        texts: &[&String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        let text_list: Vec<&str> = texts.iter().map(|t| t.as_str()).collect();
+        let payload = serde_json::json!({
+            "TargetLanguage": target_lang,
+            "TextList": text_list,
+        }).to_string();
+        if !source_lang.is_empty() && source_lang != "auto" {
+            // 火山引擎支持 SourceLanguage 可选字段
+        }
+
+        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let date = chrono::Utc::now().format("%Y%m%d").to_string();
+        let (authorization, host) = self.sign(&payload, &timestamp, &date);
+
+        let resp = self
+            .client
+            .post("https://open.volcengineapi.com/?Action=TranslateText&Version=2020-06-01")
+            .header("Authorization", &authorization)
+            .header("Content-Type", "application/json; charset=utf-8")
+            .header("Host", &host)
+            .header("X-Date", &timestamp)
+            .body(payload)
+            .send()
+            .await
+            .map_err(|e| AppError::TranslateNetworkError {
+                provider: "volcengine".to_string(),
+                detail: e.to_string(),
+            })?;
+
+        let status = resp.status();
+        let response_body = resp.text().await.unwrap_or_default();
+
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "volcengine".to_string(),
+                detail,
+            });
+        }
+
+        if !status.is_success() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "volcengine".to_string(),
+                detail: format!("HTTP {}: {}", status, response_body),
+            });
+        }
+
+        let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        // 检查错误
+        if let Some(err) = result.get("ResponseMetadata").and_then(|r| r.get("Error")) {
+            let code = err.get("Code").and_then(|c| c.as_str()).unwrap_or("unknown");
+            let msg = err.get("Message").and_then(|m| m.as_str()).unwrap_or("");
+            let full_msg = format!("{}: {}", code, msg);
+            if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
+                return Err(AppError::TranslateInsufficientBalance {
+                    provider: "volcengine".to_string(),
+                    detail,
+                });
+            }
+            return Err(AppError::TranslateNetworkError {
+                provider: "volcengine".to_string(),
+                detail: full_msg,
+            });
+        }
+
+        let translation_list = result["TranslationList"]
+            .as_array()
+            .ok_or_else(|| AppError::TranslateAlignFailed {
+                missing: texts.len(),
+            })?;
+
+        let results: Vec<String> = translation_list
+            .iter()
+            .map(|item| {
+                item.get("Translation")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect();
+
+        if results.len() != texts.len() {
+            return Err(AppError::TranslateAlignFailed {
+                missing: texts.len().saturating_sub(results.len()),
+            });
+        }
+
+        Ok(results)
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for VolcengineProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        const VOLC_MAX_BATCH: usize = 20;
+        let mut results = vec![String::new(); texts.len()];
+        let non_empty: Vec<(usize, &String)> = texts
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.trim().is_empty())
+            .collect();
+
+        if non_empty.is_empty() {
+            return Ok(results);
+        }
+
+        for chunk in non_empty.chunks(VOLC_MAX_BATCH) {
+            let refs: Vec<&String> = chunk.iter().map(|(_, t)| *t).collect();
+            let translated = self
+                .translate_batch(&refs, source_lang, target_lang)
+                .await?;
+            for (i, tr) in translated.into_iter().enumerate() {
+                results[chunk[i].0] = tr;
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        self.translate(&["test".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 12 END ===
+
+/// 阿里翻译 API（阿里云机器翻译）
+/// 文档：https://www.aliyun.com/product/ai/alimt
+/// 认证：HMAC-SHA1 签名（阿里云 OpenAPI 签名方式）
+pub struct AliyunProvider {
+    access_key_id: String,
+    access_key_secret: String,
+    client: reqwest::Client,
+}
+
+impl AliyunProvider {
+    pub fn new(access_key_id: String, access_key_secret: String) -> Self {
+        Self::with_client(access_key_id, access_key_secret, reqwest::Client::new())
+    }
+    pub fn with_client(access_key_id: String, access_key_secret: String, client: reqwest::Client) -> Self {
+        Self { access_key_id, access_key_secret, client }
+    }
+
+    /// 阿里云 RPC API 签名（HMAC-SHA1）
+    fn sign(&self, params: &[(String, String)]) -> String {
+        use sha1::Sha1;
+        use hmac::{Hmac, Mac};
+
+        type HmacSha1 = Hmac<Sha1>;
+
+        // 1. 排序参数
+        let mut sorted = params.to_vec();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // 2. 拼接 canonicalized query string
+        let canonicalized: String = sorted
+            .iter()
+            .map(|(k, v)| {
+                format!(
+                    "{}={}",
+                    url_encode(k),
+                    url_encode(v)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+
+        // 3. 构造待签名字符串
+        let string_to_sign = format!(
+            "GET&%2F&{}",
+            url_encode(&canonicalized)
+        );
+
+        // 4. HMAC-SHA1
+        let key = format!("{}&", self.access_key_secret);
+        let mut mac = HmacSha1::new_from_slice(key.as_bytes()).unwrap();
+        mac.update(string_to_sign.as_bytes());
+        let signature = mac.finalize().into_bytes();
+        base64_url::encode(&signature)
+    }
+
+    async fn translate_batch(
+        &self,
+        texts: &[&String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        // 阿里云 通用文本翻译 GetTranslateRequestBatch 或 逐条 TranslateGeneral
+        // 使用 TranslateGeneral 逐条翻译
+        let mut results = Vec::with_capacity(texts.len());
+
+        for text in texts {
+            if text.trim().is_empty() {
+                results.push(String::new());
+                continue;
+            }
+
+            let nonce = uuid::Uuid::new_v4().to_string();
+            let timestamp = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+            let mut params: Vec<(String, String)> = vec![
+                ("Format".into(), "JSON".into()),
+                ("Version".into(), "2018-10-12".into()),
+                ("AccessKeyId".into(), self.access_key_id.clone()),
+                ("SignatureMethod".into(), "HMAC-SHA1".into()),
+                ("Timestamp".into(), timestamp.clone()),
+                ("SignatureVersion".into(), "1.0".into()),
+                ("SignatureNonce".into(), nonce.clone()),
+                ("Action".into(), "TranslateGeneral".into()),
+                ("Scene".into(), "general".into()),
+                ("SourceLanguage".into(), source_lang.into()),
+                ("TargetLanguage".into(), target_lang.into()),
+                ("SourceText".into(), text.as_str().to_string()),
+                ("FormatType".into(), "text".into()),
+            ];
+
+            // 计算签名
+            let signature = self.sign(&params);
+            params.push(("Signature".into(), signature));
+
+            // 构建 query string
+            let query: String = params
+                .iter()
+                .map(|(k, v)| format!("{}={}", url_encode(k), url_encode(v)))
+                .collect::<Vec<_>>()
+                .join("&");
+
+            let url = format!("https://mt.cn-hangzhou.aliyuncs.com/?{}", query);
+
+            let resp = self
+                .client
+                .get(&url)
+                .send()
+                .await
+                .map_err(|e| AppError::TranslateNetworkError {
+                    provider: "aliyun".to_string(),
+                    detail: e.to_string(),
+                })?;
+
+            let status = resp.status();
+            let response_body = resp.text().await.unwrap_or_default();
+
+            if let Some(detail) = check_insufficient_balance(status, &response_body) {
+                return Err(AppError::TranslateInsufficientBalance {
+                    provider: "aliyun".to_string(),
+                    detail,
+                });
+            }
+
+            if !status.is_success() {
+                return Err(AppError::TranslateNetworkError {
+                    provider: "aliyun".to_string(),
+                    detail: format!("HTTP {}: {}", status, response_body),
+                });
+            }
+
+            let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+                AppError::TranslateResponseParseFailed {
+                    detail: e.to_string(),
+                }
+            })?;
+
+            // 检查错误
+            if let Some(code) = result.get("Code").and_then(|c| c.as_str()) {
+                if code != "200" {
+                    let msg = result.get("Message").and_then(|m| m.as_str()).unwrap_or("");
+                    let full_msg = format!("Code: {}, Message: {}", code, msg);
+                    if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
+                        return Err(AppError::TranslateInsufficientBalance {
+                            provider: "aliyun".to_string(),
+                            detail,
+                        });
+                    }
+                    return Err(AppError::TranslateNetworkError {
+                        provider: "aliyun".to_string(),
+                        detail: full_msg,
+                    });
+                }
+            }
+
+            let translated = result["Data"]["Translated"]
+                .as_str()
+                .unwrap_or("");
+
+            results.push(translated.to_string());
+        }
+
+        Ok(results)
+    }
+}
+
+/// URL 编码（阿里云要求特殊编码规则）
+fn url_encode(s: &str) -> String {
+    let mut result = String::new();
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                result.push(byte as char);
+            }
+            b'*' => result.push_str("%2A"),
+            _ => {
+                result.push_str(&format!("%{:02X}", byte));
+            }
+        }
+    }
+    result
+}
+
+/// 简单 base64 URL-safe 编码
+mod base64_url {
+    pub fn encode(data: &[u8]) -> String {
+        use std::fmt::Write;
+        let mut result = String::new();
+        for byte in data {
+            write!(result, "{:02x}", byte).unwrap();
+        }
+        result
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for AliyunProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        // 阿里云 TranslateGeneral 逐条翻译
+        self.translate_batch(
+            &texts.iter().collect::<Vec<_>>(),
+            source_lang,
+            target_lang,
+        )
+        .await
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
+            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        self.translate(&["test".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 13 END ===
+
+/// Amazon Translate API
+/// 文档：https://docs.aws.amazon.com/translate/latest/dg/api-reference.html
+/// 认证：AWS Signature v4
+pub struct AmazonProvider {
+    access_key: String,
+    secret_key: String,
+    region: String,
+    client: reqwest::Client,
+}
+
+impl AmazonProvider {
+    pub fn new(access_key: String, secret_key: String, region: String) -> Self {
+        Self::with_client(access_key, secret_key, region, reqwest::Client::new())
+    }
+    pub fn with_client(access_key: String, secret_key: String, region: String, client: reqwest::Client) -> Self {
+        Self { access_key, secret_key, region, client }
+    }
+
+    /// AWS SigV4 签名
+    fn sign(&self, payload: &str, timestamp: &str, date: &str, host: &str) -> String {
+        use sha2::{Digest, Sha256};
+        use hmac::{Hmac, Mac};
+
+        type HmacSha256 = Hmac<Sha256>;
+
+        let service = "translate";
+        let canonical_uri = "/";
+        let canonical_query = "";
+        let canonical_headers = format!(
+            "content-type:application/x-amz-json-1.1\nhost:{}\nx-amz-date:{}\n",
+            host, timestamp
+        );
+        let signed_headers = "content-type;host;x-amz-date";
+        let hashed_payload = hex::encode(Sha256::digest(payload.as_bytes()));
+        let canonical_request = format!(
+            "POST\n{}\n{}\n{}\n{}\n{}",
+            canonical_uri, canonical_query, canonical_headers, signed_headers, hashed_payload
+        );
+
+        let credential_scope = format!("{}/{}/{}/aws4_request", date, self.region, service);
+        let hashed_canonical_request = hex::encode(Sha256::digest(canonical_request.as_bytes()));
+        let string_to_sign = format!(
+            "AWS4-HMAC-SHA256\n{}\n{}\n{}",
+            timestamp, credential_scope, hashed_canonical_request
+        );
+
+        let k_date = {
+            let mut mac = HmacSha256::new_from_slice(format!("AWS4{}", self.secret_key).as_bytes()).unwrap();
+            mac.update(date.as_bytes());
+            mac.finalize().into_bytes()
+        };
+        let k_region = {
+            let mut mac = HmacSha256::new_from_slice(&k_date).unwrap();
+            mac.update(self.region.as_bytes());
+            mac.finalize().into_bytes()
+        };
+        let k_service = {
+            let mut mac = HmacSha256::new_from_slice(&k_region).unwrap();
+            mac.update(service.as_bytes());
+            mac.finalize().into_bytes()
+        };
+        let k_signing = {
+            let mut mac = HmacSha256::new_from_slice(&k_service).unwrap();
+            mac.update(b"aws4_request");
+            mac.finalize().into_bytes()
+        };
+        let signature = {
+            let mut mac = HmacSha256::new_from_slice(&k_signing).unwrap();
+            mac.update(string_to_sign.as_bytes());
+            hex::encode(mac.finalize().into_bytes())
+        };
+
+        format!(
+            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+            self.access_key, credential_scope, signed_headers, signature
+        )
+    }
+
+    async fn translate_batch(
+        &self,
+        texts: &[&String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        // Amazon Translate: TranslateText 一次最多 10 条
+        let text_list: Vec<&str> = texts.iter().map(|t| t.as_str()).collect();
+        let payload = serde_json::json!({
+            "TextList": text_list,
+            "SourceLanguageCode": if source_lang == "auto" { "en" } else { source_lang },
+            "TargetLanguageCode": target_lang,
+        }).to_string();
+
+        let host = format!("translate.{}.amazonaws.com", self.region);
+        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let date = chrono::Utc::now().format("%Y%m%d").to_string();
+        let authorization = self.sign(&payload, &timestamp, &date, &host);
+
+        let url = format!("https://{}", host);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Authorization", &authorization)
+            .header("Content-Type", "application/x-amz-json-1.1")
+            .header("X-Amz-Date", &timestamp)
+            .header("X-Amz-Target", "AWSShineFrontendService_20170701.TranslateText")
+            .body(payload)
+            .send()
+            .await
+            .map_err(|e| AppError::TranslateNetworkError {
+                provider: "amazon".to_string(),
+                detail: e.to_string(),
+            })?;
+
+        let status = resp.status();
+        let response_body = resp.text().await.unwrap_or_default();
+
+        if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            return Err(AppError::TranslateInsufficientBalance {
+                provider: "amazon".to_string(),
+                detail,
+            });
+        }
+
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            return Err(AppError::TranslateAuthFailed {
+                provider: "amazon".to_string(),
+            });
+        }
+
+        if !status.is_success() {
+            return Err(AppError::TranslateNetworkError {
+                provider: "amazon".to_string(),
+                detail: format!("HTTP {}: {}", status, response_body),
+            });
+        }
+
+        let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            AppError::TranslateResponseParseFailed {
+                detail: e.to_string(),
+            }
+        })?;
+
+        let translations = result["TranslationsList"]
+            .as_array()
+            .ok_or_else(|| AppError::TranslateAlignFailed {
+                missing: texts.len(),
+            })?;
+
+        let results: Vec<String> = translations
+            .iter()
+            .map(|item| {
+                item.get("TranslatedText")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect();
+
+        if results.len() != texts.len() {
+            return Err(AppError::TranslateAlignFailed {
+                missing: texts.len().saturating_sub(results.len()),
+            });
+        }
+
+        Ok(results)
+    }
+}
+
+#[async_trait::async_trait]
+impl TranslateProviderTrait for AmazonProvider {
+    async fn translate(
+        &self,
+        texts: &[String],
+        source_lang: &str,
+        target_lang: &str,
+    ) -> Result<Vec<String>, AppError> {
+        const AMAZON_MAX_BATCH: usize = 10;
+        let mut results = vec![String::new(); texts.len()];
+        let non_empty: Vec<(usize, &String)> = texts
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !t.trim().is_empty())
+            .collect();
+
+        if non_empty.is_empty() {
+            return Ok(results);
+        }
+
+        for chunk in non_empty.chunks(AMAZON_MAX_BATCH) {
+            let refs: Vec<&String> = chunk.iter().map(|(_, t)| *t).collect();
+            let translated = self
+                .translate_batch(&refs, source_lang, target_lang)
+                .await?;
+            for (i, tr) in translated.into_iter().enumerate() {
+                results[chunk[i].0] = tr;
+            }
+        }
+
+        Ok(results)
+    }
+
+    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+        Ok(vec![
+            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
+            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
+            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
+            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
+            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
+            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
+        ])
+    }
+
+    async fn test_connection(&self) -> Result<(), AppError> {
+        self.translate(&["test".to_string()], "en", "zh").await?;
+        Ok(())
+    }
+}
+
+// === SECTION 14 END ===
+
+/// AI 服务 ID → 显示名映射（用于错误消息中显示真实服务商名）
+pub fn ai_service_display_name(service_id: &str) -> &'static str {
+    match service_id {
+        "deepseek" => "DeepSeek",
+        "zhipu" => "智谱GLM",
+        "siliconflow" => "硅基流动",
+        "groq" => "Groq",
+        "qwen" => "通义千问",
+        "doubao" => "豆包",
+        "hunyuan" => "混元",
+        "lingyi" => "零一万物",
+        "kimi" => "Kimi",
+        "openai" => "OpenAI",
+        "azure_openai" => "Azure OpenAI",
+        "gemini" => "Gemini",
+        "ernie" => "文心一言",
+        "ollama" => "Ollama",
+        "lmstudio" => "LM Studio",
+        "custom" => "自定义端点",
+        _ => "OpenAI",
+    }
+}
+
 /// 创建翻译 provider 实例
 pub fn create_provider(
     provider: &TranslateProvider,
     credentials: &ProviderCredentials,
 ) -> Result<std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>, AppError> {
-    create_provider_with_proxy(provider, credentials, &ProxyConfig::default())
+    create_provider_with_proxy(provider, credentials, &ProxyConfig::default(), None)
 }
 
 /// 创建翻译 provider 实例（带代理配置）
+/// service_name: AI 服务的显示名（如 "DeepSeek"），用于错误消息；传统翻译传 None
 pub fn create_provider_with_proxy(
     provider: &TranslateProvider,
     credentials: &ProviderCredentials,
     proxy: &ProxyConfig,
+    service_name: Option<&str>,
 ) -> Result<std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>, AppError> {
     let client = proxy.build_client();
     match provider {
@@ -1874,9 +3674,75 @@ pub fn create_provider_with_proxy(
                 .secret_key
                 .clone()
                 .filter(|s| !s.is_empty());
-            Ok(std::sync::Arc::new(OpenAiProvider::with_client(
-                base_url, model, model_type, api_key, client,
-            )))
+            let name = service_name.unwrap_or("OpenAI").to_string();
+            Ok(std::sync::Arc::new(
+                OpenAiProvider::with_client(base_url, model, model_type, api_key, client)
+                    .with_service_name(name),
+            ))
+        }
+        TranslateProvider::DeepL => {
+            let auth_key = credentials.secret_key.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "deepl".to_string() }
+            })?;
+            Ok(std::sync::Arc::new(DeepLProvider::with_client(auth_key, client)))
+        }
+        TranslateProvider::Youdao => {
+            let app_key = credentials.app_id.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "youdao".to_string() }
+            })?;
+            let app_secret = credentials.secret_key.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "youdao".to_string() }
+            })?;
+            Ok(std::sync::Arc::new(YoudaoProvider::with_client(app_key, app_secret, client)))
+        }
+        TranslateProvider::Caiyun => {
+            let token = credentials.secret_key.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "caiyun".to_string() }
+            })?;
+            Ok(std::sync::Arc::new(CaiyunProvider::with_client(token, client)))
+        }
+        TranslateProvider::Niutrans => {
+            let api_key = credentials.secret_key.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "niutrans".to_string() }
+            })?;
+            Ok(std::sync::Arc::new(NiutransProvider::with_client(api_key, client)))
+        }
+        TranslateProvider::Tencent => {
+            let secret_id = credentials.app_id.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "tencent".to_string() }
+            })?;
+            let secret_key = credentials.secret_key.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "tencent".to_string() }
+            })?;
+            Ok(std::sync::Arc::new(TencentProvider::with_client(secret_id, secret_key, client)))
+        }
+        TranslateProvider::Volcengine => {
+            let access_key = credentials.app_id.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "volcengine".to_string() }
+            })?;
+            let secret_key = credentials.secret_key.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "volcengine".to_string() }
+            })?;
+            Ok(std::sync::Arc::new(VolcengineProvider::with_client(access_key, secret_key, client)))
+        }
+        TranslateProvider::Aliyun => {
+            let access_key_id = credentials.app_id.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "aliyun".to_string() }
+            })?;
+            let access_key_secret = credentials.secret_key.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "aliyun".to_string() }
+            })?;
+            Ok(std::sync::Arc::new(AliyunProvider::with_client(access_key_id, access_key_secret, client)))
+        }
+        TranslateProvider::Amazon => {
+            let access_key = credentials.app_id.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "amazon".to_string() }
+            })?;
+            let secret_key = credentials.secret_key.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "amazon".to_string() }
+            })?;
+            let region = credentials.region.clone().unwrap_or_else(|| "us-east-1".to_string());
+            Ok(std::sync::Arc::new(AmazonProvider::with_client(access_key, secret_key, region, client)))
         }
     }
 }
@@ -2409,4 +4275,39 @@ mod tests {
     }
 
     // === SECTION 10 END ===
+
+    // === SECTION 11: cache provider name tests ===
+
+    #[test]
+    fn test_build_cache_provider_name_injection() {
+        // 不同输入产生不同输出
+        let a = build_cache_provider_name(&["openai", "deepseek", "deepseek-chat"]);
+        let b = build_cache_provider_name(&["openai", "zhipu", "glm-4-flash"]);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_build_cache_provider_name_no_collision_pipe_in_model() {
+        // model 含 || 时不应与 serviceId 含 || 碰撞
+        let a = build_cache_provider_name(&["openai", "x", "a||b"]);
+        let b = build_cache_provider_name(&["openai", "x||a", "b"]);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn test_build_cache_provider_name_escape() {
+        // 字段内的 | 被双写转义
+        let name = build_cache_provider_name(&["openai", "deepseek", "model|with|pipe"]);
+        // model|with|pipe → model||with||pipe
+        assert_eq!(name, "openai|deepseek|model||with||pipe");
+    }
+
+    #[test]
+    fn test_effective_concurrency_new_signature() {
+        assert_eq!(TranslateProvider::effective_concurrency(10, 5), 5);
+        assert_eq!(TranslateProvider::effective_concurrency(3, 10), 3);
+        assert_eq!(TranslateProvider::effective_concurrency(0, 5), 1);
+    }
+
+    // === SECTION 11 END ===
 }

@@ -123,11 +123,11 @@ export const api = {
     callIpc<SubtitleFile>("split_bilingual_subtitle", { file, splitMode }),
 
   // === 翻译命令 ===
-  translateSubtitle: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string) =>
-    callIpc<TranslateResult>("translate_subtitle", { entries, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null }),
+  translateSubtitle: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string, serviceId?: string) =>
+    callIpc<TranslateResult>("translate_subtitle", { entries, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null, serviceId: serviceId ?? null }),
 
-  getCachedTranslations: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string) =>
-    callIpc<TranslateEntry[]>("get_cached_translations", { entries, sourceLang, targetLang, provider }),
+  getCachedTranslations: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, serviceId?: string, model?: string) =>
+    callIpc<TranslateEntry[]>("get_cached_translations", { entries, sourceLang, targetLang, provider, serviceId: serviceId ?? null, model: model ?? null }),
 
   cancelTranslate: () =>
     callIpc<void>("cancel_translate"),
@@ -154,6 +154,7 @@ export const api = {
     baseUrl?: string,
     model?: string,
     modelType?: string,
+    serviceId?: string,
   ) =>
     callIpc<TestConnectionResult>("test_translate_connection", {
       provider,
@@ -163,6 +164,7 @@ export const api = {
       baseUrl: baseUrl ?? null,
       model: model ?? null,
       modelType: modelType ?? null,
+      serviceId: serviceId ?? null,
     }),
 
   listOpenaiModels: (baseUrl: string, apiKey?: string) =>

@@ -1,8 +1,9 @@
 import { useEffect, lazy, Suspense } from "react";
-import { HashRouter, Routes, Route } from "react-router-dom";
+import { HashRouter, Routes, Route, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { listen } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { toast } from "sonner";
 import MainView from "./views/MainView";
 // 路由级懒加载：SettingsView 不在首屏加载，减小首屏 JS 体积
 const SettingsView = lazy(() => import("./views/SettingsView"));
@@ -268,6 +269,7 @@ export default function App() {
     <>
       <HashRouter>
         <Suspense fallback={null}>
+          <RouteWatcher />
           <Routes>
             <Route path="/" element={<MainView />} />
             <Route path="/settings" element={<SettingsView />} />
@@ -285,4 +287,15 @@ export default function App() {
       )}
     </>
   );
+}
+
+/// 监听路由变化，切回首页（"/"）时关闭所有 toast
+function RouteWatcher() {
+  const location = useLocation();
+  useEffect(() => {
+    if (location.pathname === "/") {
+      toast.dismiss();
+    }
+  }, [location.pathname]); // eslint-disable-line react-hooks/exhaustive-deps
+  return null;
 }

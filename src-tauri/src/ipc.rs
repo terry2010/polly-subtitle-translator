@@ -379,14 +379,17 @@ pub async fn translate_subtitle(
     provider: String,
     model: Option<String>,
     model_type: Option<String>,
+    service_id: Option<String>,
     db: State<'_, Database>,
     cancel_token: State<'_, CancelToken>,
     app: tauri::AppHandle,
 ) -> Result<translate::TranslateResult, IpcError> {
-    tracing::info!("translate_subtitle 调用: provider={}, model={:?}, model_type={:?}, entries={}, source={}, target={}", provider, model, model_type, entries.len(), source_lang, target_lang);
+    tracing::info!("translate_subtitle 调用: provider={}, model={:?}, model_type={:?}, service_id={:?}, entries={}, source={}, target={}", provider, model, model_type, service_id, entries.len(), source_lang, target_lang);
 
     // 重置取消标志
     cancel_token.store(false, Ordering::Relaxed);
+
+    // comingSoon 拦截：在 TranslateProvider::from_str 之前，返回友好错误
 
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
         AppError::TranslateUnknownProvider { provider: provider.clone() }
@@ -399,23 +402,28 @@ pub async fn translate_subtitle(
     let region_ref = format!("translate_{}_region", provider);
     let region = db.get_config(&region_ref).map_err(to_ipc_err)?;
 
-    // OpenAi 专属配置：base_url / model / model_type
-    // model 优先用前端传入的值（翻译面板可切换模型），回退 db
+    // OpenAi 专属配置：base_url / model / model_type（per-service 读取）
     let base_url = if prov == TranslateProvider::OpenAi {
-        db.get_config("translate_openai_base_url").map_err(to_ipc_err)?
+        let key = match &service_id {
+            Some(sid) => format!("translate_openai_{}_base_url", sid),
+            None => "translate_openai_base_url".to_string(),
+        };
+        db.get_config(&key).map_err(to_ipc_err)?
     } else { None };
-    let model = if prov == TranslateProvider::OpenAi {
-        model.or_else(|| db.get_config("translate_openai_model").ok().flatten())
-    } else { None };
+
+    // model：AI 翻译时前端必传，不再从 db fallback（避免读到其他服务的模型）
+    let model = if prov == TranslateProvider::OpenAi { model } else { None };
+
+    // model_type：per-service 从 db 读取映射，再 fallback from_model_id
     let model_type = if prov == TranslateProvider::OpenAi {
-        // 优先用前端传入的 model_type（per-model 独立类型）
-        // 其次从 db 的 per-model JSON 映射中查找
-        // 最后根据 model id 自动识别
         if let Some(mt) = model_type {
             Some(mt)
         } else if let Some(m) = &model {
-            // 从 db 读取 per-model modelType JSON: {"model_id":"qwen3",...}
-            if let Ok(Some(json)) = db.get_config("translate_openai_selected_model_types") {
+            let types_key = match &service_id {
+                Some(sid) => format!("translate_openai_{}_selected_model_types", sid),
+                None => "translate_openai_selected_model_types".to_string(),
+            };
+            if let Ok(Some(json)) = db.get_config(&types_key) {
                 if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&json) {
                     if let Some(val) = map.get(m) {
                         if let Some(s) = val.as_str() { Some(s.to_string()) } else { None }
@@ -431,8 +439,16 @@ pub async fn translate_subtitle(
         } else { None }
     } else { None };
 
-    // 从 keyring 读取密钥（不降级到明文数据库，凭据仅存系统密钥环）
-    let secret = match config::CredentialStore::load(&provider, "secret") {
+    // 从 keyring 读取密钥：AI 服务用 openai_{service_id} 作为 keyring provider key
+    let keyring_provider = if prov == TranslateProvider::OpenAi {
+        match &service_id {
+            Some(sid) => format!("openai_{}", sid),
+            None => "openai".to_string(),
+        }
+    } else {
+        provider.clone()
+    };
+    let secret = match config::CredentialStore::load(&keyring_provider, "secret") {
         Ok(s) => {
             tracing::info!("translate_subtitle secret from keyring: 已获取");
             Some(s)
@@ -463,34 +479,67 @@ pub async fn translate_subtitle(
         secret_key: secret,
         region,
         base_url,
-        model,
-        model_type,
+        model: model.clone(),
+        model_type: model_type.clone(),
     };
 
-    // 读取该 provider 的代理开关：默认跟随软件代理（proxy_mode != none 时用代理）
+    // 代理：per-service 读取
     let proxy_config = ProxyConfig::load_from_db(&db);
-    let use_proxy_key = format!("translate_{}_use_proxy", provider);
+    let use_proxy_key = if prov == TranslateProvider::OpenAi {
+        match &service_id {
+            Some(sid) => format!("translate_openai_{}_use_proxy", sid),
+            None => format!("translate_{}_use_proxy", provider),
+        }
+    } else {
+        format!("translate_{}_use_proxy", provider)
+    };
     let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
     let effective_proxy = match use_proxy.as_deref() {
-        Some("false") => ProxyConfig::default(), // 用户明确取消代理
-        _ => proxy_config, // 默认或 "true"：使用软件代理
+        Some("false") => ProxyConfig::default(),
+        _ => proxy_config,
     };
     tracing::info!("translate_subtitle proxy: use_proxy={:?}, mode={}", use_proxy, effective_proxy.mode);
 
-    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy).map_err(to_ipc_err)?;
+    // AI 服务：用真实服务商名作为 service_name（错误消息中显示）
+    let service_name = if prov == translate::TranslateProvider::OpenAi {
+        service_id.as_deref().map(translate::ai_service_display_name)
+    } else {
+        None
+    };
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_name).map_err(to_ipc_err)?;
+
+    // 缓存 key 隔离：provider_name 纳入 service_id + model
+    let provider_name = if prov == TranslateProvider::OpenAi {
+        match (&service_id, &model) {
+            (Some(sid), Some(m)) => translate::build_cache_provider_name(&["openai", sid, m]),
+            _ => "openai".to_string(),
+        }
+    } else {
+        provider.clone()
+    };
+
+    // QPS 限流：per-service 读取
+    let qps = if prov == TranslateProvider::OpenAi {
+        service_id.as_ref()
+            .and_then(|sid| db.get_config(&format!("translate_openai_{}_qps", sid)).ok().flatten())
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(5)
+    } else {
+        prov.qps_limit()
+    };
 
     // 读取用户配置的并发数，计算实际并发 = min(用户配置, QPS 上限)
     let user_concurrency = db.get_config("translate_concurrency")
         .map_err(to_ipc_err)?
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(3);
-    let effective_conc = translate::TranslateProvider::effective_concurrency(user_concurrency, &prov);
-    tracing::info!("翻译并发: 用户配置={}, QPS上限={}, 实际并发={}", user_concurrency, prov.qps_limit(), effective_conc);
+    let effective_conc = translate::TranslateProvider::effective_concurrency(user_concurrency, qps);
+    tracing::info!("翻译并发: 用户配置={}, QPS={}, 实际并发={}", user_concurrency, qps, effective_conc);
 
     let scheduler = translate::TranslateScheduler::with_cancel_token(
         &db,
         prov_instance,
-        provider.clone(),
+        provider_name,
         cancel_token.inner().clone(),
     )
     .with_concurrency(effective_conc);
@@ -562,18 +611,30 @@ pub async fn get_cached_translations(
     source_lang: String,
     target_lang: String,
     provider: String,
+    service_id: Option<String>,
+    model: Option<String>,
     db: State<'_, Database>,
 ) -> Result<Vec<translate::TranslateEntry>, IpcError> {
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
         AppError::TranslateUnknownProvider { provider: provider.clone() }.to_ipc_error()
     })?;
 
+    // 缓存 key 隔离：必须与 translate_subtitle 构造一致的 provider_name
+    let provider_name = if prov == TranslateProvider::OpenAi {
+        match (&service_id, &model) {
+            (Some(sid), Some(m)) => translate::build_cache_provider_name(&["openai", sid, m]),
+            _ => "openai".to_string(),
+        }
+    } else {
+        prov.as_str().to_string()
+    };
+
     // 获取凭据（缓存查询不需要凭据，但需要 provider_name）
     let scheduler = translate::TranslateScheduler::new(
         &db,
         std::sync::Arc::new(translate::BaiduProvider::new(String::new(), String::new()))
             as std::sync::Arc<dyn translate::TranslateProviderTrait + Send + Sync>,
-        prov.as_str().to_string(),
+        provider_name,
     );
 
     let cached = scheduler
@@ -595,20 +656,35 @@ pub async fn test_translate_connection(
     base_url: Option<String>,
     model: Option<String>,
     model_type: Option<String>,
+    service_id: Option<String>,
     db: State<'_, Database>,
 ) -> Result<TestConnectionResult, IpcError> {
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
         AppError::TranslateUnknownProvider { provider: provider.clone() }
     }).map_err(to_ipc_err)?;
 
-    // OpenAi 专属：优先用前端传入的值，回退到 db
+    // OpenAi 专属：删除 db fallback，前端必传当前编辑值
     let (base_url, model, model_type) = if prov == TranslateProvider::OpenAi {
-        let bu = base_url.or_else(|| db.get_config("translate_openai_base_url").ok().flatten());
-        let m = model.or_else(|| db.get_config("translate_openai_model").ok().flatten());
-        let mt = model_type.or_else(|| db.get_config("translate_openai_model_type").ok().flatten());
-        (bu, m, mt)
+        (base_url, model, model_type)
     } else {
         (None, None, None)
+    };
+
+    // 密钥 fallback：前端传 None/空（掩码状态）时从 keyring 加载
+    let secret_key = if secret_key.is_none() || secret_key.as_deref() == Some("") {
+        let keyring_provider = if prov == TranslateProvider::OpenAi {
+            match &service_id {
+                Some(sid) => format!("openai_{}", sid),
+                None => "openai".to_string(),
+            }
+        } else {
+            provider.clone()
+        };
+        config::CredentialStore::load(&keyring_provider, "secret")
+            .ok()
+            .filter(|s| !s.is_empty())
+    } else {
+        secret_key
     };
 
     let credentials = ProviderCredentials {
@@ -622,14 +698,27 @@ pub async fn test_translate_connection(
 
     // 测试连接也按 per-provider 代理开关决定是否用代理
     let proxy_config = ProxyConfig::load_from_db(&db);
-    let use_proxy_key = format!("translate_{}_use_proxy", provider);
+    let use_proxy_key = if prov == TranslateProvider::OpenAi {
+        match &service_id {
+            Some(sid) => format!("translate_openai_{}_use_proxy", sid),
+            None => format!("translate_{}_use_proxy", provider),
+        }
+    } else {
+        format!("translate_{}_use_proxy", provider)
+    };
     let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
     let effective_proxy = match use_proxy.as_deref() {
         Some("false") => ProxyConfig::default(),
         _ => proxy_config,
     };
 
-    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy).map_err(to_ipc_err)?;
+    // AI 服务：用真实服务商名作为 service_name（错误消息中显示）
+    let service_name = if prov == TranslateProvider::OpenAi {
+        service_id.as_deref().map(translate::ai_service_display_name)
+    } else {
+        None
+    };
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_name).map_err(to_ipc_err)?;
 
     // OpenAi：直接翻译测试文本，返回原文+译文
     if prov == TranslateProvider::OpenAi {

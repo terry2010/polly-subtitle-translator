@@ -16,6 +16,7 @@ import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
 import { api, formatIpcError } from "../lib/api";
 import { withPlayerHidden } from "../lib/utils";
+import { SERVICES, encodeAiSelectValue, decodeAiSelectValue } from "../lib/services";
 import { SubtitlePreviewPanel } from "../components/SubtitlePreviewPanel";
 import { SearchDialog } from "../components/SearchDialog";
 import { HdrNotice } from "../components/HdrNotice";
@@ -227,8 +228,8 @@ export default function MainView() {
   const extractCancelledRef = useRef(false);
   // 各翻译引擎是否已配置凭据
   const [providerConfigured, setProviderConfigured] = useState<Record<string, boolean>>({});
-  // OpenAi：已选模型列表（含 per-model modelType）
-  const [openaiModels, setOpenaiModels] = useState<{ id: string; modelType: string }[]>([]);
+  // OpenAi：已配置的 AI 服务模型列表（含 serviceId + serviceName + model + modelType）
+  const [aiServiceModels, setAiServiceModels] = useState<{ serviceId: string; serviceName: string; model: string; modelType: string }[]>([]);
   // 当前选中的导入字幕路径（用于高亮）
   const [selectedImportedPath, setSelectedImportedPath] = useState<string | null>(null);
 
@@ -322,6 +323,8 @@ export default function MainView() {
 
   // 关闭视频：清除所有视频相关状态（提取缓存、自动提取 ref、导入字幕列表）
   const handleCloseVideo = useCallback(() => {
+    // 关闭所有 toast（如双语字幕拆分提示）
+    toast.dismiss();
     // 取消正在进行的提取，杀死 ffmpeg 进程，避免堆积导致 IPC 线程池耗尽
     extractCancelledRef.current = true;
     api.cancelExtractSubtitle().catch(() => {});
@@ -356,9 +359,13 @@ export default function MainView() {
     if (cached) {
       subtitleStore.setFile(cached);
       // 查询翻译缓存
-      const { sourceLang, targetLang, provider } = useTranslateStore.getState();
+      const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
       try {
-        const cachedTr = await api.getCachedTranslations(cached.entries, sourceLang, targetLang, provider);
+        const cachedTr = await api.getCachedTranslations(
+          cached.entries, sourceLang, targetLang, provider,
+          provider === "openai" ? (serviceId || undefined) : undefined,
+          provider === "openai" ? (model || undefined) : undefined,
+        );
         if (cachedTr && cachedTr.length > 0) {
           const entries = cached.entries.map((e: any) => {
             const tr = cachedTr.find((c) => c.index === e.index);
@@ -407,10 +414,12 @@ export default function MainView() {
       // 提取完成后查询翻译缓存，自动填充已翻译的条目
       const subtitleState = useSubtitleStore.getState();
       if (subtitleState.file) {
-        const { sourceLang, targetLang, provider } = useTranslateStore.getState();
+        const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
         try {
           const cached = await api.getCachedTranslations(
-            subtitleState.file.entries, sourceLang, targetLang, provider
+            subtitleState.file.entries, sourceLang, targetLang, provider,
+            provider === "openai" ? (serviceId || undefined) : undefined,
+            provider === "openai" ? (model || undefined) : undefined,
           );
           if (cached && cached.length > 0) {
             const entries = subtitleState.file.entries.map((e) => {
@@ -482,18 +491,13 @@ export default function MainView() {
 
   // 查询各翻译引擎是否已配置凭据
   useEffect(() => {
-    const providers = ["baidu", "bing", "google", "openai"];
-    Promise.all(providers.map(async (p) => {
+    // 传统翻译：baidu/bing/google
+    const traditionalProviders = ["baidu", "bing", "google"];
+    // AI 服务：遍历所有 AI 服务定义，检查 per-service 配置
+    const aiServices = SERVICES.filter((s) => s.category === "ai");
+
+    const traditionalPromise = Promise.all(traditionalProviders.map(async (p) => {
       try {
-        if (p === "openai") {
-          const [baseUrl, model, selectedModels] = await Promise.all([
-            api.getConfig("translate_openai_base_url").catch(() => null),
-            api.getConfig("translate_openai_model").catch(() => null),
-            api.getConfig("translate_openai_selected_models").catch(() => null),
-          ]);
-          // 放宽判定：只要 baseUrl 存在，且有默认模型或已选模型，即认为已配置
-          return [p, !!(baseUrl && (model || selectedModels))] as [string, boolean];
-        }
         const [appId, secretKeyring, secretConfig] = await Promise.all([
           api.getConfig(`translate_${p}_app_id`).catch(() => null),
           api.getCredential(p, "secret").catch(() => null),
@@ -504,13 +508,32 @@ export default function MainView() {
       } catch {
         return [p, false] as [string, boolean];
       }
-    })).then((results) => {
-      const configured = Object.fromEntries(results);
+    }));
+
+    const aiPromise = Promise.all(aiServices.map(async (s) => {
+      try {
+        const [baseUrl, selectedModels] = await Promise.all([
+          api.getConfig(`translate_openai_${s.id}_base_url`).catch(() => null),
+          api.getConfig(`translate_openai_${s.id}_selected_models`).catch(() => null),
+        ]);
+        if (!baseUrl || !selectedModels) return [s.id, false] as [string, boolean];
+        if (s.requiresApiKey) {
+          const apiKey = await api.getCredential(`openai_${s.id}`, "secret").catch(() => null);
+          if (!apiKey) return [s.id, false] as [string, boolean];
+        }
+        return [s.id, true] as [string, boolean];
+      } catch {
+        return [s.id, false] as [string, boolean];
+      }
+    }));
+
+    Promise.all([traditionalPromise, aiPromise]).then(([tradResults, aiResults]) => {
+      const configured = Object.fromEntries([...tradResults, ...aiResults]);
       setProviderConfigured(configured);
       // 兜底：如果当前 provider 未配置，自动切换到第一个已配置的引擎
-      // 避免"只配了 AI 模型但 provider 默认是 baidu"时翻译引擎下拉框为空
       if (!configured[translateStore.provider]) {
-        const firstConfigured = providers.find((p) => configured[p]);
+        const firstConfigured = [...traditionalProviders, ...aiServices.map((s) => s.id)]
+          .find((p) => configured[p]);
         if (firstConfigured) {
           translateStore.setProvider(firstConfigured);
         }
@@ -518,62 +541,63 @@ export default function MainView() {
     });
   }, []);
 
-  // 加载保存的 provider + OpenAi 模型列表
+  // 加载保存的 provider + serviceId + model
   useEffect(() => {
-    api.getConfig("translate_provider").then((saved) => {
-      if (saved && saved !== translateStore.provider) {
-        translateStore.setProvider(saved);
+    Promise.all([
+      api.getConfig("translate_provider").catch(() => null),
+      api.getConfig("translate_openai_service_id").catch(() => null),
+      api.getConfig("translate_current_model").catch(() => null),
+    ]).then(([savedProvider, savedServiceId, savedModel]) => {
+      if (savedProvider && savedProvider !== translateStore.provider) {
+        translateStore.setProvider(savedProvider);
+      }
+      if (savedProvider === "openai") {
+        translateStore.setServiceId(savedServiceId || null);
+        if (savedModel) translateStore.setModel(savedModel);
       }
     }).catch(() => {});
   }, []);
 
-  // OpenAi：加载勾选的模型列表 + per-model modelType + 默认模型
-  // 不依赖 translateStore.provider，因为用户可能只配了 AI 模型而 provider 默认还是 baidu
-  // 此 useEffect 仅在挂载时执行一次，加载模型列表和默认模型
+  // OpenAi：加载所有已配置 AI 服务的模型列表（用于引擎下拉）
+  // 遍历所有 AI 服务，收集已配置的 serviceId + models
   useEffect(() => {
-    Promise.all([
-      api.getConfig("translate_openai_selected_models").catch(() => null),
-      api.getConfig("translate_openai_selected_model_types").catch(() => null),
-      api.getConfig("translate_openai_model").catch(() => null),
-    ]).then(([savedSelected, savedModelTypes, savedDefault]) => {
-      const ids = savedSelected ? savedSelected.split(",").filter(Boolean) : [];
+    const aiServices = SERVICES.filter((s) => s.category === "ai");
+    Promise.all(aiServices.map(async (s) => {
+      const [baseUrl, selectedModels, modelTypes] = await Promise.all([
+        api.getConfig(`translate_openai_${s.id}_base_url`).catch(() => null),
+        api.getConfig(`translate_openai_${s.id}_selected_models`).catch(() => null),
+        api.getConfig(`translate_openai_${s.id}_selected_model_types`).catch(() => null),
+      ]);
+      if (!baseUrl || !selectedModels) return [];
+      const ids = selectedModels.split(",").filter(Boolean);
       let typeMap: Record<string, string> = {};
-      if (savedModelTypes) {
-        try { typeMap = JSON.parse(savedModelTypes); } catch { /* ignore */ }
-      }
-      const models = ids.map((id) => ({
-        id,
+      try { typeMap = JSON.parse(modelTypes || "{}"); } catch { /* ignore */ }
+      return ids.map((id) => ({
+        serviceId: s.id,
+        serviceName: s.name,
+        model: id,
         modelType: typeMap[id] || "generic",
       }));
-      setOpenaiModels(models);
-      // 始终设置默认模型（不检查 provider，因为 provider 可能还没从 config 加载完）
-      // model 只在 provider 为 openai 时使用，不会影响其他引擎
-      if (!translateStore.model) {
-        // 优先用显式保存的默认模型；如果未保存，则使用已选模型中的第一个
-        const defaultModel = savedDefault || (models.length > 0 ? models[0].id : "");
-        if (defaultModel) {
-          translateStore.setModel(defaultModel);
-          const mt = typeMap[defaultModel] || "generic";
-          translateStore.setModelType(mt);
-        }
-      } else if (translateStore.model) {
-        const found = models.find((m) => m.id === translateStore.model);
-        if (found) translateStore.setModelType(found.modelType);
-      }
+    })).then((results) => {
+      setAiServiceModels(results.flat());
     });
   }, []);
 
-  // 兜底：如果 provider 是 openai 且 model 已设置，但 model 不在 openaiModels 列表中，
+  // 兜底：如果 provider 是 openai 且 model 已设置，但 model 不在 aiServiceModels 列表中，
   // 自动将 model 加入列表，避免下拉框找不到匹配项显示为空
-  // 注意：此 effect 只依赖 provider/model，列表通过函数式更新读取，避免 openaiModels 变化触发循环
   useEffect(() => {
     if (translateStore.provider === "openai" && translateStore.model) {
-      setOpenaiModels((prev) => {
-        if (prev.find((m) => m.id === translateStore.model)) return prev;
-        return [...prev, { id: translateStore.model, modelType: translateStore.modelType || "generic" }];
+      setAiServiceModels((prev) => {
+        if (prev.find((m) => m.model === translateStore.model && m.serviceId === translateStore.serviceId)) return prev;
+        return [...prev, {
+          serviceId: translateStore.serviceId || "openai",
+          serviceName: translateStore.serviceId || "openai",
+          model: translateStore.model,
+          modelType: translateStore.modelType || "generic",
+        }];
       });
     }
-  }, [translateStore.provider, translateStore.model]);
+  }, [translateStore.provider, translateStore.model, translateStore.serviceId]);
 
   // === SECTION 1 END ===
 
@@ -807,10 +831,14 @@ export default function MainView() {
 
   const handleTranslateAndMerge = useCallback(async () => {
     if (!subtitleStore.file) return;
-    const { sourceLang, provider } = translateStore;
+    const { sourceLang, provider, serviceId } = translateStore;
     // 检查：翻译 API 是否已配置凭据
-    if (!providerConfigured[provider]) {
-      const providerName = provider === "bing" ? "Bing" : provider === "google" ? "Google" : t("settings.baidu");
+    // AI 服务：检查 serviceId 对应的配置；传统翻译：检查 provider 对应的配置
+    const configKey = provider === "openai" ? (serviceId || "openai") : provider;
+    if (!providerConfigured[configKey]) {
+      const providerName = provider === "openai"
+        ? (SERVICES.find((s) => s.id === serviceId)?.name || "AI")
+        : provider === "bing" ? "Bing" : provider === "google" ? "Google" : t("settings.baidu");
       toast.error(
         t("translate.providerNotConfigured", "{{provider}} 翻译 API 尚未配置密钥，请先在设置中配置后再翻译", { provider: providerName }),
         {
@@ -1161,20 +1189,36 @@ export default function MainView() {
               <div className="flex items-center gap-2">
                 <label className="text-xs text-muted-foreground flex-shrink-0">{t("translate.engine")}</label>
                 <Select
-                  value={translateStore.provider === "openai" && translateStore.model ? `openai:${translateStore.model}` : translateStore.provider}
+                  value={translateStore.provider === "openai" && translateStore.model
+                    ? encodeAiSelectValue(translateStore.serviceId || "openai", translateStore.model)
+                    : translateStore.provider}
                   onValueChange={(val) => {
                     if (val === "__add_more__") {
                       navigate("/settings?tab=translate");
                       return;
                     }
-                    if (val.startsWith("openai:")) {
-                      const m = val.slice("openai:".length);
+                    const decoded = decodeAiSelectValue(val);
+                    if (decoded) {
+                      // AI 模型
+                      const { serviceId, model } = decoded;
                       translateStore.setProvider("openai");
-                      translateStore.setModel(m);
-                      const found = openaiModels.find((x) => x.id === m);
+                      translateStore.setServiceId(serviceId);
+                      translateStore.setModel(model);
+                      const found = aiServiceModels.find((m) => m.serviceId === serviceId && m.model === model);
                       translateStore.setModelType(found?.modelType || "generic");
+                      // 持久化
+                      api.setConfig("translate_provider", "openai").catch(() => {});
+                      api.setConfig("translate_openai_service_id", serviceId).catch(() => {});
+                      api.setConfig("translate_current_model", model).catch(() => {});
                     } else {
+                      // 传统翻译
                       translateStore.setProvider(val);
+                      translateStore.setServiceId(null);
+                      translateStore.setModel("");
+                      // 持久化
+                      api.setConfig("translate_provider", val).catch(() => {});
+                      api.setConfig("translate_openai_service_id", "").catch(() => {});
+                      api.setConfig("translate_current_model", "").catch(() => {});
                     }
                   }}
                 >
@@ -1192,21 +1236,17 @@ export default function MainView() {
                     {(providerConfigured["google"] || translateStore.provider === "google") && (
                       <SelectItem value="google">Google</SelectItem>
                     )}
-                    {/* AI 模型：只显示已配置或当前选中的；没选模型时显示通用项 */}
-                    {(providerConfigured["openai"] || translateStore.provider === "openai") && (
-                      <>
-                        {openaiModels.length === 0 && (
-                          <SelectItem value="openai">{t("settings.openai", "AI 模型")}</SelectItem>
-                        )}
-                        {openaiModels.map((m) => (
-                          <SelectItem key={m.id} value={`openai:${m.id}`}>
-                            <span className="block truncate" title={`AI模型 - ${m.id}`}>
-                              AI模型 - {m.id}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </>
-                    )}
+                    {/* AI 模型：遍历所有已配置的 AI 服务 */}
+                    {aiServiceModels.map((m) => {
+                      const value = encodeAiSelectValue(m.serviceId, m.model);
+                      return (
+                        <SelectItem key={value} value={value}>
+                          <span className="block truncate" title={`AI模型 - ${m.serviceName} - ${m.model}`}>
+                            AI模型 - {m.serviceName} - {m.model}
+                          </span>
+                        </SelectItem>
+                      );
+                    })}
                     {/* 添加更多引擎 */}
                     <SelectItem value="__add_more__">
                       <span className="flex items-center gap-1 text-primary">
