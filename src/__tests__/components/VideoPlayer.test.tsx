@@ -118,6 +118,7 @@ beforeEach(() => {
   useTranslateStore.setState({
     translating: false, progress: 0, total: 0, result: null, error: null,
     sourceLang: "en", targetLang: "zh", provider: "baidu",
+    model: "", modelType: "", serviceId: null,
   });
 });
 

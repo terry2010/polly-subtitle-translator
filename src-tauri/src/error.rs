@@ -148,6 +148,9 @@ pub enum AppError {
     #[error("Translation auth failed for {provider}")]
     TranslateAuthFailed { provider: String },
 
+    #[error("Translation insufficient balance for {provider}: {detail}")]
+    TranslateInsufficientBalance { provider: String, detail: String },
+
     #[error("Translation credentials not configured")]
     TranslateCredentialsNotConfigured,
 
@@ -461,6 +464,9 @@ impl AppError {
 
             TranslateAuthFailed { provider } => IpcError::new("translate.authFailed", Severity::Recoverable)
                 .with_args(serde_json::json!({ "provider": provider })),
+
+            TranslateInsufficientBalance { provider, detail } => IpcError::new("translate.insufficientBalance", Severity::Recoverable)
+                .with_args(serde_json::json!({ "provider": provider, "detail": detail })),
 
             TranslateCredentialsNotConfigured => IpcError::new("translate.credentialsNotConfigured", Severity::Recoverable),
 

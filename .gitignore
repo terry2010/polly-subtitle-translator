@@ -21,3 +21,4 @@ node_modules
 *.sub
 *.vtt
 *.ssa
+.DS_Store

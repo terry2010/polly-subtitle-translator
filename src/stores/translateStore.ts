@@ -14,12 +14,14 @@ interface TranslateState {
   provider: string;
   model: string;
   modelType: string;
+  serviceId: string | null; // AI 服务 ID（如 "deepseek"），传统翻译为 null
 
   setSourceLang: (lang: string) => void;
   setTargetLang: (lang: string) => void;
   setProvider: (provider: string) => void;
   setModel: (model: string) => void;
   setModelType: (modelType: string) => void;
+  setServiceId: (id: string | null) => void;
   startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void) => Promise<TranslateResult | null>;
   cancelTranslate: () => Promise<void>;
   reset: () => void;
@@ -36,12 +38,14 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
   provider: "baidu",
   model: "",
   modelType: "",
+  serviceId: null,
 
   setSourceLang: (lang) => set({ sourceLang: lang }),
   setTargetLang: (lang) => set({ targetLang: lang }),
   setProvider: (provider) => set({ provider }),
   setModel: (model) => set({ model }),
   setModelType: (modelType) => set({ modelType }),
+  setServiceId: (id) => set({ serviceId: id }),
 
   startTranslate: async (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void) => {
     // 如果正在翻译，不允许启动新的翻译任务
@@ -49,7 +53,7 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
       console.warn("翻译正在进行中，跳过新任务");
       return null;
     }
-    const { sourceLang, targetLang, provider, model, modelType } = get();
+    const { sourceLang, targetLang, provider, model, modelType, serviceId } = get();
     set({ translating: true, progress: 0, total: entries.length, error: null, result: null });
 
     // 监听进度事件
@@ -78,7 +82,7 @@ export const useTranslateStore = create<TranslateState>((set, get) => ({
     }
 
     try {
-      const result = await api.translateSubtitle(entries, sourceLang, targetLang, provider, model || undefined, modelType || undefined);
+      const result = await api.translateSubtitle(entries, sourceLang, targetLang, provider, model || undefined, modelType || undefined, serviceId || undefined);
       set({ translating: false, progress: entries.length, result });
       return result;
     } catch (e: any) {

@@ -1,10 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { setWindowSizeInitialized } from "./MainView";
-import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X, Star, Plus } from "lucide-react";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { SERVICES, ServiceDef, matchesSearch, getServiceById } from "../lib/services";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -96,6 +99,7 @@ export default function SettingsView() {
     : searchParams.get("tab") === "advanced" ? "advanced"
     : "general"
   );
+  const [apiListContainer, setApiListContainer] = useState<HTMLDivElement | null>(null);
 
   const navItems: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: "general", label: t("settings.general"), icon: <SettingsIcon className="h-4 w-4" /> },
@@ -107,12 +111,12 @@ export default function SettingsView() {
 
   return (
     <div className="flex h-screen flex-col">
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-y-hidden overflow-x-auto relative min-w-[1280px]">
         {/* 左侧导航 */}
         <nav className="w-48 border-r bg-muted/30 p-2 space-y-1">
           {/* 返回项：固定在导航顶部 */}
           <button
-            onClick={() => navigate("/")}
+            onClick={() => { toast.dismiss(); navigate("/"); }}
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors hover:bg-accent text-muted-foreground hover:text-foreground border-b mb-1 pb-2"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -134,13 +138,23 @@ export default function SettingsView() {
           ))}
         </nav>
 
-        {/* 右侧内容 */}
+        {/* API 列表 — 悬浮在左侧导航和正文卡片之间，保持最小宽度 192px */}
+        {activeTab === "translate" && (
+          <div
+            ref={setApiListContainer}
+            className="absolute left-48 top-0 bottom-0 w-48 border-r bg-background/95 flex flex-col overflow-hidden z-10"
+          />
+        )}
+
+        {/* 正文卡片 — 所有标签统一位置 */}
         <div className="flex-1 overflow-auto p-6">
           <div className="mx-auto max-w-2xl">
             {activeTab === "general" && (
               <GeneralSettings theme={theme} setTheme={setTheme} language={language} setLanguage={setLanguage} />
             )}
-            {activeTab === "translate" && <TranslateApiSettings />}
+            {activeTab === "translate" && (
+              <TranslateApiSettings listContainer={apiListContainer} />
+            )}
             {activeTab === "player" && <PlayerSettings />}
             {activeTab === "advanced" && <AdvancedSettings />}
             {activeTab === "about" && <AboutSettings />}
@@ -323,79 +337,100 @@ function DefaultLangSettings() {
 // === SECTION 2 END ===
 
 // === 翻译 API 设置 ===
-const PROVIDER_LINKS: Record<string, { url: string; appIdLabel?: string; appIdPlaceholder?: string; hasRegion?: boolean; isOpenAi?: boolean }> = {
-  baidu: {
-    url: "https://fanyi-api.baidu.com/",
-    appIdLabel: "App ID",
-    appIdPlaceholder: "百度翻译 App ID",
-  },
-  bing: {
-    url: "https://learn.microsoft.com/azure/cognitive-services/translator/",
-    appIdLabel: "API Key",
-    appIdPlaceholder: "Azure Translator API Key",
-    hasRegion: true,
-  },
-  google: {
-    url: "https://cloud.google.com/translate/docs/",
-    appIdLabel: "API Key",
-    appIdPlaceholder: "Google Cloud Translation API Key",
-  },
-  openai: {
-    url: "https://github.com/zimufan/ai-subtrans",
-    isOpenAi: true,
-  },
-};
 
-function TranslateApiSettings() {
+// 检查所有服务是否已配置（用于左列表显示已配置项 + 添加面板显示未配置项）
+// 判定逻辑：以用户显式保存的非敏感配置为准，不再把密钥环可读性作为左列表显示条件。
+// 原因：部分环境（macOS Keychain/沙盒/权限）下密钥环写入可能返回成功但读取失败，
+// 导致保存后左侧列表仍不显示。翻译时后端仍会校验密钥。
+async function checkAllServiceConfigs(): Promise<Set<string>> {
+  const configured = new Set<string>();
+  const traditional = SERVICES.filter((s) => s.category === "traditional" && !s.comingSoon);
+  await Promise.all(traditional.map(async (s) => {
+    const appId = await api.getConfig(`translate_${s.id}_app_id`).catch(() => null);
+    // 只要 App ID 存在即认为已添加；密钥用于翻译时后端校验
+    if (appId) configured.add(s.id);
+  }));
+  const ai = SERVICES.filter((s) => s.category === "ai");
+  await Promise.all(ai.map(async (s) => {
+    const [baseUrl, selectedModels] = await Promise.all([
+      api.getConfig(`translate_openai_${s.id}_base_url`).catch(() => null),
+      api.getConfig(`translate_openai_${s.id}_selected_models`).catch(() => null),
+    ]);
+    // 只要填写了 baseUrl 即认为已添加（模型可选，密钥用于翻译时后端校验）
+    if (baseUrl) configured.add(s.id);
+  }));
+  return configured;
+}
+
+// === SECTION 3A END ===
+
+export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDivElement | null }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const devMode = useDevModeStore((s) => s.devMode);
-  const [provider, setProvider] = useState("baidu");
   const [searchParams] = useSearchParams();
+
+  // 左列表选中项：null=官方API, "add:traditional"=添加传统, "add:ai"=添加AI, 否则=服务id
+  const [selectedServiceId, setSelectedServiceId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [configuredIds, setConfiguredIds] = useState<Set<string>>(new Set());
+
+  // 当前编辑的服务定义（null=官方API/添加面板）
+  const currentService = selectedServiceId ? getServiceById(selectedServiceId) : null;
+
+  // 表单状态
   const [appId, setAppId] = useState("");
   const [secretKey, setSecretKey] = useState("");
   const [region, setRegion] = useState("global");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
   const [loading, setLoading] = useState(true);
-  // 删除配置确认弹窗
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  // 代理状态：proxyMode=none 时无代理；useProxy=null=未设置(默认跟随), true/false=显式
   const [proxyMode, setProxyMode] = useState("none");
   const [useProxy, setUseProxy] = useState<boolean | null>(null);
-  // OpenAi 专属
+  // AI 专属
   const [baseUrl, setBaseUrl] = useState("");
-  const [model, setModel] = useState(""); // 默认模型 id
+  const [qps, setQps] = useState(5);
+  const [model, setModel] = useState("");
   const [modelList, setModelList] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
-  // 多选：每个模型有独立的 modelType
   const [selectedModels, setSelectedModels] = useState<{ id: string; modelType: string }[]>([]);
-  // 模型可搜索下拉
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelFilter, setModelFilter] = useState("");
   const modelDropdownRef = useRef<HTMLDivElement>(null);
-  // 记录上次自动刷新模型时使用的 baseUrl，避免重复请求
   const lastAutoFetchUrlRef = useRef<string>("");
 
-  // 加载已保存的配置（URL 参数优先）
+  // === SECTION 3B END ===
+
+  // 加载已配置服务列表
   useEffect(() => {
-    const paramProvider = searchParams.get("provider");
-    if (paramProvider) {
-      setProvider(paramProvider);
+    checkAllServiceConfigs().then(setConfiguredIds);
+  }, []);
+
+  // URL 参数支持：?tab=translate&service=deepseek 直接跳转到某服务
+  useEffect(() => {
+    const paramService = searchParams.get("service");
+    if (paramService) {
+      setSelectedServiceId(paramService);
       return;
     }
-    api.getConfig("translate_provider").then((v) => {
-      if (v) setProvider(v);
-    });
+    setSelectedServiceId(null); // 默认显示官方 API
   }, [searchParams]);
 
-  // OpenAi：刷新模型列表核心逻辑（接受 url 参数，便于加载配置后直接调用）
+  // 根据模型 id 自动识别 model_type
+  const autoDetectModelTypeStr = useCallback((m: string): string => {
+    const lower = m.toLowerCase();
+    if (lower.includes("qwen3")) return "qwen3";
+    if (lower.includes("deepseek")) return "deepseek";
+    return "generic";
+  }, []);
+
+  // AI：刷新模型列表核心逻辑
   const fetchModels = useCallback(async (urlToFetch: string, keyForFetch?: string) => {
     const trimmedUrl = urlToFetch.trim();
     if (!trimmedUrl) return;
     try { new URL(trimmedUrl); } catch { return; }
-
     setLoadingModels(true);
     setModelDropdownOpen(false);
     try {
@@ -410,11 +445,9 @@ function TranslateApiSettings() {
         candidateUrls.push(`${normalized}/v1`);
       }
       const uniqueUrls = Array.from(new Set(candidateUrls));
-
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("timeout")), 3000)
       );
-
       let successUrl = "";
       let allModels: string[] = [];
       for (const url of uniqueUrls) {
@@ -428,36 +461,28 @@ function TranslateApiSettings() {
             allModels = models;
             break;
           }
-        } catch {
-          // 静默
-        }
+        } catch { /* 静默 */ }
       }
-
       if (!successUrl) return;
-
-      if (successUrl !== trimmedUrl) {
-        setBaseUrl(successUrl);
-      }
+      if (successUrl !== trimmedUrl) setBaseUrl(successUrl);
       setModelList(allModels);
       lastAutoFetchUrlRef.current = successUrl;
-
-      // 清理已选模型中不在新列表中的
       setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
-      // 清理默认模型如果不在新列表中
       setModel((prevModel) => {
-        if (prevModel && !allModels.includes(prevModel)) {
-          return "";
-        }
+        if (prevModel && !allModels.includes(prevModel)) return "";
         return prevModel;
       });
-    } catch {
-      // 静默
-    } finally {
+    } catch { /* 静默 */ } finally {
       setLoadingModels(false);
     }
   }, []);
 
+  // 选中服务变化时加载配置
   useEffect(() => {
+    if (!currentService) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setAppId("");
     setSecretKey("");
@@ -467,54 +492,66 @@ function TranslateApiSettings() {
     setModelFilter("");
     setModelDropdownOpen(false);
     setSelectedModels([]);
+    setBaseUrl("");
+    setQps(currentService.presetQps || 5);
     lastAutoFetchUrlRef.current = "";
-    const isOpenAi = provider === "openai";
-    Promise.all([
-      api.getConfig(`translate_${provider}_app_id`).catch(() => null),
-      api.getConfig(`translate_${provider}_region`).catch(() => null),
-      api.getCredential(provider, "secret").catch(() => null),
-      api.getTranslateUseProxy(provider).catch(() => null),
-      isOpenAi ? api.getConfig("translate_openai_base_url").catch(() => null) : Promise.resolve(null),
-      isOpenAi ? api.getConfig("translate_openai_model").catch(() => null) : Promise.resolve(null),
-      isOpenAi ? api.getConfig("translate_openai_selected_models").catch(() => null) : Promise.resolve(null),
-      isOpenAi ? api.getConfig("translate_openai_selected_model_types").catch(() => null) : Promise.resolve(null),
-    ]).then(([savedAppId, savedRegion, savedSecretKeyring, savedUseProxy, savedBaseUrl, savedModel, savedSelectedModels, savedModelTypes]) => {
-      if (savedAppId) setAppId(savedAppId);
-      if (savedRegion) setRegion(savedRegion);
-      if (savedSecretKeyring) setSecretKey("••••••••");
-      setUseProxy(savedUseProxy ?? null);
-      if (savedBaseUrl) {
-        setBaseUrl(savedBaseUrl);
-        if (isOpenAi) {
-          fetchModels(savedBaseUrl);
-        }
-      }
-      if (savedModel) {
-        setModel(savedModel);
-      }
-      // 解析已选模型 + 每个模型的 modelType
-      if (savedSelectedModels) {
-        const ids = savedSelectedModels.split(",").filter(Boolean);
-        // modelTypes 存 JSON: {"model_id":"qwen3",...}
-        let typeMap: Record<string, string> = {};
-        if (savedModelTypes) {
-          try { typeMap = JSON.parse(savedModelTypes); } catch { /* 旧格式忽略 */ }
-        }
-        setSelectedModels(ids.map((id) => ({
-          id,
-          modelType: typeMap[id] || autoDetectModelTypeStr(id),
-        })));
-      }
-      setLoading(false);
-    });
-  }, [provider, fetchModels]);
 
-  // 加载软件代理模式（判断是否配置了代理）
+    const sid = currentService.id;
+    const isAi = currentService.category === "ai";
+
+    if (isAi) {
+      Promise.all([
+        api.getConfig(`translate_openai_${sid}_base_url`).catch(() => null),
+        api.getConfig(`translate_openai_${sid}_selected_models`).catch(() => null),
+        api.getConfig(`translate_openai_${sid}_selected_model_types`).catch(() => null),
+        api.getConfig(`translate_openai_${sid}_qps`).catch(() => null),
+        api.getConfig(`translate_openai_${sid}_use_proxy`).catch(() => null),
+        api.getCredential(`openai_${sid}`, "secret").catch(() => null),
+      ]).then(([savedBaseUrl, savedSelected, savedModelTypes, savedQps, savedUseProxy, savedSecret]) => {
+        if (savedBaseUrl) {
+          setBaseUrl(savedBaseUrl);
+          fetchModels(savedBaseUrl, savedSecret || undefined);
+        } else if (currentService.presetBaseUrl) {
+          setBaseUrl(currentService.presetBaseUrl);
+        }
+        if (savedQps) setQps(parseInt(savedQps) || currentService.presetQps || 5);
+        if (savedSecret) setSecretKey("••••••••");
+        setUseProxy(savedUseProxy === "true" ? true : savedUseProxy === "false" ? false : null);
+        if (savedSelected) {
+          const ids = savedSelected.split(",").filter(Boolean);
+          let typeMap: Record<string, string> = {};
+          if (savedModelTypes) {
+            try { typeMap = JSON.parse(savedModelTypes); } catch { /* ignore */ }
+          }
+          setSelectedModels(ids.map((id) => ({
+            id,
+            modelType: typeMap[id] || autoDetectModelTypeStr(id),
+          })));
+        }
+        setLoading(false);
+      });
+    } else {
+      Promise.all([
+        api.getConfig(`translate_${sid}_app_id`).catch(() => null),
+        api.getConfig(`translate_${sid}_region`).catch(() => null),
+        api.getCredential(sid, "secret").catch(() => null),
+        api.getConfig(`translate_${sid}_use_proxy`).catch(() => null),
+      ]).then(([savedAppId, savedRegion, savedSecret, savedUseProxy]) => {
+        if (savedAppId) setAppId(savedAppId);
+        if (savedRegion) setRegion(savedRegion);
+        if (savedSecret) setSecretKey("••••••••");
+        setUseProxy(savedUseProxy === "true" ? true : savedUseProxy === "false" ? false : null);
+        setLoading(false);
+      });
+    }
+  }, [selectedServiceId, currentService, fetchModels, autoDetectModelTypeStr]);
+
+  // 加载软件代理模式
   useEffect(() => {
     api.getProxy().then((cfg) => setProxyMode(cfg.mode)).catch(() => {});
   }, []);
 
-  // 点击模型下拉外部时关闭下拉
+  // 点击模型下拉外部时关闭
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (modelDropdownRef.current && !modelDropdownRef.current.contains(e.target as Node)) {
@@ -527,76 +564,113 @@ function TranslateApiSettings() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [modelDropdownOpen]);
 
+  // === SECTION 3C END ===
+
+  // 保存配置
   const handleSave = useCallback(async () => {
+    if (!currentService) return;
+    const sid = currentService.id;
+
+    // 校验必填项：requiresApiKey 为 true 的服务必须填写密钥
+    if (currentService.requiresApiKey) {
+      const isMasked = secretKey === "••••••••";
+      if (!isMasked && !secretKey.trim()) {
+        toast.error(t("settings.secretKeyRequired", "请填写 API Key"));
+        return;
+      }
+    }
+    // 传统翻译需要 app_id（百度/有道等）
+    if (currentService.category === "traditional" && !appId.trim()) {
+      toast.error(t("settings.appIdRequired", "请填写 App ID"));
+      return;
+    }
+
     try {
-      await api.setConfig("translate_provider", provider);
-      if (provider === "openai") {
-        await api.setConfig("translate_openai_base_url", baseUrl);
-        await api.setConfig("translate_openai_model", model);
-        await api.setConfig("translate_openai_selected_models", selectedModels.map((x) => x.id).join(","));
-        // per-model modelType 存 JSON
+      if (currentService.category === "ai") {
+        await api.setConfig(`translate_openai_${sid}_base_url`, baseUrl);
+        await api.setConfig(`translate_openai_${sid}_selected_models`, selectedModels.map((x) => x.id).join(","));
         const typeMap: Record<string, string> = {};
         selectedModels.forEach((x) => { typeMap[x.id] = x.modelType; });
-        await api.setConfig("translate_openai_selected_model_types", JSON.stringify(typeMap));
+        await api.setConfig(`translate_openai_${sid}_selected_model_types`, JSON.stringify(typeMap));
+        await api.setConfig(`translate_openai_${sid}_qps`, String(qps));
       } else {
-        await api.setConfig(`translate_${provider}_app_id`, appId);
-        await api.setConfig(`translate_${provider}_region`, region);
+        await api.setConfig(`translate_${sid}_app_id`, appId);
+        await api.setConfig(`translate_${sid}_region`, region);
       }
+      // 保存 per-service 代理开关（null→未设置，跟随软件代理）
+      const proxyKey = currentService.category === "ai" ? `translate_openai_${sid}_use_proxy` : `translate_${sid}_use_proxy`;
+      await api.setConfig(proxyKey, useProxy === null ? "" : useProxy ? "true" : "false");
+
+      // 保存密钥到 keyring
+      let credentialSaved = true;
       if (secretKey && secretKey !== "••••••••") {
-        // 凭据仅存 keyring（系统密钥环），不写入明文数据库
+        const keyringProvider = currentService.category === "ai" ? `openai_${sid}` : sid;
         try {
-          await api.saveCredential(provider, "secret", secretKey);
+          await api.saveCredential(keyringProvider, "secret", secretKey);
         } catch (e: any) {
-          toast.error(t("settings.saveFailed", "保存失败") + ": " + formatIpcError(e));
-          return;
+          credentialSaved = false;
+          console.warn("saveCredential 失败:", e);
         }
       }
-      toast.success(t("settings.saveSuccess", "已保存"));
+
+      // 刷新已配置列表，await 保证保存完成后左侧列表已更新
+      const updated = await checkAllServiceConfigs();
+      setConfiguredIds(updated);
+
+      if (credentialSaved) {
+        toast.success(t("settings.saveSuccess", "已保存"));
+      } else {
+        toast.warning(t("settings.saveSuccessButCredential", "配置已保存，但密钥保存失败（可能不支持系统钥匙串）"));
+      }
     } catch (e: any) {
       toast.error(t("settings.saveFailed", "保存失败") + ": " + formatIpcError(e));
     }
-  }, [provider, appId, secretKey, region, baseUrl, model, selectedModels, t]);
+  }, [currentService, appId, secretKey, region, baseUrl, qps, selectedModels, useProxy, t]);
 
+  // 测试连接
   const handleTest = useCallback(async () => {
-    // OpenAi 前置校验
-    if (provider === "openai") {
+    if (!currentService) return;
+    const sid = currentService.id;
+    if (currentService.category === "ai") {
       const trimmedUrl = baseUrl.trim();
       if (!trimmedUrl) {
         toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
         return;
       }
-      // URL 合法性校验
-      try {
-        new URL(trimmedUrl);
-      } catch {
+      try { new URL(trimmedUrl); } catch {
         toast.error(t("settings.openaiInvalidUrl", "API 地址格式无效"));
         return;
       }
-      if (!model.trim()) {
-        toast.error(t("settings.openaiModelRequired", "请先选择模型"));
+    }
+    // 校验必填项
+    if (currentService.requiresApiKey) {
+      const isMasked = secretKey === "••••••••";
+      if (!isMasked && !secretKey.trim()) {
+        toast.error(t("settings.secretKeyRequired", "请填写 API Key"));
         return;
       }
     }
-
+    if (currentService.category === "traditional" && !appId.trim()) {
+      toast.error(t("settings.appIdRequired", "请填写 App ID"));
+      return;
+    }
     setTesting(true);
     setTestResult(null);
     try {
       const actualSecret = secretKey === "••••••••" ? undefined : secretKey;
-      // OpenAi：从 selectedModels 中查找默认模型的 modelType
-      const defaultModelType = provider === "openai" && model
-        ? selectedModels.find((x) => x.id === model)?.modelType
-        : undefined;
+      const provider = currentService.category === "ai" ? "openai" : sid;
+      const serviceId = currentService.category === "ai" ? sid : undefined;
       const result = await api.testTranslateConnection(
         provider,
         appId || undefined,
         actualSecret,
         region || undefined,
-        provider === "openai" ? baseUrl.trim() : undefined,
-        provider === "openai" ? model.trim() : undefined,
-        provider === "openai" ? defaultModelType : undefined,
+        currentService.category === "ai" ? baseUrl.trim() : undefined,
+        currentService.category === "ai" ? (selectedModels[0]?.id || undefined) : undefined,
+        currentService.category === "ai" ? (selectedModels[0]?.modelType || undefined) : undefined,
+        serviceId,
       );
       setTestResult("ok");
-      // OpenAi 返回原文+译文，用 toast 显示
       if (result.original && result.translated) {
         toast.success(
           t("settings.openaiTestSuccess", "连接成功") + "\n" +
@@ -612,28 +686,25 @@ function TranslateApiSettings() {
     } finally {
       setTesting(false);
     }
-  }, [provider, appId, secretKey, region, baseUrl, model, selectedModels, t]);
+  }, [currentService, appId, secretKey, region, baseUrl, selectedModels, t]);
 
-  // 删除当前 provider 的所有配置
+  // 删除配置
   const handleDeleteConfig = useCallback(async () => {
+    if (!currentService) return;
+    const sid = currentService.id;
     setDeleting(true);
     try {
-      if (provider === "openai") {
-        await api.setConfig("translate_openai_base_url", "");
-        await api.setConfig("translate_openai_model", "");
-        await api.setConfig("translate_openai_selected_models", "");
-        await api.setConfig("translate_openai_selected_model_types", "");
+      if (currentService.category === "ai") {
+        await api.setConfig(`translate_openai_${sid}_base_url`, "");
+        await api.setConfig(`translate_openai_${sid}_selected_models`, "");
+        await api.setConfig(`translate_openai_${sid}_selected_model_types`, "");
+        await api.setConfig(`translate_openai_${sid}_qps`, "");
+        try { await api.deleteCredential(`openai_${sid}`, "secret"); } catch { /* ignore */ }
       } else {
-        await api.setConfig(`translate_${provider}_app_id`, "");
-        await api.setConfig(`translate_${provider}_region`, "");
+        await api.setConfig(`translate_${sid}_app_id`, "");
+        await api.setConfig(`translate_${sid}_region`, "");
+        try { await api.deleteCredential(sid, "secret"); } catch { /* ignore */ }
       }
-      // 删除 keyring 凭据
-      try {
-        await api.deleteCredential(provider, "secret");
-      } catch {
-        // 凭据可能不存在，忽略
-      }
-      // 清空表单
       setAppId("");
       setSecretKey("");
       setRegion("global");
@@ -643,6 +714,7 @@ function TranslateApiSettings() {
       setModelList([]);
       setSelectedModels([]);
       setTestResult(null);
+      checkAllServiceConfigs().then(setConfiguredIds);
       toast.success(t("settings.configDeleted", "配置已删除"));
     } catch (e: any) {
       toast.error(formatIpcError(e));
@@ -650,20 +722,7 @@ function TranslateApiSettings() {
       setDeleting(false);
       setDeleteConfirmOpen(false);
     }
-  }, [provider, t]);
-
-  // 根据模型 id 自动识别 model_type（返回字符串，不依赖 state）
-  const autoDetectModelTypeStr = useCallback((m: string): string => {
-    const lower = m.toLowerCase();
-    if (lower.includes("qwen3")) return "qwen3";
-    if (lower.includes("deepseek")) return "deepseek";
-    return "generic";
-  }, []);
-
-  // 根据模型 id 自动识别 model_type（旧接口，设置 state）
-  const autoDetectModelType = useCallback((m: string) => {
-    // 不再设置全局 modelType，per-model 独立
-  }, []);
+  }, [currentService, t]);
 
   // 多选：勾选/取消勾选模型
   const toggleModelSelection = useCallback((m: string) => {
@@ -674,33 +733,27 @@ function TranslateApiSettings() {
     });
   }, [autoDetectModelTypeStr]);
 
-  // 修改某个模型的 modelType
   const setModelTypeForModel = useCallback((modelId: string, newType: string) => {
     setSelectedModels((prev) =>
       prev.map((x) => x.id === modelId ? { ...x, modelType: newType } : x)
     );
   }, []);
 
-  // OpenAi：手动刷新模型列表（带校验和 toast 报错）
+  // AI：手动刷新模型列表
   const handleRefreshModels = useCallback(async () => {
     const trimmedUrl = baseUrl.trim();
     if (!trimmedUrl) {
       toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
       return;
     }
-    try {
-      new URL(trimmedUrl);
-    } catch {
+    try { new URL(trimmedUrl); } catch {
       toast.error(t("settings.openaiInvalidUrl", "API 地址格式无效"));
       return;
     }
-
     setLoadingModels(true);
     setModelDropdownOpen(false);
     try {
       const actualSecret = secretKey === "••••••••" ? undefined : secretKey;
-
-      // 构造候选 URL
       const candidateUrls: string[] = [];
       const normalized = trimmedUrl.replace(/\/$/, "");
       if (normalized.includes("/v1")) {
@@ -712,11 +765,9 @@ function TranslateApiSettings() {
         candidateUrls.push(`${normalized}/v1`);
       }
       const uniqueUrls = Array.from(new Set(candidateUrls));
-
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error("timeout")), 3000)
       );
-
       let lastError = "";
       let successUrl = "";
       let allModels: string[] = [];
@@ -737,24 +788,15 @@ function TranslateApiSettings() {
             : formatIpcError(e);
         }
       }
-
       if (!successUrl) {
         toast.error(lastError || t("settings.openaiNoModels", "未能获取模型列表"));
         return;
       }
-
-      if (successUrl !== trimmedUrl) {
-        setBaseUrl(successUrl);
-      }
+      if (successUrl !== trimmedUrl) setBaseUrl(successUrl);
       setModelList(allModels);
       lastAutoFetchUrlRef.current = successUrl;
-
-      // 清理已选模型中不在新列表中的
       setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
-      if (model && !allModels.includes(model)) {
-        setModel("");
-      }
-
+      if (model && !allModels.includes(model)) setModel("");
       toast.success(t("settings.openaiModelsLoaded", "已加载 {{count}} 个模型", { count: allModels.length }));
     } catch (e: any) {
       toast.error(formatIpcError(e));
@@ -763,332 +805,442 @@ function TranslateApiSettings() {
     }
   }, [baseUrl, secretKey, model, t]);
 
-  // API 地址失焦时自动获取模型列表（地址有变化且合法才触发）
   const handleBaseUrlBlur = useCallback(() => {
     const trimmedUrl = baseUrl.trim();
     if (!trimmedUrl) return;
-    // URL 合法性校验
-    try {
-      new URL(trimmedUrl);
-    } catch {
-      return; // 格式不合法时不报错，等用户继续输入
-    }
-    // 地址没变化则不重复请求
+    try { new URL(trimmedUrl); } catch { return; }
     if (trimmedUrl === lastAutoFetchUrlRef.current) return;
     lastAutoFetchUrlRef.current = trimmedUrl;
     handleRefreshModels();
   }, [baseUrl, handleRefreshModels]);
 
-  const providerInfo = PROVIDER_LINKS[provider] ?? PROVIDER_LINKS.baidu;
+  // === SECTION 3D END ===
 
-  return (
+  // 渲染：左列表项（已配置服务）
+  const renderServiceMenuItem = (s: ServiceDef) => {
+    const isSelected = selectedServiceId === s.id;
+    return (
+      <button
+        key={s.id}
+        onClick={() => setSelectedServiceId(s.id)}
+        className={cn(
+          "w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors border",
+          isSelected ? "bg-accent text-accent-foreground border-primary/50" : "hover:bg-accent/50 border-border"
+        )}
+      >
+        <div className="flex items-center justify-between gap-1">
+          <span className="truncate font-medium">{s.name}</span>
+          {s.comingSoon && (
+            <span className="text-[10px] text-muted-foreground ml-1 shrink-0">{t("settings.comingSoonTag", "即将支持")}</span>
+          )}
+          {!s.comingSoon && s.hasFreeTier && (
+            <span className="text-[10px] text-green-600 shrink-0">🆓</span>
+          )}
+          {!s.comingSoon && s.completelyFree && (
+            <span className="text-[10px] text-green-600 shrink-0">免费</span>
+          )}
+        </div>
+        <p className="text-[10px] text-muted-foreground line-clamp-1 leading-tight mt-0.5">
+          {s.description}
+        </p>
+      </button>
+    );
+  };
+
+  // 渲染：添加 API 卡片
+  const renderAddCard = (category: "traditional" | "ai") => (
+    <button
+      onClick={() => setSelectedServiceId(category === "traditional" ? "add:traditional" : "add:ai")}
+      className={cn(
+        "w-full text-left px-2 py-1.5 rounded-md text-sm border border-dashed border-border transition-colors hover:bg-accent/50",
+        selectedServiceId === (category === "traditional" ? "add:traditional" : "add:ai") && "bg-accent text-accent-foreground"
+      )}
+    >
+      <span className="flex items-center gap-1 text-primary">
+        <Plus className="h-3 w-3" />
+        {t("settings.addApi", "添加 API")}
+      </span>
+      <p className="text-[10px] text-muted-foreground line-clamp-1 leading-tight mt-0.5">
+        {category === "traditional"
+          ? t("settings.addTraditionalServiceDesc", "添加百度翻译等传统翻译服务")
+          : t("settings.addAiServiceDesc", "添加 DeepSeek 等 AI 大模型")}
+      </p>
+    </button>
+  );
+
+  // 渲染：官方 API 面板
+  const renderOfficialPanel = () => (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl font-semibold">{t("settings.translateApi")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.translateApiDesc", "配置翻译服务凭据，支持百度/必应/谷歌")}</p>
+        <h2 className="text-xl font-semibold flex items-center gap-2">
+          <Star className="h-5 w-5 text-yellow-500" />
+          {t("settings.officialApi", "官方 API")}
+        </h2>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiDesc", "精译·省钱·免费")}</p>
       </div>
-
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t("translate.provider")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <label className="text-sm font-medium">{t("translate.provider")}</label>
-              <p className="text-xs text-muted-foreground">{t("settings.providerDesc", "选择翻译服务提供商")}</p>
-            </div>
-            <Select value={provider} onValueChange={setProvider}>
-              <SelectTrigger className="w-56 whitespace-nowrap"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
-                <SelectItem value="bing">{t("settings.bing")}</SelectItem>
-                <SelectItem value="google">{t("settings.google")}</SelectItem>
-                <SelectItem value="openai">{t("settings.openai", "AI 模型 (OpenAI 兼容)")}</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* 获取 API 链接 */}
-          <a
-            href={providerInfo.url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-          >
-            {t("settings.getApiKeyPrefix")} {t(`settings.${provider}`)} API Key
-            <ExternalLink className="h-3 w-3" />
-          </a>
-
-          {/* App ID / API Key */}
-          {providerInfo.appIdLabel && (
-            <div>
-              <label className="text-sm font-medium">{providerInfo.appIdLabel}</label>
-              <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc", "翻译服务的 App ID / API Key")}</p>
-              <Input
-                value={appId}
-                onChange={(e) => setAppId(e.target.value)}
-                placeholder={providerInfo.appIdPlaceholder}
-                disabled={loading}
-              />
-            </div>
-          )}
-
-          {/* Secret Key */}
+        <CardContent className="space-y-4 pt-4">
           <div>
-            <label className="text-sm font-medium">{t("settings.secretKey")}</label>
-            <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc", "API 密钥，加密存储在系统密钥环")}</p>
+            <h3 className="text-base font-medium">{t("settings.officialApiJingyi", "精译")}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiJingyiDesc", "对字幕翻译做了专门调优，翻译质量接近字幕组翻译效果。")}</p>
+          </div>
+          <div>
+            <h3 className="text-base font-medium">{t("settings.officialApiZhongzhuan", "低价时段中转")}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiZhongzhuanDesc", "低价时段中转到 DeepSeek，帮用户省钱。本功能按官方定价收取，不赚钱。")}</p>
+          </div>
+          <div>
+            <h3 className="text-base font-medium">{t("settings.officialApiMianfei", "超慢免费 API")}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiMianfeiDesc", "转发到作者的电脑上，使用 Qwen 3.5 9B 翻译。速度慢但完全免费。")}</p>
+          </div>
+          <div className="border-t pt-4 space-y-2">
+            <p className="text-sm text-muted-foreground">{t("settings.officialApiLoginPrompt", "登陆认证后即可使用官方 API 服务。")}</p>
+            <Button
+              size="sm"
+              onClick={() => {
+                openUrl("https://www.baidu.com").catch(() => {
+                  toast.error("无法打开浏览器");
+                });
+              }}
+            >
+              {t("settings.officialApiLoginButton", "登陆认证")}
+            </Button>
+            <p className="text-xs text-muted-foreground">{t("settings.officialApiLoginNote", "（当前版本登陆认证功能尚未实现，点击跳转到百度，后续版本替换为官方认证）")}</p>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+
+  // 渲染：添加 API 面板（未配置服务网格）
+  const renderAddPanel = (category: "traditional" | "ai") => {
+    const services = SERVICES.filter((s) => s.category === category && !configuredIds.has(s.id));
+    const filtered = services.filter((s) => matchesSearch(s, searchQuery));
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold">
+            {category === "traditional"
+              ? t("settings.addTraditionalService", "添加传统翻译服务")
+              : t("settings.addAiService", "添加 AI 大模型服务")}
+          </h2>
+        </div>
+        <Input
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="搜索服务名称..."
+          className="max-w-sm"
+        />
+        {filtered.length === 0 ? (
+          <p className="text-sm text-muted-foreground">{t("settings.noServicesToAdd", "没有可添加的服务（全部已添加或搜索无匹配）")}</p>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            {filtered.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => {
+                  setSelectedServiceId(s.id);
+                  setSearchQuery("");
+                }}
+                className="text-left p-3 rounded-md border border-border hover:border-primary hover:bg-accent/50 transition-colors"
+              >
+                <div className="flex items-center justify-between">
+                  <span className="font-medium text-sm">{s.name}</span>
+                  {s.comingSoon && (
+                    <span className="text-xs text-muted-foreground">{t("settings.comingSoonTag", "即将支持")}</span>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {s.completelyFree ? "完全免费" : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
+                </p>
+                <p className="text-xs text-muted-foreground">{s.price}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // === SECTION 3E END ===
+
+  // 渲染：传统翻译配置面板
+  const renderTraditionalConfig = (s: ServiceDef) => (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-semibold">{s.name}</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          {s.completelyFree ? "完全免费" : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
+          {" · "}{s.price}
+        </p>
+      </div>
+      {s.comingSoon ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <p className="text-muted-foreground">{t("settings.comingSoonTag", "即将支持")}</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="space-y-4 pt-4">
+            {s.docUrl && (
+              <a href={s.docUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                {t("settings.getApiKeyPrefix", "获取")} {s.name} API Key
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            )}
+            {s.appIdLabel && (
+              <div>
+                <label className="text-sm font-medium">{s.appIdLabel}</label>
+                <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc", "翻译服务的 App ID / API Key")}</p>
+                <Input value={appId} onChange={(e) => setAppId(e.target.value)} placeholder={s.appIdPlaceholder} disabled={loading} />
+              </div>
+            )}
+            <div>
+              <label className="text-sm font-medium">{t("settings.secretKey", "密钥")}</label>
+              <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc", "API 密钥，加密存储在系统密钥环")}</p>
+              <div className="flex gap-2">
+                <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder="Secret Key" disabled={loading} />
+                {secretKey === "••••••••" && (
+                  <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
+                )}
+              </div>
+            </div>
+            {s.hasRegion && (
+              <div>
+                <label className="text-sm font-medium">{t("settings.region", "区域")}</label>
+                <p className="text-xs text-muted-foreground mb-1">{t("settings.regionDesc", "Azure 区域，如 global 或 china")}</p>
+                <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="global / china" />
+              </div>
+            )}
+            {/* 代理 */}
+            <div className="flex items-center justify-between border-t pt-3">
+              <div>
+                <label className="text-sm font-medium">{t("settings.useProxy", "使用软件代理")}</label>
+                <p className="text-xs text-muted-foreground">
+                  {proxyMode !== "none"
+                    ? t("settings.useProxyDesc", "通过软件配置的代理访问此翻译 API")
+                    : t("settings.useProxyNoProxy", "未配置代理，请在高级设置中先配置代理")}
+                </p>
+              </div>
+              <Select
+                value={useProxy === null ? "default" : useProxy ? "true" : "false"}
+                onValueChange={(v) => setUseProxy(v === "default" ? null : v === "true")}
+              >
+                <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="default">{t("settings.proxyDefault", "跟随")}</SelectItem>
+                  <SelectItem value="true">{t("settings.proxyOn", "启用")}</SelectItem>
+                  <SelectItem value="false">{t("settings.proxyOff", "禁用")}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {/* 操作按钮 */}
+            <div className="flex items-center gap-2 border-t pt-3">
+              <Button size="sm" onClick={handleSave} disabled={loading}>{t("settings.save", "保存")}</Button>
+              <Button size="sm" variant="outline" onClick={handleTest} disabled={loading || testing}>
+                {testing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+                {t("settings.testConnection", "测试连接")}
+              </Button>
+              {devMode && (
+                <Button size="sm" variant="destructive" onClick={() => setDeleteConfirmOpen(true)} disabled={loading}>
+                  <Trash2 className="mr-1 h-4 w-4" />
+                  {t("settings.deleteConfig", "删除配置")}
+                </Button>
+              )}
+              {testResult === "ok" && (
+                <span className="flex items-center gap-1 text-sm text-green-600">
+                  <Check className="h-4 w-4" /> {t("settings.testSuccess", "连接成功")}
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+
+  // === SECTION 3F END ===
+
+  // 渲染：AI 大模型配置面板
+  const renderAiConfig = (s: ServiceDef) => (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-semibold">{s.name}</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          {s.completelyFree ? "完全免费" : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
+          {" · "}{s.price}
+        </p>
+      </div>
+      <Card>
+        <CardContent className="space-y-4 pt-4">
+          {s.docUrl && (
+            <a href={s.docUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+              {t("settings.getApiKeyPrefix", "获取")} {s.name} API Key
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+          {/* API 地址 */}
+          <div>
+            <label className="text-sm font-medium">{t("settings.openaiBaseUrl", "API 地址")}</label>
+            <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiBaseUrlDesc", "OpenAI 兼容端点")}</p>
             <div className="flex gap-2">
               <Input
-                type="password"
-                value={secretKey}
-                onChange={(e) => setSecretKey(e.target.value)}
-                placeholder="Secret Key"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                onBlur={handleBaseUrlBlur}
+                placeholder={t("settings.openaiBaseUrlPlaceholder", "必填，例如 http://localhost:1234/v1")}
                 disabled={loading}
               />
-              {secretKey === "••••••••" && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setSecretKey("")}
-                >
-                  {t("settings.edit", "修改")}
+              {s.presetBaseUrl && baseUrl !== s.presetBaseUrl && (
+                <Button size="sm" variant="ghost" onClick={() => { setBaseUrl(s.presetBaseUrl!); lastAutoFetchUrlRef.current = ""; }}>
+                  {t("settings.resetBaseUrl", "重置为默认")}
                 </Button>
               )}
             </div>
           </div>
-
-          {/* Region（仅 Bing） */}
-          {providerInfo.hasRegion && (
-            <div>
-              <label className="text-sm font-medium">{t("settings.region")}</label>
-              <p className="text-xs text-muted-foreground mb-1">{t("settings.regionDesc", "Azure 区域，如 global 或 china")}</p>
-              <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="global / china" />
-            </div>
-          )}
-
-          {/* OpenAi 专属配置 */}
-          {providerInfo.isOpenAi && (
-            <>
-              <div>
-                <label className="text-sm font-medium">{t("settings.openaiBaseUrl", "API 地址")}</label>
-                <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiBaseUrlDesc", "OpenAI 兼容端点，如 http://localhost:1234/v1 或 https://api.deepseek.com/v1")}</p>
-                <Input
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  onBlur={handleBaseUrlBlur}
-                  placeholder={t("settings.openaiBaseUrlPlaceholder", "必填，例如 http://localhost:1234/v1")}
-                  disabled={loading}
-                />
-              </div>
-
-              <div ref={modelDropdownRef}>
-                <label className="text-sm font-medium">{t("settings.openaiModel", "模型")}</label>
-                <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiModelDesc", "勾选要使用的模型，每个模型可独立设置类型，翻译时可快速切换")}</p>
-                <div className="flex gap-2">
-                  {/* Tag input：已选模型作为标签显示在输入框内 */}
-                  <div className="relative flex-1">
-                    <div
-                      className="flex min-h-[36px] flex-wrap items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-sm focus-within:ring-1 focus-within:ring-ring"
-                      onClick={() => setModelDropdownOpen(true)}
-                    >
-                      {selectedModels.map((sm) => (
-                        <span
-                          key={sm.id}
-                          className="group/tag inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground hover:border-destructive/50 [&:hover_button]:text-destructive"
-                        >
-                          {sm.id}
-                          <span className="text-muted-foreground">|</span>
-                          <span className="text-muted-foreground">{sm.modelType}</span>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleModelSelection(sm.id);
-                            }}
-                            className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive hover:text-white [&:hover]:!text-white"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
-                      <input
-                        value={modelFilter}
-                        onChange={(e) => setModelFilter(e.target.value)}
-                        onFocus={() => setModelDropdownOpen(true)}
-                        placeholder={selectedModels.length === 0 ? t("settings.openaiModelPlaceholder", "搜索模型名称") : ""}
-                        className="flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-                        disabled={loading}
-                      />
-                    </div>
-                    {modelDropdownOpen && (
-                      <div className="absolute z-50 mt-1 max-h-80 w-full overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md">
-                        {(() => {
-                          const filtered = modelList.filter((m) =>
-                            m.toLowerCase().includes(modelFilter.toLowerCase())
-                          );
-                          if (filtered.length === 0) {
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setModelDropdownOpen(false);
-                                  handleRefreshModels();
-                                }}
-                                className="w-full px-3 py-2 text-left text-sm text-primary hover:underline"
-                              >
-                                {modelFilter
-                                  ? t("settings.openaiNoMatch", "无匹配模型，点击刷新")
-                                  : t("settings.openaiClickRefresh", "暂无模型，点击刷新")}
-                              </button>
-                            );
-                          }
-                          return filtered.map((m) => {
-                            const selected = selectedModels.find((x) => x.id === m);
-                            return (
-                              <div
-                                key={m}
-                                className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground"
-                              >
-                                <label className="flex cursor-pointer items-center gap-2 flex-1 min-w-0">
-                                  <input
-                                    type="checkbox"
-                                    className="h-4 w-4 cursor-pointer accent-primary flex-shrink-0"
-                                    checked={!!selected}
-                                    onChange={() => toggleModelSelection(m)}
-                                  />
-                                  <span className="truncate">{m}</span>
-                                </label>
-                                {/* 已选中的模型显示 modelType 切换 */}
-                                {selected && (
-                                  <select
-                                    value={selected.modelType}
-                                    onChange={(e) => {
-                                      e.stopPropagation();
-                                      setModelTypeForModel(m, e.target.value);
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="flex-shrink-0 rounded border border-input bg-background px-1 py-0.5 text-xs outline-none cursor-pointer"
-                                  >
-                                    <option value="qwen3">Qwen3</option>
-                                    <option value="deepseek">DeepSeek</option>
-                                    <option value="generic">{t("settings.openaiModelTypeGeneric", "通用")}</option>
-                                  </select>
-                                )}
-                              </div>
-                            );
-                          });
-                        })()}
-                      </div>
-                    )}
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleRefreshModels}
-                    disabled={loadingModels}
-                  >
-                    {loadingModels ? t("settings.openaiLoading", "加载中...") : t("settings.openaiRefreshModels", "刷新模型")}
-                  </Button>
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">{t("settings.openaiApiKey", "API Key（可选）")}</label>
-                <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiApiKeyDesc", "局域网部署可留空；云 API 必填，加密存储在系统密钥环")}</p>
-                <div className="flex gap-2">
-                  <Input
-                    type="password"
-                    value={secretKey}
-                    onChange={(e) => setSecretKey(e.target.value)}
-                    placeholder={t("settings.openaiApiKeyPlaceholder", "留空表示无认证")}
+          {/* 模型多选 */}
+          <div ref={modelDropdownRef}>
+            <label className="text-sm font-medium">{t("settings.openaiModel", "模型")}</label>
+            <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiModelDesc", "勾选要使用的模型")}</p>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <div
+                  className="flex min-h-[36px] flex-wrap items-center gap-1 rounded-md border border-input bg-background px-2 py-1 text-sm focus-within:ring-1 focus-within:ring-ring"
+                  onClick={() => setModelDropdownOpen(true)}
+                >
+                  {selectedModels.map((sm) => (
+                    <span key={sm.id} className="group/tag inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 text-xs text-foreground hover:border-destructive/50">
+                      {sm.id}
+                      <span className="text-muted-foreground">|</span>
+                      <span className="text-muted-foreground">{sm.modelType}</span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleModelSelection(sm.id); }}
+                        className="ml-0.5 flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive hover:text-white"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                  <input
+                    value={modelFilter}
+                    onChange={(e) => setModelFilter(e.target.value)}
+                    onFocus={() => setModelDropdownOpen(true)}
+                    placeholder={selectedModels.length === 0 ? t("settings.openaiModelPlaceholder", "搜索模型名称") : ""}
+                    className="flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                     disabled={loading}
                   />
-                  {secretKey === "••••••••" && (
-                    <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>
-                      {t("settings.edit", "修改")}
-                    </Button>
-                  )}
                 </div>
+                {modelDropdownOpen && (
+                  <div className="absolute z-50 mt-1 max-h-80 w-full overflow-auto rounded-md border bg-popover text-popover-foreground shadow-md">
+                    {(() => {
+                      const filtered = modelList.filter((m) => m.toLowerCase().includes(modelFilter.toLowerCase()));
+                      if (filtered.length === 0) {
+                        return (
+                          <button type="button" onClick={() => { setModelDropdownOpen(false); handleRefreshModels(); }} className="w-full px-3 py-2 text-left text-sm text-primary hover:underline">
+                            {modelFilter ? t("settings.openaiNoMatch", "无匹配模型，点击刷新") : t("settings.openaiClickRefresh", "暂无模型，点击刷新")}
+                          </button>
+                        );
+                      }
+                      return filtered.map((m) => {
+                        const selected = selectedModels.find((x) => x.id === m);
+                        return (
+                          <div key={m} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground">
+                            <label className="flex cursor-pointer items-center gap-2 flex-1 min-w-0">
+                              <input type="checkbox" className="h-4 w-4 cursor-pointer accent-primary flex-shrink-0" checked={!!selected} onChange={() => toggleModelSelection(m)} />
+                              <span className="truncate">{m}</span>
+                            </label>
+                            {selected && (
+                              <select
+                                value={selected.modelType}
+                                onChange={(e) => { e.stopPropagation(); setModelTypeForModel(m, e.target.value); }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="flex-shrink-0 rounded border border-input bg-background px-1 py-0.5 text-xs outline-none cursor-pointer"
+                              >
+                                <option value="qwen3">Qwen3</option>
+                                <option value="deepseek">DeepSeek</option>
+                                <option value="generic">{t("settings.openaiModelTypeGeneric", "通用")}</option>
+                              </select>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
               </div>
-            </>
-          )}
-
-          {/* 使用软件代理 */}
+              <Button size="sm" variant="outline" onClick={handleRefreshModels} disabled={loadingModels}>
+                {loadingModels ? t("settings.openaiLoading", "加载中...") : t("settings.openaiRefreshModels", "刷新模型")}
+              </Button>
+            </div>
+          </div>
+          {/* API Key */}
+          <div>
+            <label className="text-sm font-medium">{t("settings.openaiApiKey", "API Key（可选）")}</label>
+            <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiApiKeyDesc", "局域网部署可留空；云 API 必填，加密存储在系统密钥环")}</p>
+            <div className="flex gap-2">
+              <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={t("settings.openaiApiKeyPlaceholder", "留空表示无认证")} disabled={loading} />
+              {secretKey === "••••••••" && (
+                <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
+              )}
+            </div>
+          </div>
+          {/* QPS */}
+          <div>
+            <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
+            <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDesc", "该服务的每秒最大并发请求数")}</p>
+            <Input type="number" value={qps} onChange={(e) => setQps(parseInt(e.target.value) || 1)} min={1} disabled={loading} className="w-24" />
+          </div>
+          {/* 代理 */}
           <div className="flex items-center justify-between border-t pt-3">
             <div>
               <label className="text-sm font-medium">{t("settings.useProxy", "使用软件代理")}</label>
               <p className="text-xs text-muted-foreground">
                 {proxyMode !== "none"
                   ? t("settings.useProxyDesc", "通过软件配置的代理访问此翻译 API")
-                  : t("settings.useProxyNoProxy", "软件还未配置代理，点击前往配置")}
+                  : t("settings.useProxyNoProxy", "未配置代理，请在高级设置中先配置代理")}
               </p>
             </div>
-            {proxyMode !== "none" ? (
-              <input
-                type="checkbox"
-                className="h-4 w-4 cursor-pointer accent-primary"
-                checked={useProxy !== false}
-                onChange={(e) => {
-                  const checked = e.target.checked;
-                  // checked=true → 设置为 true（或清除为 null，效果一样都是用代理）
-                  // checked=false → 设置为 false（明确不用代理）
-                  const newVal = checked ? null : false;
-                  setUseProxy(newVal);
-                  api.setTranslateUseProxy(provider, newVal).catch(() => {});
-                }}
-              />
-            ) : (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => navigate("/settings?tab=advanced")}
-              >
-                {t("settings.goConfigProxy", "去配置")}
-              </Button>
-            )}
+            <Select
+              value={useProxy === null ? "default" : useProxy ? "true" : "false"}
+              onValueChange={(v) => setUseProxy(v === "default" ? null : v === "true")}
+            >
+              <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">{t("settings.proxyDefault", "跟随")}</SelectItem>
+                <SelectItem value="true">{t("settings.proxyOn", "启用")}</SelectItem>
+                <SelectItem value="false">{t("settings.proxyOff", "禁用")}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
-
-          {/* 保存 + 测试 + 删除 */}
-          <div className="flex items-center gap-3 pt-2">
-            <Button size="sm" onClick={handleSave} disabled={loading}>
-              {t("common.save")}
-            </Button>
-            <Button size="sm" variant="secondary" onClick={handleTest} disabled={testing || loading}>
+          {/* 操作按钮 */}
+          <div className="flex items-center gap-2 border-t pt-3">
+            <Button size="sm" onClick={handleSave} disabled={loading}>{t("settings.save", "保存")}</Button>
+            <Button size="sm" variant="outline" onClick={handleTest} disabled={loading || testing}>
               {testing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-              {t("settings.testConnection")}
+              {t("settings.testConnection", "测试连接")}
             </Button>
             {devMode && (
-              <Button
-                size="sm"
-                variant="destructive"
-                onClick={() => setDeleteConfirmOpen(true)}
-                disabled={loading}
-              >
+              <Button size="sm" variant="destructive" onClick={() => setDeleteConfirmOpen(true)} disabled={loading}>
                 <Trash2 className="mr-1 h-4 w-4" />
                 {t("settings.deleteConfig", "删除配置")}
               </Button>
             )}
             {testResult === "ok" && (
               <span className="flex items-center gap-1 text-sm text-green-600">
-                <Check className="h-4 w-4" /> {t("settings.testSuccess")}
+                <Check className="h-4 w-4" /> {t("settings.testSuccess", "连接成功")}
               </span>
             )}
           </div>
-
-          {/* 删除配置确认弹窗 */}
+          {/* 删除确认弹窗 */}
           <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
             <DialogContent className="max-w-sm">
               <DialogHeader>
                 <DialogTitle>{t("settings.deleteConfigConfirm", "确认删除配置？")}</DialogTitle>
               </DialogHeader>
-              <p className="text-sm text-muted-foreground">
-                {t("settings.deleteConfigDesc", "将清除当前引擎的所有配置和凭据，此操作不可撤销。")}
-              </p>
+              <p className="text-sm text-muted-foreground">{t("settings.deleteConfigDesc", "将清除当前引擎的所有配置和凭据，此操作不可撤销。")}</p>
               <div className="flex justify-end gap-2 pt-2">
-                <Button size="sm" variant="outline" onClick={() => setDeleteConfirmOpen(false)}>
-                  {t("common.cancel", "取消")}
-                </Button>
+                <Button size="sm" variant="outline" onClick={() => setDeleteConfirmOpen(false)}>{t("common.cancel", "取消")}</Button>
                 <Button size="sm" variant="destructive" onClick={handleDeleteConfig} disabled={deleting}>
                   {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
                   {t("common.confirm", "确认删除")}
@@ -1099,6 +1251,71 @@ function TranslateApiSettings() {
         </CardContent>
       </Card>
     </div>
+  );
+
+  // === SECTION 3G END ===
+
+  // 左列表数据
+  const traditionalServices = SERVICES.filter((s) => s.category === "traditional");
+  const aiServices = SERVICES.filter((s) => s.category === "ai");
+  const configuredTraditional = traditionalServices.filter((s) => configuredIds.has(s.id));
+  const configuredAi = aiServices.filter((s) => configuredIds.has(s.id));
+
+  // 右面板内容
+  const renderRightPanel = () => {
+    if (selectedServiceId === null) return renderOfficialPanel();
+    if (selectedServiceId === "add:traditional") return renderAddPanel("traditional");
+    if (selectedServiceId === "add:ai") return renderAddPanel("ai");
+    if (currentService) {
+      return currentService.category === "ai"
+        ? renderAiConfig(currentService)
+        : renderTraditionalConfig(currentService);
+    }
+    return renderOfficialPanel();
+  };
+
+  const listContent = (
+    <div className="flex-1 overflow-y-auto space-y-2 p-2">
+      {/* 快速接入 */}
+      <p className="text-xs text-muted-foreground px-3 pt-2">快速接入</p>
+      {/* 官方 API */}
+      <button
+        onClick={() => setSelectedServiceId(null)}
+        className={cn(
+          "w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors border",
+          selectedServiceId === null ? "bg-accent text-accent-foreground border-primary/50" : "hover:bg-accent/50 border-border"
+        )}
+      >
+        <span className="flex items-center gap-1 font-medium">
+          <Star className="h-4 w-4 text-yellow-500" />
+          {t("settings.officialApi", "官方 API")}
+        </span>
+        <p className="text-[10px] text-muted-foreground line-clamp-1 leading-tight mt-0.5">
+          {t("settings.officialApiDesc", "精译·省钱·免费")}
+        </p>
+      </button>
+
+      {/* 传统翻译 */}
+      <div className="space-y-1">
+        <p className="text-xs text-muted-foreground px-3 pt-2">传统翻译</p>
+        {configuredTraditional.map(renderServiceMenuItem)}
+        {renderAddCard("traditional")}
+      </div>
+
+      {/* AI 大模型 */}
+      <div className="space-y-1">
+        <p className="text-xs text-muted-foreground px-3 pt-2">AI 大模型</p>
+        {configuredAi.map(renderServiceMenuItem)}
+        {renderAddCard("ai")}
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {listContainer && createPortal(listContent, listContainer)}
+      {renderRightPanel()}
+    </>
   );
 }
 

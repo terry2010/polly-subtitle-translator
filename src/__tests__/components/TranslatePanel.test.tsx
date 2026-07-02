@@ -16,6 +16,7 @@ vi.mock("../../lib/api", () => ({
   api: {
     getSupportedTargetLangs: mockGetSupportedTargetLangs,
     getConfig: vi.fn(() => Promise.resolve(null)),
+    setConfig: vi.fn(() => Promise.resolve()),
   },
 }));
 
@@ -35,6 +36,7 @@ beforeEach(() => {
   useTranslateStore.setState({
     translating: false, progress: 0, total: 0, result: null, error: null,
     sourceLang: "en", targetLang: "zh", provider: "baidu",
+    model: "", modelType: "", serviceId: null,
   });
   mockGetSupportedTargetLangs.mockResolvedValue([
     { code: "zh", name: "Chinese", native_name: "中文" },

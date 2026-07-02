@@ -30,6 +30,7 @@ beforeEach(() => {
   useTranslateStore.setState({
     translating: false, progress: 0, total: 0, result: null, error: null,
     sourceLang: "en", targetLang: "zh", provider: "baidu",
+    model: "", modelType: "", serviceId: null,
   });
   mockOnTranslateProgress.mockResolvedValue(() => {});
   mockOnTranslateEntryDone.mockResolvedValue(() => {});
@@ -51,6 +52,17 @@ describe("translateStore - 设置", () => {
   it("setProvider", () => {
     useTranslateStore.getState().setProvider("google");
     expect(useTranslateStore.getState().provider).toBe("google");
+  });
+
+  it("setServiceId", () => {
+    useTranslateStore.getState().setServiceId("deepseek");
+    expect(useTranslateStore.getState().serviceId).toBe("deepseek");
+  });
+
+  it("setServiceId 为 null", () => {
+    useTranslateStore.getState().setServiceId("deepseek");
+    useTranslateStore.getState().setServiceId(null);
+    expect(useTranslateStore.getState().serviceId).toBeNull();
   });
 });
 
@@ -99,6 +111,24 @@ describe("translateStore - startTranslate", () => {
     const onEntryDone = vi.fn();
     await useTranslateStore.getState().startTranslate([makeEntry(0, "a")], onEntryDone);
     expect(mockOnTranslateEntryDone).toHaveBeenCalledWith(expect.any(Function));
+  });
+
+  it("AI 翻译时传递 serviceId 给 translateSubtitle", async () => {
+    useTranslateStore.setState({ provider: "openai", serviceId: "deepseek", model: "deepseek-chat" });
+    mockTranslateSubtitle.mockResolvedValue({ translations: [], provider: "openai", cached_count: 0 });
+    await useTranslateStore.getState().startTranslate([makeEntry(0, "a")]);
+    expect(mockTranslateSubtitle).toHaveBeenCalledWith(
+      [expect.any(Object)], "en", "zh", "openai", "deepseek-chat", undefined, "deepseek",
+    );
+  });
+
+  it("传统翻译时 serviceId 传 undefined", async () => {
+    useTranslateStore.setState({ provider: "baidu", serviceId: null });
+    mockTranslateSubtitle.mockResolvedValue({ translations: [], provider: "baidu", cached_count: 0 });
+    await useTranslateStore.getState().startTranslate([makeEntry(0, "a")]);
+    expect(mockTranslateSubtitle).toHaveBeenCalledWith(
+      [expect.any(Object)], "en", "zh", "baidu", undefined, undefined, undefined,
+    );
   });
 });
 
