@@ -41,6 +41,7 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         get_supported_target_langs,
         translate_subtitle,
         cancel_translate,
+        extract_names,
         get_cached_translations,
         test_translate_connection,
         list_openai_models,
@@ -69,6 +70,19 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         list_installed_players_cmd,
         open_with_player_cmd,
         reveal_in_explorer_cmd,
+        open_path_cmd,
+        get_crash_log_dir_cmd,
+        clear_crash_logs_cmd,
+        get_prompt_fail_dir_cmd,
+        list_prompt_fail_logs_cmd,
+        read_prompt_fail_log_cmd,
+        delete_prompt_fail_log_cmd,
+        clear_prompt_fail_logs_cmd,
+        set_dev_mode_cmd,
+        set_log_api_enabled_cmd,
+        get_api_debug_dir_cmd,
+        list_api_debug_logs_cmd,
+        clear_api_debug_logs_cmd,
         extract_player_icons_cmd,
         clear_player_icons_cache_cmd,
         player_init,
@@ -81,6 +95,9 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         player_set_audio_track_cmd,
         player_get_position_cmd,
         player_resize_cmd,
+        dev_log_cmd,
+        set_space_disabled_cmd,
+        is_cursor_in_window_cmd,
         player_show_cmd,
         player_hide_cmd,
         player_destroy_cmd,
@@ -371,6 +388,9 @@ pub async fn get_supported_target_langs(
 // === SECTION 2 END ===
 
 /// translate_subtitle：翻译字幕条目
+/// skip_cache: true 时跳过缓存查询，强制重新请求 API（用于"重新翻译"）
+/// glossary: 译名表 [(EnglishName, ChineseTranslation)]，注入到 AI 翻译的 system prompt
+/// name_tagging: 是否要求 AI 在译文中用 <name=En>Zh</name> 标记人名（用于后处理一致性检查）
 #[tauri::command]
 pub async fn translate_subtitle(
     entries: Vec<subtitle::SubtitleEntry>,
@@ -380,11 +400,14 @@ pub async fn translate_subtitle(
     model: Option<String>,
     model_type: Option<String>,
     service_id: Option<String>,
+    skip_cache: Option<bool>,
+    glossary: Option<Vec<(String, String)>>,
+    name_tagging: Option<bool>,
     db: State<'_, Database>,
     cancel_token: State<'_, CancelToken>,
     app: tauri::AppHandle,
 ) -> Result<translate::TranslateResult, IpcError> {
-    tracing::info!("translate_subtitle 调用: provider={}, model={:?}, model_type={:?}, service_id={:?}, entries={}, source={}, target={}", provider, model, model_type, service_id, entries.len(), source_lang, target_lang);
+    tracing::info!("translate_subtitle 调用: provider={}, model={:?}, model_type={:?}, service_id={:?}, entries={}, source={}, target={}, glossary={}, name_tagging={:?}", provider, model, model_type, service_id, entries.len(), source_lang, target_lang, glossary.as_ref().map(|g| g.len()).unwrap_or(0), name_tagging.unwrap_or(false));
 
     // 重置取消标志
     cancel_token.store(false, Ordering::Relaxed);
@@ -506,7 +529,13 @@ pub async fn translate_subtitle(
     } else {
         None
     };
-    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_name).map_err(to_ipc_err)?;
+    // 构造 AI 翻译附加选项（glossary / name_tagging），传统翻译忽略
+    let glossary_vec = glossary.clone().unwrap_or_default();
+    let provider_options = translate::ProviderOptions {
+        glossary: glossary_vec,
+        name_tagging: name_tagging.unwrap_or(false),
+    };
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_name, &provider_options).map_err(to_ipc_err)?;
 
     // 缓存 key 隔离：provider_name 纳入 service_id + model
     let provider_name = if prov == TranslateProvider::OpenAi {
@@ -518,23 +547,43 @@ pub async fn translate_subtitle(
         provider.clone()
     };
 
-    // QPS 限流：per-service 读取
-    let qps = if prov == TranslateProvider::OpenAi {
+    // 限流策略：按各 API 官方政策，用户可自定义覆盖
+    // 默认策略由 provider.rate_limit_policy() 给出（Qps 或 Concurrency）
+    // 用户可通过 config key "translate_{provider}_qps" 覆盖默认值
+    //   - Qps 类 provider：覆盖 QPS 值（如百度付费后改为 10）
+    //   - Concurrency 类 provider：覆盖并发上限（如 OpenAI 付费后改为 20）
+    let default_policy = prov.rate_limit_policy();
+    let config_key = if prov == TranslateProvider::OpenAi {
+        // OpenAI 按 service_id 区分（不同服务可能有不同限流）
         service_id.as_ref()
-            .and_then(|sid| db.get_config(&format!("translate_openai_{}_qps", sid)).ok().flatten())
-            .and_then(|v| v.parse::<usize>().ok())
-            .unwrap_or(5)
+            .map(|sid| format!("translate_openai_{}_qps", sid))
+            .unwrap_or_else(|| "translate_openai_qps".to_string())
     } else {
-        prov.qps_limit()
+        format!("translate_{}_qps", prov.as_str())
+    };
+    let user_override = db.get_config(&config_key)
+        .ok().flatten()
+        .and_then(|v| v.parse::<usize>().ok());
+    let rate_limit = match (default_policy, user_override) {
+        (translate::RateLimitPolicy::Qps(_), Some(q)) => translate::RateLimitPolicy::Qps(q),
+        (translate::RateLimitPolicy::Concurrency(_), Some(c)) => translate::RateLimitPolicy::Concurrency(c),
+        (policy, None) => policy,
     };
 
-    // 读取用户配置的并发数，计算实际并发 = min(用户配置, QPS 上限)
+    // 读取用户配置的全局并发数（仅对 Concurrency 模式生效）
     let user_concurrency = db.get_config("translate_concurrency")
         .map_err(to_ipc_err)?
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(3);
-    let effective_conc = translate::TranslateProvider::effective_concurrency(user_concurrency, qps);
-    tracing::info!("翻译并发: 用户配置={}, QPS={}, 实际并发={}", user_concurrency, qps, effective_conc);
+    // 最终并发数 = min(用户配置, 限流策略上限)，至少 1
+    let final_concurrency = match &rate_limit {
+        translate::RateLimitPolicy::Qps(_) => 1,
+        translate::RateLimitPolicy::Concurrency(max_n) => user_concurrency.min(*max_n).max(1),
+    };
+    tracing::info!(
+        "翻译调度: 用户配置并发={}, 限流策略={:?}, 最终并发={}, config_key={}",
+        user_concurrency, rate_limit, final_concurrency, config_key
+    );
 
     let scheduler = translate::TranslateScheduler::with_cancel_token(
         &db,
@@ -542,7 +591,7 @@ pub async fn translate_subtitle(
         provider_name,
         cancel_token.inner().clone(),
     )
-    .with_concurrency(effective_conc);
+    .with_concurrency_and_rate_limit(user_concurrency, rate_limit);
 
     // 进度回调：通过 Tauri 事件推送进度
     let app_handle = app.clone();
@@ -566,10 +615,34 @@ pub async fn translate_subtitle(
         }));
     });
 
-    let result = scheduler
-        .translate_entries_full(&entries, &source_lang, &target_lang, 5000, Some(progress_cb), Some(entry_cb))
+    let mut result = scheduler
+        .translate_entries_full(&entries, &source_lang, &target_lang, 5000, Some(progress_cb), Some(entry_cb), skip_cache.unwrap_or(false))
         .await
         .map_err(to_ipc_err)?;
+
+    // 人名标记后处理：剥离 <name> 标签 + 检测不一致 + 全局替换
+    if name_tagging.unwrap_or(false) {
+        let mut translations: Vec<String> = result.translations.iter().map(|t| t.translated.clone()).collect();
+        let pre_scan_glossary: Vec<(String, String)> = glossary.clone().unwrap_or_default();
+        let consistency = translate::post_process_name_tags(&mut translations, &pre_scan_glossary);
+
+        if !consistency.inconsistencies.is_empty() {
+            tracing::info!("人名一致性后处理: 发现 {} 个不一致人名", consistency.inconsistencies.len());
+            for inc in &consistency.inconsistencies {
+                tracing::info!("  不一致: {} → {} (候选: {:?})", inc.english, inc.chosen, inc.translations);
+            }
+        }
+        if !consistency.corrected_indices.is_empty() {
+            tracing::info!("人名一致性后处理: 修正了 {} 条翻译", consistency.corrected_indices.len());
+        }
+
+        // 回写修正后的翻译
+        for (i, corrected) in &consistency.corrected_indices {
+            if let Some(entry) = result.translations.get_mut(*i) {
+                entry.translated = corrected.clone();
+            }
+        }
+    }
 
     // 发送翻译完成事件
     let _ = app.emit("translate-progress", serde_json::json!({
@@ -602,6 +675,93 @@ pub fn cancel_translate(cancel_token: State<'_, CancelToken>) -> IpcResult<()> {
     cancel_token.store(true, Ordering::Relaxed);
     tracing::info!("收到取消翻译请求");
     ipc_result(Ok(()))
+}
+
+/// extract_names：从字幕文本中预扫描提取人名（仅 AI 翻译支持）
+/// 返回人名译名表，用于注入翻译 prompt 保证跨 batch 一致性
+#[tauri::command]
+pub async fn extract_names(
+    texts: Vec<String>,
+    source_lang: String,
+    target_lang: String,
+    provider: String,
+    model: Option<String>,
+    model_type: Option<String>,
+    service_id: Option<String>,
+    db: State<'_, Database>,
+    cancel_token: State<'_, CancelToken>,
+) -> Result<Vec<translate::ExtractedName>, IpcError> {
+    tracing::info!("extract_names 调用: provider={}, model={:?}, texts={}, source={}, target={}", provider, model, texts.len(), source_lang, target_lang);
+    let extract_start = std::time::Instant::now();
+    cancel_token.store(false, Ordering::Relaxed);
+
+    let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
+        AppError::TranslateUnknownProvider { provider: provider.clone() }
+    }).map_err(to_ipc_err)?;
+
+    // 仅 AI 翻译支持人名提取
+    if prov != TranslateProvider::OpenAi {
+        return Err(AppError::TranslateNotConfigured.to_ipc_error());
+    }
+
+    // 读取配置（与 translate_subtitle 相同的逻辑）
+    let base_url_key = match &service_id {
+        Some(sid) => format!("translate_openai_{}_base_url", sid),
+        None => "translate_openai_base_url".to_string(),
+    };
+    let base_url = db.get_config(&base_url_key).map_err(to_ipc_err)?;
+    let model = model.ok_or_else(|| AppError::TranslateNotConfigured.to_ipc_error())?;
+    let model_type = if let Some(mt) = model_type {
+        translate::ModelType::from_str(&mt)
+    } else {
+        Some(translate::ModelType::from_model_id(&model))
+    };
+    let model_type = model_type.unwrap_or(translate::ModelType::Generic);
+
+    let keyring_provider = match &service_id {
+        Some(sid) => format!("openai_{}", sid),
+        None => "openai".to_string(),
+    };
+    let api_key = match config::CredentialStore::load(&keyring_provider, "secret") {
+        Ok(s) => Some(s),
+        Err(_) => None,
+    };
+
+    let base_url = base_url.ok_or_else(|| AppError::TranslateNotConfigured.to_ipc_error())?;
+    let proxy_config = ProxyConfig::load_from_db(&db);
+    let use_proxy_key = match &service_id {
+        Some(sid) => format!("translate_openai_{}_use_proxy", sid),
+        None => format!("translate_{}_use_proxy", provider),
+    };
+    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
+    let effective_proxy = match use_proxy.as_deref() {
+        Some("false") => ProxyConfig::default(),
+        _ => proxy_config,
+    };
+
+    let credentials = ProviderCredentials {
+        app_id: None,
+        secret_key: api_key,
+        region: None,
+        base_url: Some(base_url),
+        model: Some(model),
+        model_type: Some(model_type.as_str().to_string()),
+    };
+    let service_name = service_id.as_deref().map(translate::ai_service_display_name);
+    let provider_options = translate::ProviderOptions::default();
+    let prov_instance = translate::create_provider_with_proxy(
+        &prov, &credentials, &effective_proxy, service_name, &provider_options
+    ).map_err(to_ipc_err)?;
+
+    let max_input_tokens = model_type.max_input_tokens();
+    let result = translate::extract_names_from_subtitles(
+        prov_instance, &texts, &source_lang, &target_lang, max_input_tokens,
+        cancel_token.inner().clone(),
+    ).await.map_err(to_ipc_err)?;
+
+    let elapsed = extract_start.elapsed();
+    tracing::info!("extract_names 完成: {} 个人名, 耗时 {:.2}s", result.len(), elapsed.as_secs_f64());
+    Ok(result)
 }
 
 /// get_cached_translations：查询已缓存的翻译结果（不调用 API）
@@ -718,7 +878,7 @@ pub async fn test_translate_connection(
     } else {
         None
     };
-    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_name).map_err(to_ipc_err)?;
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_name, &translate::ProviderOptions::default()).map_err(to_ipc_err)?;
 
     // OpenAi：直接翻译测试文本，返回原文+译文
     if prov == TranslateProvider::OpenAi {
@@ -1104,6 +1264,324 @@ pub fn reveal_in_explorer_cmd(file_path: String) -> IpcResult<()> {
     ipc_result(crate::player::reveal_in_explorer(&file_path))
 }
 
+/// open_path_cmd：在系统文件管理器中打开目录
+#[tauri::command]
+pub fn open_path_cmd(path: String) -> IpcResult<()> {
+    #[cfg(windows)]
+    {
+        let result = std::process::Command::new("explorer.exe")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+                detail: format!("explorer ({})", e),
+            });
+        return ipc_result(result);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let result = std::process::Command::new("open")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+                detail: format!("open ({})", e),
+            });
+        return ipc_result(result);
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let result = std::process::Command::new("xdg-open")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+                detail: format!("xdg-open ({})", e),
+            });
+        return ipc_result(result);
+    }
+    #[cfg(not(any(windows, target_os = "macos", unix)))]
+    {
+        Ok(())
+    }
+}
+
+/// get_crash_log_dir_cmd：获取崩溃日志目录路径
+#[tauri::command]
+pub fn get_crash_log_dir_cmd(app: tauri::AppHandle) -> IpcResult<String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.map(|dir| {
+        let crash_dir = dir.join("crashes");
+        std::fs::create_dir_all(&crash_dir).ok();
+        crash_dir.to_string_lossy().to_string()
+    });
+    ipc_result(result)
+}
+
+/// clear_crash_logs_cmd：清空崩溃日志目录
+#[tauri::command]
+pub fn clear_crash_logs_cmd(app: tauri::AppHandle) -> IpcResult<usize> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.and_then(|dir| {
+        let crash_dir = dir.join("crashes");
+        let mut count = 0usize;
+        if let Ok(read_dir) = std::fs::read_dir(&crash_dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if std::fs::remove_file(&path).is_ok() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        Ok(count)
+    });
+    ipc_result(result)
+}
+
+/// get_prompt_fail_dir_cmd：获取 prompt 失败日志目录路径
+#[tauri::command]
+pub fn get_prompt_fail_dir_cmd(app: tauri::AppHandle) -> IpcResult<String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.map(|dir| {
+        let fail_dir = dir.join("prompt_fails");
+        std::fs::create_dir_all(&fail_dir).ok();
+        fail_dir.to_string_lossy().to_string()
+    });
+    ipc_result(result)
+}
+
+/// list_prompt_fail_logs_cmd：列出 prompt 失败日志文件
+#[tauri::command]
+pub fn list_prompt_fail_logs_cmd(app: tauri::AppHandle) -> IpcResult<Vec<PromptFailLogEntry>> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.map(|dir| {
+        let fail_dir = dir.join("prompt_fails");
+        let mut entries = Vec::new();
+        if fail_dir.exists() {
+            if let Ok(dir_entries) = std::fs::read_dir(&fail_dir) {
+                for entry in dir_entries.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("log") {
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                        let modified = entry.metadata()
+                            .and_then(|m| m.modified())
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        entries.push(PromptFailLogEntry { name, size, modified });
+                    }
+                }
+            }
+        }
+        // 按修改时间倒序（最新的在前）
+        entries.sort_by(|a, b| b.modified.cmp(&a.modified));
+        entries
+    });
+    ipc_result(result)
+}
+
+/// read_prompt_fail_log_cmd：读取单个 prompt 失败日志内容
+#[tauri::command]
+pub fn read_prompt_fail_log_cmd(app: tauri::AppHandle, name: String) -> IpcResult<String> {
+    // 安全检查：文件名不能包含路径分隔符
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return ipc_result(Err(crate::error::AppError::PlayerLoadFailed {
+            detail: "无效的文件名".to_string(),
+        }));
+    }
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.and_then(|dir| {
+        let file_path = dir.join("prompt_fails").join(&name);
+        std::fs::read_to_string(&file_path).map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("读取文件失败: {}", e),
+        })
+    });
+    ipc_result(result)
+}
+
+/// delete_prompt_fail_log_cmd：删除单个 prompt 失败日志
+#[tauri::command]
+pub fn delete_prompt_fail_log_cmd(app: tauri::AppHandle, name: String) -> IpcResult<()> {
+    // 安全检查：文件名不能包含路径分隔符
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return ipc_result(Err(crate::error::AppError::PlayerLoadFailed {
+            detail: "无效的文件名".to_string(),
+        }));
+    }
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.and_then(|dir| {
+        let file_path = dir.join("prompt_fails").join(&name);
+        std::fs::remove_file(&file_path).map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("删除文件失败: {}", e),
+        })
+    });
+    ipc_result(result)
+}
+
+/// clear_prompt_fail_logs_cmd：清空 prompt 失败日志目录
+#[tauri::command]
+pub fn clear_prompt_fail_logs_cmd(app: tauri::AppHandle) -> IpcResult<usize> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.and_then(|dir| {
+        let fail_dir = dir.join("prompt_fails");
+        let mut count = 0usize;
+        if let Ok(read_dir) = std::fs::read_dir(&fail_dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if std::fs::remove_file(&path).is_ok() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        Ok(count)
+    });
+    ipc_result(result)
+}
+
+/// prompt 失败日志条目
+#[derive(serde::Serialize)]
+pub struct PromptFailLogEntry {
+    pub name: String,
+    pub size: u64,
+    pub modified: u64,
+}
+
+/// set_dev_mode_cmd：同步开发者模式状态到后端
+/// 后端在 devMode 开启时记录所有翻译 API 请求/响应
+#[tauri::command]
+pub fn set_dev_mode_cmd(enabled: bool) -> IpcResult<()> {
+    crate::set_dev_mode(enabled);
+    Ok(()).into()
+}
+
+/// set_log_api_enabled_cmd：同步"全量记录翻译数据"开关到后端
+/// 仅在 devMode 开启且此开关开启时才记录 API 请求/响应
+#[tauri::command]
+pub fn set_log_api_enabled_cmd(enabled: bool) -> IpcResult<()> {
+    crate::set_log_api_enabled(enabled);
+    Ok(()).into()
+}
+
+/// get_api_debug_dir_cmd：获取 API 调试日志目录路径
+#[tauri::command]
+pub fn get_api_debug_dir_cmd(app: tauri::AppHandle) -> IpcResult<String> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.map(|dir| {
+        let debug_dir = dir.join("api_debug");
+        std::fs::create_dir_all(&debug_dir).ok();
+        debug_dir.to_string_lossy().to_string()
+    });
+    ipc_result(result)
+}
+
+/// list_api_debug_logs_cmd：列出 API 调试日志文件
+#[tauri::command]
+pub fn list_api_debug_logs_cmd(app: tauri::AppHandle) -> IpcResult<Vec<PromptFailLogEntry>> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.and_then(|dir| {
+        let debug_dir = dir.join("api_debug");
+        let mut entries = Vec::new();
+        if let Ok(read_dir) = std::fs::read_dir(&debug_dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) == Some("log") {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    let modified = entry.metadata()
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    entries.push(PromptFailLogEntry { name, size, modified });
+                }
+            }
+        }
+        // 按修改时间降序（最新的在前）
+        entries.sort_by(|a, b| b.modified.cmp(&a.modified));
+        Ok(entries)
+    });
+    ipc_result(result)
+}
+
+/// clear_api_debug_logs_cmd：清空 API 调试日志目录
+#[tauri::command]
+pub fn clear_api_debug_logs_cmd(app: tauri::AppHandle) -> IpcResult<usize> {
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| crate::error::AppError::PlayerLoadFailed {
+            detail: format!("获取 app_data_dir 失败: {}", e),
+        });
+    let result = app_data_dir.and_then(|dir| {
+        let debug_dir = dir.join("api_debug");
+        let mut count = 0usize;
+        if let Ok(read_dir) = std::fs::read_dir(&debug_dir) {
+            for entry in read_dir.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if std::fs::remove_file(&path).is_ok() {
+                        count += 1;
+                    }
+                }
+            }
+        }
+        Ok(count)
+    });
+    ipc_result(result)
+}
+
 /// extract_player_icons_cmd：提取播放器图标（异步，已存在的跳过）
 /// 在加载视频时调用，后台提取所有播放器的图标到 app_data_dir/player_icons/ 目录
 #[tauri::command]
@@ -1142,6 +1620,11 @@ static PLAYER: Mutex<Option<crate::player::Player>> = Mutex::new(None);
 /// player_init：初始化 libmpv 播放器，创建子窗口嵌入 Tauri 主窗口
 /// Windows 版保持同步：Win32 子窗口有线程亲和性（CreateWindowExW 必须在主线程调用），
 /// 且 Windows 的 vo (d3d11) 不会 dispatch_sync 到主线程，不存在 macOS 那样的死锁问题。
+///
+/// **重要**：创建新 Player 前先销毁旧 Player（在当前线程）。
+/// Win32 子窗口和 mpv 实例有线程亲和性，DestroyWindow 必须在创建窗口的同一线程调用。
+/// 如果不先销毁旧 Player，直接 `*PLAYER = Some(new)` 会触发旧 Player 的 Drop，
+/// 但 Drop 在新 Player 已创建后执行，可能导致窗口句柄冲突和 mpv 实例泄漏。
 #[cfg(windows)]
 #[tauri::command]
 pub fn player_init(
@@ -1152,6 +1635,19 @@ pub fn player_init(
 ) -> Result<(), ()> {
     use windows::Win32::Foundation::HWND;
     tracing::info!("player_init 开始: dll={}, x={}, y={}, w={}, h={}", dll_path, x, y, w, h);
+
+    // 先销毁旧 Player（在当前线程，即创建窗口的线程）
+    // 防止前端并发调用 player_init 导致旧 Player 被 Drop 覆盖时 DestroyWindow 在错误线程执行
+    let old_player = {
+        let mut guard = PLAYER.lock().unwrap();
+        guard.take()
+    };
+    if old_player.is_some() {
+        tracing::info!("player_init: 检测到旧 Player，先销毁（当前线程）");
+        drop(old_player);
+        tracing::info!("player_init: 旧 Player 已销毁");
+    }
+
     let hwnd = window.hwnd().map_err(|e| {
         tracing::error!("获取窗口 HWND 失败: {:?}", e);
     })?;
@@ -1319,6 +1815,43 @@ pub async fn player_get_position_cmd() -> Result<(f64, f64), ()> {
     }).await.map_err(|_| ())?
 }
 
+/// dev_log_cmd：前端调试日志输出到 Rust tracing（临时调试用）
+#[tauri::command]
+pub async fn dev_log_cmd(msg: String) -> Result<(), ()> {
+    tracing::info!("[Frontend] {}", msg);
+    Ok(())
+}
+
+/// set_space_disabled_cmd：设置空格键是否被禁用（焦点在输入框时前端设置 true）
+#[tauri::command]
+pub async fn set_space_disabled_cmd(disabled: bool) -> Result<(), ()> {
+    crate::player::SPACE_DISABLED.store(disabled, std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+/// is_cursor_in_window_cmd：检查鼠标光标是否在主窗口范围内
+/// 用于前端空格键播放/暂停的判断（避免鼠标在窗口外时误触发）
+#[tauri::command]
+pub async fn is_cursor_in_window_cmd(window: tauri::Window) -> Result<bool, ()> {
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    use windows::Win32::Foundation::POINT;
+
+    let pos = window.outer_position().map_err(|_| ())?;
+    let size = window.outer_size().map_err(|_| ())?;
+    unsafe {
+        let mut point = POINT::default();
+        if GetCursorPos(&mut point).is_err() {
+            return Ok(true); // 获取失败时 fallback 为 true
+        }
+        let left = pos.x;
+        let top = pos.y;
+        let right = pos.x + size.width as i32;
+        let bottom = pos.y + size.height as i32;
+        let inside = point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+        Ok(inside)
+    }
+}
+
 /// player_resize_cmd：调整子窗口位置和大小
 #[tauri::command]
 pub async fn player_resize_cmd(x: i32, y: i32, w: i32, h: i32) -> Result<(), ()> {
@@ -1333,28 +1866,42 @@ pub async fn player_resize_cmd(x: i32, y: i32, w: i32, h: i32) -> Result<(), ()>
 /// player_show_cmd：显示子窗口
 #[tauri::command]
 pub async fn player_show_cmd() -> Result<(), ()> {
+    tracing::info!("player_show_cmd 调用");
     tauri::async_runtime::spawn_blocking(|| {
         let guard = PLAYER.lock().unwrap();
         if let Some(ref player) = *guard {
             player.show();
+            tracing::info!("player_show_cmd 执行完成, HOOK_HIDDEN=false");
             Ok(())
-        } else { Err(()) }
+        } else {
+            tracing::warn!("player_show_cmd: 播放器未初始化");
+            Err(())
+        }
     }).await.map_err(|_| ())?
 }
 
 /// player_hide_cmd：隐藏子窗口（用于弹窗层级处理）
 #[tauri::command]
 pub async fn player_hide_cmd() -> Result<(), ()> {
+    tracing::info!("player_hide_cmd 调用");
     tauri::async_runtime::spawn_blocking(|| {
         let guard = PLAYER.lock().unwrap();
         if let Some(ref player) = *guard {
             player.hide();
+            tracing::info!("player_hide_cmd 执行完成, HOOK_HIDDEN=true");
             Ok(())
-        } else { Err(()) }
+        } else {
+            tracing::warn!("player_hide_cmd: 播放器未初始化");
+            Err(())
+        }
     }).await.map_err(|_| ())?
 }
 
 /// player_destroy_cmd：销毁播放器
+/// Windows 版保持同步：DestroyWindow 必须在创建窗口的线程调用。
+/// 之前用 spawn_blocking 在线程池执行 destroy，导致 DestroyWindow 始终失败（拒绝访问），
+/// 子窗口泄漏。改为同步执行，确保在正确的线程销毁。
+#[cfg(windows)]
 #[tauri::command]
 pub async fn player_destroy_cmd() -> Result<(), ()> {
     tracing::info!("player_destroy_cmd 开始");
@@ -1366,10 +1913,30 @@ pub async fn player_destroy_cmd() -> Result<(), ()> {
         tracing::info!("player_destroy_cmd: 播放器未初始化，跳过");
         return Ok(());
     }
-    // 在 macOS 上，mpv 的 vo 线程在销毁时会 dispatch_sync 到主线程，
-    // 因此 mpv_terminate_destroy 不能运行在主线程。将 Player 的 drop/destroy
-    // 放到独立的 blocking 线程执行，destroy_cmd 返回的 Future 仍可供前端 await，
-    // 保证 destroy 完成后再执行 player_init，同时主线程可继续处理事件循环。
+    // Windows：同步 drop（在当前线程，即创建窗口的线程）
+    // mpv_terminate_destroy 在 Windows 上约 100ms 完成，不会长时间阻塞主线程
+    drop(player);
+    tracing::info!("player_destroy_cmd 完成");
+    Ok(())
+}
+
+/// player_destroy_cmd (macOS)：销毁播放器
+/// macOS 用 spawn_blocking：mpv 的 vo 线程在销毁时会 dispatch_sync 到主线程，
+/// 因此 mpv_terminate_destroy 不能运行在主线程。将 Player 的 drop/destroy
+/// 放到独立的 blocking 线程执行，destroy_cmd 返回的 Future 仍可供前端 await，
+/// 保证 destroy 完成后再执行 player_init，同时主线程可继续处理事件循环。
+#[cfg(not(windows))]
+#[tauri::command]
+pub async fn player_destroy_cmd() -> Result<(), ()> {
+    tracing::info!("player_destroy_cmd 开始");
+    let player = {
+        let mut guard = PLAYER.lock().unwrap();
+        guard.take()
+    };
+    if player.is_none() {
+        tracing::info!("player_destroy_cmd: 播放器未初始化，跳过");
+        return Ok(());
+    }
     let result = tauri::async_runtime::spawn_blocking(move || {
         drop(player);
     }).await;

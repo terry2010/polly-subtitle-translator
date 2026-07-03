@@ -14,12 +14,15 @@ import { Progress } from "../components/ui/progress";
 import { useVideoStore } from "../stores/videoStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
+import { useDevModeStore } from "../stores/devModeStore";
 import { api, formatIpcError } from "../lib/api";
+import { warn, error as logError } from "../lib/logger";
 import { withPlayerHidden } from "../lib/utils";
 import { SERVICES, encodeAiSelectValue, decodeAiSelectValue } from "../lib/services";
 import { SubtitlePreviewPanel } from "../components/SubtitlePreviewPanel";
 import { SearchDialog } from "../components/SearchDialog";
 import { HdrNotice } from "../components/HdrNotice";
+import { GlossaryConfirmDialog } from "../components/GlossaryConfirmDialog";
 import { SubtitleStreamEditorDialog } from "../components/SubtitleStreamEditorDialog";
 import { FfmpegDownloadDialog } from "../components/FfmpegDownloadDialog";
 
@@ -145,12 +148,25 @@ function SearchableLangSelect({ value, onChange, options, placeholder }: Searcha
   );
 }
 
+// 模块级状态：跨路由保持（MainView 卸载重挂载时不丢失）
+// autoExtractedRef：自动提取已执行的 stream index（避免从设置返回时重复提取字幕）
+const autoExtractedStreamIdx: { current: number | null } = { current: null };
+// extractCacheRef：字幕流提取缓存（streamIndex -> SubtitleFile），避免从设置返回时重新提取
+const extractCache: Map<number, any> = new Map();
+// currentPlayTime：播放位置（秒），跨路由保持（避免从设置返回时字幕列表停在第一条）
+const currentPlayTimeState: { value: number } = { value: 0 };
+
 export default function MainView() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { probeResult, loading, error, openVideo, clearVideo, selectedSubtitleStream, selectSubtitleStream } = useVideoStore();
   const subtitleStore = useSubtitleStore();
   const translateStore = useTranslateStore();
+  const namePrecisionEnabled = useDevModeStore((s) => s.namePrecisionEnabled);
+  // 人名精译状态从 translateStore 读取（跨路由保持）
+  const nameExtracting = useTranslateStore((s) => s.extractingNames);
+  const glossaryDialogOpen = useTranslateStore((s) => s.glossaryDialogOpen);
+  const glossaryDraft = useTranslateStore((s) => s.glossaryDraft);
   const [extracting, setExtracting] = useState(false);
   const [extractProgress, setExtractProgress] = useState(0);
   const [ffmpegDialogOpen, setFfmpegDialogOpen] = useState(false);
@@ -160,12 +176,15 @@ export default function MainView() {
   const [extractedFiles, setExtractedFiles] = useState<{ name: string; path: string; status: string }[]>([]);
   // 提取失败的字幕流 index 集合（用于在列表中标记不可用的流）
   const [failedStreams, setFailedStreams] = useState<Set<number>>(new Set());
+  // refs for promise-based dialog flow
+  const glossaryConfirmedRef = useRef(false);
+  const nameExtractCancelledRef = useRef(false);
   // 导入的外部字幕列表
   const [importedSubtitles, setImportedSubtitles] = useState<{ name: string; path: string }[]>([]);
-  // 字幕流提取缓存：streamIndex -> SubtitleFile
-  const extractCacheRef = useRef<Map<number, any>>(new Map());
-  // 自动提取已执行的 stream index（避免重复提取）
-  const autoExtractedRef = useRef<number | null>(null);
+  // 字幕流提取缓存（模块级变量，避免从设置返回时丢失缓存导致重新提取）
+  const extractCacheRef = { current: extractCache };
+  // 自动提取已执行的 stream index（模块级变量，避免从设置返回时重复提取）
+  const autoExtractedRef = autoExtractedStreamIdx;
   // 视频信息卡展开/收起状态
   const [cardExpanded, setCardExpanded] = useState(true);
   const [cardHovered, setCardHovered] = useState(false);
@@ -247,7 +266,7 @@ export default function MainView() {
         }
         ffmpegDownloadedRef.current = true;
       } catch (e) {
-        console.error("[handleOpenVideo] 检测 ffmpeg 状态失败:", e);
+        logError("[handleOpenVideo] 检测 ffmpeg 状态失败:", e);
       }
     }
     // 启动时播放器未初始化，无需 withPlayerHidden
@@ -268,7 +287,7 @@ export default function MainView() {
       await openVideo(selected);
       // 后台异步提取播放器图标（不阻塞主流程，已提取过的会跳过）
       api.extractPlayerIcons(selected).catch((e) => {
-        console.warn("提取播放器图标失败:", e);
+        warn("提取播放器图标失败:", e);
       });
       if (cur?.source_path) {
         const name = cur.source_path.split(/[\\/]/).pop() ?? cur.source_path;
@@ -374,7 +393,7 @@ export default function MainView() {
           subtitleStore.setFile({ ...cached, entries });
         }
       } catch (e) {
-        console.warn("查询翻译缓存失败:", e);
+        warn("查询翻译缓存失败:", e);
       }
       return;
     }
@@ -396,7 +415,7 @@ export default function MainView() {
       await api.extractSubtitle(probeResult.video_path, selectedSubtitleStream.index, outputPath, undefined, durationSec);
       // 异步提取期间用户可能已关闭视频或切换了字幕流，检查取消标志
       if (extractCancelledRef.current) {
-        console.warn("提取完成但已被取消，丢弃结果");
+        warn("提取完成但已被取消，丢弃结果");
         return;
       }
       await subtitleStore.loadSubtitle(outputPath);
@@ -429,7 +448,7 @@ export default function MainView() {
             subtitleState.setFile({ ...subtitleState.file, entries });
           }
         } catch (e) {
-          console.warn("查询翻译缓存失败:", e);
+          warn("查询翻译缓存失败:", e);
         }
         // 缓存提取结果
         const finalState = useSubtitleStore.getState();
@@ -438,7 +457,7 @@ export default function MainView() {
         }
       }
     } catch (e: any) {
-      console.error("提取字幕失败:", e);
+      logError("提取字幕失败:", e);
       const msg = formatIpcError(e);
       setExtractedFiles((prev) => [
         ...prev,
@@ -527,35 +546,90 @@ export default function MainView() {
       }
     }));
 
-    Promise.all([traditionalPromise, aiPromise]).then(([tradResults, aiResults]) => {
-      const configured = Object.fromEntries([...tradResults, ...aiResults]);
-      setProviderConfigured(configured);
-      // 兜底：如果当前 provider 未配置，自动切换到第一个已配置的引擎
-      if (!configured[translateStore.provider]) {
-        const firstConfigured = [...traditionalProviders, ...aiServices.map((s) => s.id)]
-          .find((p) => configured[p]);
-        if (firstConfigured) {
-          translateStore.setProvider(firstConfigured);
-        }
-      }
-    });
-  }, []);
-
-  // 加载保存的 provider + serviceId + model
-  useEffect(() => {
-    Promise.all([
+    // 同时加载保存的 provider 配置，避免与兜底逻辑竞态
+    const savedConfigPromise = Promise.all([
       api.getConfig("translate_provider").catch(() => null),
       api.getConfig("translate_openai_service_id").catch(() => null),
       api.getConfig("translate_current_model").catch(() => null),
-    ]).then(([savedProvider, savedServiceId, savedModel]) => {
-      if (savedProvider && savedProvider !== translateStore.provider) {
-        translateStore.setProvider(savedProvider);
+    ]);
+
+    Promise.all([traditionalPromise, aiPromise, savedConfigPromise]).then(async ([tradResults, aiResults, [savedProvider, savedServiceId, savedModel]]) => {
+      const configured = Object.fromEntries([...tradResults, ...aiResults]);
+      setProviderConfigured(configured);
+
+      // 1. 先用 db 中保存的值恢复 provider（修复旧版本可能把 serviceId 存为 provider 的 bug）
+      const aiServiceIds = aiServices.map((s) => s.id);
+      let effectiveProvider = translateStore.provider;
+      let effectiveServiceId = translateStore.serviceId;
+      let effectiveModel = translateStore.model;
+
+      if (savedProvider) {
+        // "openai" 是所有 AI 服务的 provider 值，不是 serviceId
+        // 旧版本 bug：savedProvider 实际上是 serviceId（如 "deepseek"），此时 savedProvider !== "openai"
+        const isServiceId = savedProvider !== "openai" && aiServiceIds.includes(savedProvider);
+        if (isServiceId) {
+          // 旧版本 bug：savedProvider 实际上是 serviceId
+          effectiveProvider = "openai";
+          effectiveServiceId = savedProvider;
+          effectiveModel = savedModel || "";
+          // 修正 db
+          api.setConfig("translate_provider", "openai").catch(() => {});
+          api.setConfig("translate_openai_service_id", savedProvider).catch(() => {});
+        } else {
+          effectiveProvider = savedProvider;
+          if (savedProvider === "openai") {
+            effectiveServiceId = savedServiceId || null;
+            effectiveModel = savedModel || "";
+          } else {
+            effectiveServiceId = null;
+            effectiveModel = "";
+          }
+        }
       }
-      if (savedProvider === "openai") {
-        translateStore.setServiceId(savedServiceId || null);
-        if (savedModel) translateStore.setModel(savedModel);
+
+      // 2. 检查 effectiveProvider 是否已配置，未配置时切换到第一个已配置的引擎
+      const isCurrentConfigured =
+        (effectiveProvider !== "openai" && configured[effectiveProvider]) ||
+        (effectiveProvider === "openai" && effectiveServiceId && configured[effectiveServiceId]);
+
+      if (!isCurrentConfigured) {
+        // 优先找传统翻译
+        const firstTrad = traditionalProviders.find((p) => configured[p]);
+        if (firstTrad) {
+          effectiveProvider = firstTrad;
+          effectiveServiceId = null;
+          effectiveModel = "";
+        } else {
+          // 找第一个已配置的 AI 服务
+          const firstAi = aiServices.find((s) => configured[s.id]);
+          if (firstAi) {
+            effectiveProvider = "openai";
+            effectiveServiceId = firstAi.id;
+            // 加载该服务的第一个模型
+            const models = await api.getConfig(`translate_openai_${firstAi.id}_selected_models`).catch(() => null);
+            if (models) {
+              effectiveModel = models.split(",")[0] || "";
+            }
+            // 持久化
+            api.setConfig("translate_provider", "openai").catch(() => {});
+            api.setConfig("translate_openai_service_id", firstAi.id).catch(() => {});
+            api.setConfig("translate_current_model", effectiveModel).catch(() => {});
+          }
+        }
+      } else if (effectiveProvider === "openai" && !effectiveModel && effectiveServiceId) {
+        // provider 已配置但 model 为空，加载第一个模型
+        const models = await api.getConfig(`translate_openai_${effectiveServiceId}_selected_models`).catch(() => null);
+        if (models) {
+          effectiveModel = models.split(",")[0] || "";
+          api.setConfig("translate_current_model", effectiveModel).catch(() => {});
+        }
       }
-    }).catch(() => {});
+
+      // 3. 一次性更新 store，避免中间状态导致 Select 显示为空
+      translateStore.setProvider(effectiveProvider);
+      translateStore.setServiceId(effectiveServiceId);
+      if (effectiveModel) translateStore.setModel(effectiveModel);
+    });
   }, []);
 
   // OpenAi：加载所有已配置 AI 服务的模型列表（用于引擎下拉）
@@ -677,14 +751,16 @@ export default function MainView() {
     try {
       await api.openInSystemPlayer(probeResult.video_path);
     } catch (e) {
-      console.error("播放失败:", e);
+      logError("播放失败:", e);
     }
   }, [probeResult]);
 
   // libmpv 播放位置更新回调——用于字幕高亮联动
-  const [currentPlayTime, setCurrentPlayTime] = useState(0);
+  // currentPlayTime 用模块级变量 + useState 双写，确保从设置返回时初始值不丢失
+  const [currentPlayTime, setCurrentPlayTimeState] = useState(currentPlayTimeState.value);
   const handlePositionUpdate = useCallback((posSec: number, _durSec: number, _paused: boolean) => {
-    setCurrentPlayTime(posSec);
+    currentPlayTimeState.value = posSec;
+    setCurrentPlayTimeState(posSec);
   }, []);
 
   // ISO 639-2/B → ISO 639-1 映射（FFprobe 常见的三字母语言码 + 非标准码）
@@ -859,13 +935,63 @@ export default function MainView() {
       );
       return;
     }
+
+    // 人名精译：AI 翻译且启用时，先预扫描提取人名
+    let glossary: [string, string][] | undefined;
+    let nameTagging = false;
+    if (namePrecisionEnabled && provider === "openai") {
+      nameTagging = true;
+      nameExtractCancelledRef.current = false;
+      translateStore.setExtractingNames(true);
+      toast.info(t("translate.nameExtracting", "正在预扫描提取人名..."));
+      try {
+        const extracted = await translateStore.extractNames(subtitleStore.file.entries);
+        // 检查是否被用户取消
+        if (nameExtractCancelledRef.current) {
+          translateStore.setExtractingNames(false);
+          toast.info(t("translate.nameExtractCancelled", "人名精译已取消，翻译中止"));
+          return;
+        }
+        if (extracted && extracted.length > 0) {
+          // 弹窗让用户确认/修改译名表
+          // 先隐藏播放器子窗口（await 确保 IPC 执行完成），避免 Dialog 渲染时被视频遮盖
+          api.devLog("[MainView] 翻译前调用 playerHide");
+          await api.playerHide().catch(() => { /* 播放器未初始化，忽略 */ });
+          translateStore.setGlossaryDraft(extracted);
+          translateStore.setGlossaryDialogOpen(true);
+          // 等待用户确认（通过轮询 store 状态）
+          const confirmed = await new Promise<boolean>((resolve) => {
+            const checkInterval = setInterval(() => {
+              if (!useTranslateStore.getState().glossaryDialogOpen) {
+                clearInterval(checkInterval);
+                resolve(glossaryConfirmedRef.current);
+              }
+            }, 200);
+          });
+          if (!confirmed) {
+            translateStore.setExtractingNames(false);
+            toast.info(t("translate.nameExtractCancelled", "人名精译已取消，翻译中止"));
+            return;
+          }
+          glossary = useTranslateStore.getState().glossaryDraft.map((g) => [g.english, g.chinese] as [string, string]);
+        }
+      } catch (e: any) {
+        warn("人名预扫描失败，继续正常翻译:", e);
+        toast.warning(t("translate.nameExtractFailed", "人名预扫描失败，将使用正常翻译"));
+      }
+      translateStore.setExtractingNames(false);
+    }
+
     // 逐条翻译、逐条填充
     const result = await translateStore.startTranslate(
       subtitleStore.file.entries,
       (index, translated, failed) => {
         // 每条翻译完成后立即更新字幕预览区（含翻译失败标记）
         subtitleStore.updateEntry(index, { translated, failed });
-      }
+      },
+      undefined,
+      glossary,
+      nameTagging
     );
     if (result && result.translations.length > 0) {
       // 确保所有结果都更新（包括可能遗漏的），同步 failed 标记
@@ -878,7 +1004,7 @@ export default function MainView() {
       });
       subtitleStore.setFile({ ...subtitleStore.file, entries });
     }
-  }, [subtitleStore, translateStore, t, providerConfigured, navigate]);
+  }, [subtitleStore, translateStore, t, providerConfigured, navigate, namePrecisionEnabled]);
 
   const formatDuration = (s: number | null) => {
     if (!s) return "--";
@@ -886,6 +1012,14 @@ export default function MainView() {
     const m = Math.floor((s % 3600) / 60);
     const sec = Math.floor(s % 60);
     return `${h}:${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  const formatEta = (secs: number) => {
+    if (secs <= 0) return "--";
+    if (secs < 60) return `${Math.ceil(secs)}秒`;
+    const m = Math.floor(secs / 60);
+    const s = Math.ceil(secs % 60);
+    return `${m}分${s}秒`;
   };
 
   const formatSize = (bytes: number | null) => {
@@ -1191,7 +1325,7 @@ export default function MainView() {
                 <Select
                   value={translateStore.provider === "openai" && translateStore.model
                     ? encodeAiSelectValue(translateStore.serviceId || "openai", translateStore.model)
-                    : translateStore.provider}
+                    : translateStore.provider === "openai" ? "" : translateStore.provider}
                   onValueChange={(val) => {
                     if (val === "__add_more__") {
                       navigate("/settings?tab=translate");
@@ -1269,6 +1403,22 @@ export default function MainView() {
                   <Square className="mr-1 h-4 w-4" />
                   {t("translate.stop")}
                 </Button>
+              ) : nameExtracting ? (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  className="w-full"
+                  onClick={() => {
+                    nameExtractCancelledRef.current = true;
+                    translateStore.cancelTranslate();
+                    translateStore.setExtractingNames(false);
+                    glossaryConfirmedRef.current = false;
+                    translateStore.setGlossaryDialogOpen(false);
+                  }}
+                >
+                  <Square className="mr-1 h-4 w-4" />
+                  {t("translate.nameExtracting", "正在预扫描提取人名...")}
+                </Button>
               ) : (
                 <Button
                   size="sm"
@@ -1288,6 +1438,11 @@ export default function MainView() {
                     <span>{translateStore.progress} / {translateStore.total}</span>
                   </div>
                   <Progress value={(translateStore.progress / translateStore.total) * 100} />
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>{translateStore.totalChars.toLocaleString()} 字</span>
+                    <span>{translateStore.speed > 0 ? `${translateStore.speed.toFixed(0)} 字/秒` : "计算中..."}</span>
+                    <span>{translateStore.eta > 0 ? `剩余 ${formatEta(translateStore.eta)}` : ""}</span>
+                  </div>
                 </div>
               )}
 
@@ -1353,6 +1508,22 @@ export default function MainView() {
         }}
         onCancel={() => setFfmpegDialogOpen(false)}
       />
+
+      {/* 人名精译：译名表确认弹窗 */}
+      {glossaryDialogOpen && (
+        <GlossaryConfirmDialog
+          glossary={glossaryDraft}
+          onGlossaryChange={(g) => translateStore.setGlossaryDraft(g)}
+          onConfirm={() => {
+            glossaryConfirmedRef.current = true;
+            translateStore.setGlossaryDialogOpen(false);
+          }}
+          onCancel={() => {
+            glossaryConfirmedRef.current = false;
+            translateStore.setGlossaryDialogOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

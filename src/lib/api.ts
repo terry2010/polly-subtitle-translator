@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import i18n from "./i18n";
+import { log, error } from "./logger";
 import type {
   ProbeResult,
   SubtitleFile,
@@ -23,6 +24,7 @@ import type {
   SplitMode,
   ExportOptions,
   SubtitleStreamEdit,
+  PromptFailLogEntry,
 } from "./ipc-types";
 
 /// 调用 IPC 命令并解析 IpcResult 包装
@@ -40,11 +42,11 @@ async function callIpc<T>(cmd: string, args?: Record<string, unknown>): Promise<
       }
     }
     // async 命令直接返回值（无包装）
-    console.log(`[callIpc] ${cmd} 返回:`, result);
+    log(`[callIpc] ${cmd} 返回:`, result);
     return result as T;
   } catch (e: any) {
     // async 命令 reject：e 是序列化后的 IpcError 对象
-    console.error(`[callIpc] ${cmd} 错误:`, e);
+    error(`[callIpc] ${cmd} 错误:`, e);
     throw e;
   }
 }
@@ -123,8 +125,12 @@ export const api = {
     callIpc<SubtitleFile>("split_bilingual_subtitle", { file, splitMode }),
 
   // === 翻译命令 ===
-  translateSubtitle: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string, serviceId?: string) =>
-    callIpc<TranslateResult>("translate_subtitle", { entries, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null, serviceId: serviceId ?? null }),
+  translateSubtitle: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string, serviceId?: string, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean) =>
+    callIpc<TranslateResult>("translate_subtitle", { entries, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null, serviceId: serviceId ?? null, skipCache: skipCache ?? null, glossary: glossary ?? null, nameTagging: nameTagging ?? null }),
+
+  // 人名预扫描提取（仅 AI 翻译支持）
+  extractNames: (texts: string[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string, serviceId?: string) =>
+    callIpc<{ english: string; chinese: string; alternatives: string[] }[]>("extract_names", { texts, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null, serviceId: serviceId ?? null }),
 
   getCachedTranslations: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, serviceId?: string, model?: string) =>
     callIpc<TranslateEntry[]>("get_cached_translations", { entries, sourceLang, targetLang, provider, serviceId: serviceId ?? null, model: model ?? null }),
@@ -292,6 +298,45 @@ export const api = {
   revealInExplorer: (filePath: string) =>
     callIpc<void>("reveal_in_explorer_cmd", { filePath }),
 
+  openPath: (path: string) =>
+    callIpc<void>("open_path_cmd", { path }),
+
+  getCrashLogDir: () =>
+    callIpc<string>("get_crash_log_dir_cmd"),
+
+  clearCrashLogs: () =>
+    callIpc<number>("clear_crash_logs_cmd"),
+
+  getPromptFailDir: () =>
+    callIpc<string>("get_prompt_fail_dir_cmd"),
+
+  listPromptFailLogs: () =>
+    callIpc<PromptFailLogEntry[]>("list_prompt_fail_logs_cmd"),
+
+  readPromptFailLog: (name: string) =>
+    callIpc<string>("read_prompt_fail_log_cmd", { name }),
+
+  deletePromptFailLog: (name: string) =>
+    callIpc<void>("delete_prompt_fail_log_cmd", { name }),
+
+  clearPromptFailLogs: () =>
+    callIpc<number>("clear_prompt_fail_logs_cmd"),
+
+  setDevMode: (enabled: boolean) =>
+    callIpc<void>("set_dev_mode_cmd", { enabled }),
+
+  setLogApiEnabled: (enabled: boolean) =>
+    callIpc<void>("set_log_api_enabled_cmd", { enabled }),
+
+  getApiDebugDir: () =>
+    callIpc<string>("get_api_debug_dir_cmd"),
+
+  listApiDebugLogs: () =>
+    callIpc<PromptFailLogEntry[]>("list_api_debug_logs_cmd"),
+
+  clearApiDebugLogs: () =>
+    callIpc<number>("clear_api_debug_logs_cmd"),
+
   extractPlayerIcons: (videoPath: string) =>
     callIpc<PlayerIcon[]>("extract_player_icons_cmd", { videoPath }),
 
@@ -327,6 +372,12 @@ export const api = {
   playerGetPosition: () =>
     invoke<[number, number]>("player_get_position_cmd"),
 
+  devLog: (msg: string) =>
+    invoke<void>("dev_log_cmd", { msg }).catch(() => {}),
+
+  setSpaceDisabled: (disabled: boolean) =>
+    invoke<void>("set_space_disabled_cmd", { disabled }).catch(() => {}),
+
   playerResize: (x: number, y: number, w: number, h: number) =>
     invoke<void>("player_resize_cmd", { x, y, w, h }),
 
@@ -335,6 +386,9 @@ export const api = {
 
   playerHide: () =>
     invoke<void>("player_hide_cmd"),
+
+  isCursorInWindow: () =>
+    invoke<boolean>("is_cursor_in_window_cmd"),
 
   playerDestroy: () =>
     invoke<void>("player_destroy_cmd"),

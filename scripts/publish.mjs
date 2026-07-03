@@ -1,13 +1,16 @@
 // AI-SubTrans 发布脚本
 // 用法：
-//   node scripts/publish.mjs 1.0.1 "更新内容"     → 改版本号 + 构建 + 发布
+//   node scripts/publish.mjs 1.0.1 "更新内容"     → 改版本号 + 构建 + 发布（本地 Windows 全流程）
 //   node scripts/publish.mjs                       → 交互式输入
 //   node scripts/publish.mjs --build-only          → 只构建不发布（本地测试）
+//   node scripts/publish.mjs --set-version 1.0.1   → 只改版本号（CI 构建前用）
+//   node scripts/publish.mjs --update-latest 1.0.1 "更新内容" → 只从 Release assets 合并生成 latest.json（CI 构建后用）
 //
 // 环境变量：
 //   GITHUB_TOKEN                          → GitHub Personal Access Token（repo 权限）
 //   TAURI_SIGNING_PRIVATE_KEY_PATH        → 私钥文件路径（默认 ~/.tauri/ai-subtrans.key）
 //   TAURI_SIGNING_PRIVATE_KEY_PASSWORD    → 私钥密码
+//   TAURI_SIGNING_PRIVATE_KEY             → 私钥内容（CI 中用，优先于 PATH）
 //
 // 前提：
 //   1. 已生成签名密钥：npx tauri signer generate -w ~/.tauri/ai-subtrans.key
@@ -25,6 +28,8 @@ const NSIS_DIR = join(TARGET_DIR, "bundle", "nsis");
 // === 解析参数 ===
 const args = process.argv.slice(2);
 const buildOnly = args.includes("--build-only");
+const setVersionOnly = args.includes("--set-version");
+const updateLatestOnly = args.includes("--update-latest");
 const versionArg = args.find(a => !a.startsWith("--") && /^\d+\.\d+\.\d+$/.test(a));
 const notesArg = args.find(a => !a.startsWith("--") && a !== versionArg);
 
@@ -208,10 +213,136 @@ async function publishLatestJson(version, notes, artifacts, owner, repo) {
   console.log("  ✓ latest.json 已推送到 gh-pages 分支");
 }
 
+// === 从 Release assets 合并生成多平台 latest.json（CI 用） ===
+// 根据 .sig 文件名判断平台，找到对应的下载 URL
+function detectPlatform(assetName) {
+  // Windows NSIS: AI-SubTrans_1.0.1_x64-setup.exe.sig
+  if (assetName.endsWith("-setup.exe.sig")) return "windows-x86_64";
+  // macOS arm64: AI-SubTrans_1.0.1_aarch64.app.tar.gz.sig
+  if (assetName.endsWith("aarch64.app.tar.gz.sig")) return "darwin-aarch64";
+  // macOS x86_64: AI-SubTrans_1.0.1_x86_64.app.tar.gz.sig
+  if (assetName.endsWith("x86_64.app.tar.gz.sig")) return "darwin-x86_64";
+  // macOS universal: AI-SubTrans_1.0.1_universal.app.tar.gz.sig
+  if (assetName.endsWith("universal.app.tar.gz.sig")) return "darwin-universal";
+  return null;
+}
+
+async function updateLatestFromRelease(version, notes) {
+  console.log(`\n>>> 从 Release assets 合并生成 latest.json (v${version}) ...`);
+
+  const { owner, repo } = getRepoInfo();
+  console.log(`  仓库: ${owner}/${repo}`);
+
+  // 1. 获取 Release 信息和 assets 列表
+  const releaseRes = await githubAPI("GET", `/repos/${owner}/${repo}/releases/tags/v${version}`);
+  const release = await releaseRes.json();
+  console.log(`  ✓ Release: ${release.html_url}`);
+  console.log(`  ✓ Assets: ${release.assets.length} 个`);
+
+  // 2. 遍历 assets，找 .sig 文件并匹配平台
+  const platforms = {};
+  for (const asset of release.assets) {
+    const platform = detectPlatform(asset.name);
+    if (!platform) continue;
+
+    // 下载 .sig 文件内容
+    console.log(`  >>> 下载签名: ${asset.name}`);
+    const sigRes = await fetch(asset.browser_download_url);
+    if (!sigRes.ok) {
+      throw new Error(`下载签名文件失败: ${asset.name} (${sigRes.status})`);
+    }
+    const signature = (await sigRes.text()).trim();
+
+    // 找对应的安装包 asset（去掉 .sig 后缀）
+    const baseName = asset.name.replace(/\.sig$/, "");
+    const baseAsset = release.assets.find(a => a.name === baseName);
+    if (!baseAsset) {
+      console.log(`  ⚠ 未找到对应安装包: ${baseName}，跳过 ${platform}`);
+      continue;
+    }
+
+    // 构建 URL（加 gh-proxy 加速前缀）
+    const downloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/${baseName}`;
+    const acceleratedUrl = `https://gh-proxy.com/${downloadUrl}`;
+
+    platforms[platform] = {
+      signature,
+      url: acceleratedUrl,
+    };
+    console.log(`  ✓ ${platform}: ${baseName}`);
+  }
+
+  if (Object.keys(platforms).length === 0) {
+    throw new Error("未从 Release assets 中找到任何平台的签名文件");
+  }
+
+  // 3. 生成 latest.json
+  const latestJson = {
+    version,
+    notes: notes.replace(/\\n/g, "\n"),
+    pub_date: new Date().toISOString(),
+    platforms,
+  };
+
+  const jsonContent = JSON.stringify(latestJson, null, 2);
+  console.log("\n  latest.json:");
+  console.log("  " + jsonContent.replace(/\n/g, "\n  "));
+
+  // 4. 推送到 gh-pages（复用现有逻辑）
+  let sha = null;
+  try {
+    const res = await githubAPI("GET", `/repos/${owner}/${repo}/contents/latest.json?ref=gh-pages`);
+    const data = await res.json();
+    sha = data.sha;
+    console.log(`  ✓ 现有 latest.json sha: ${sha}`);
+  } catch {
+    console.log("  (gh-pages 分支上无现有 latest.json，将创建新文件)");
+  }
+
+  const content = Buffer.from(jsonContent).toString("base64");
+  await githubAPI("PUT", `/repos/${owner}/${repo}/contents/latest.json`, {
+    message: `chore: update latest.json for v${version}`,
+    content,
+    sha,
+    branch: "gh-pages",
+  });
+  console.log("  ✓ latest.json 已推送到 gh-pages 分支");
+  console.log(`\n  验证: https://${owner}.github.io/${repo}/latest.json`);
+}
+
 // === 主流程 ===
 async function main() {
   let version = versionArg;
   let notes = notesArg || "";
+
+  // ── 模式 1：--set-version（CI 构建前改版本号）──
+  if (setVersionOnly) {
+    if (!version) {
+      console.error('用法: node scripts/publish.mjs --set-version <版本号>');
+      process.exit(1);
+    }
+    updateVersion(version);
+    console.log(`\n✅ 版本号已更新到 ${version}`);
+    return;
+  }
+
+  // ── 模式 2：--update-latest（CI 构建后合并 latest.json）──
+  if (updateLatestOnly) {
+    if (!version) {
+      console.error('用法: node scripts/publish.mjs --update-latest <版本号> "更新内容"');
+      process.exit(1);
+    }
+    if (!GITHUB_TOKEN) {
+      throw new Error("请设置环境变量 GITHUB_TOKEN");
+    }
+    await updateLatestFromRelease(version, notes);
+    console.log(`\n========================================`);
+    console.log(`  ✅ latest.json 更新完成！`);
+    console.log(`========================================`);
+    return;
+  }
+
+  // ── 模式 3：本地全流程发布（原有逻辑）──
 
   // 交互式输入
   if (!version) {

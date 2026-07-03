@@ -34,7 +34,7 @@ function makeProbe(subs: SubtitleStream[]): ProbeResult {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useVideoStore.setState({ probeResult: null, loading: false, error: null, selectedSubtitleStream: null });
+  useVideoStore.setState({ probeResult: null, loading: false, error: null, selectedSubtitleStream: null, autoPlayOnLoad: false, savedPosition: 0, wasPlaying: false });
 });
 
 // === SECTION 1 END ===

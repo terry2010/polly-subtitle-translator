@@ -8,9 +8,18 @@ interface VideoState {
   loading: boolean;
   error: string | null;
   selectedSubtitleStream: SubtitleStream | null;
+  /** 是否在播放器加载后自动播放（仅首次打开视频时 true，从设置返回时不自动播放） */
+  autoPlayOnLoad: boolean;
+  /** 播放器卸载时保存的位置（秒），用于从设置返回时恢复 */
+  savedPosition: number;
+  /** 播放器卸载时是否正在播放，用于从设置返回时恢复 */
+  wasPlaying: boolean;
   openVideo: (path: string) => Promise<void>;
   selectSubtitleStream: (stream: SubtitleStream | null) => void;
   clearVideo: () => void;
+  setAutoPlayOnLoad: (v: boolean) => void;
+  setSavedPosition: (pos: number) => void;
+  setWasPlaying: (playing: boolean) => void;
 }
 
 export const useVideoStore = create<VideoState>((set) => ({
@@ -18,9 +27,12 @@ export const useVideoStore = create<VideoState>((set) => ({
   loading: false,
   error: null,
   selectedSubtitleStream: null,
+  autoPlayOnLoad: false,
+  savedPosition: 0,
+  wasPlaying: false,
 
   openVideo: async (path: string) => {
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, autoPlayOnLoad: true, savedPosition: 0, wasPlaying: false });
     try {
       const result = await api.probeVideo(path);
       set({ probeResult: result, loading: false });
@@ -44,5 +56,8 @@ export const useVideoStore = create<VideoState>((set) => ({
   },
 
   selectSubtitleStream: (stream) => set({ selectedSubtitleStream: stream }),
-  clearVideo: () => set({ probeResult: null, error: null, selectedSubtitleStream: null }),
+  clearVideo: () => set({ probeResult: null, error: null, selectedSubtitleStream: null, autoPlayOnLoad: false, savedPosition: 0, wasPlaying: false }),
+  setAutoPlayOnLoad: (v) => set({ autoPlayOnLoad: v }),
+  setSavedPosition: (pos) => set({ savedPosition: pos }),
+  setWasPlaying: (playing) => set({ wasPlaying: playing }),
 }));

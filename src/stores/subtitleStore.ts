@@ -4,6 +4,8 @@ import type { SubtitleFile, SubtitleEntry, BilingualDetectResult } from "../lib/
 import { api, formatIpcError } from "../lib/api";
 import { toast } from "sonner";
 import i18n from "../lib/i18n";
+import { warn } from "../lib/logger";
+import { useTranslateStore } from "./translateStore";
 
 interface SubtitleState {
   file: SubtitleFile | null;
@@ -128,7 +130,27 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
           });
         }
       } catch (e) {
-        console.warn("双语检测失败:", e);
+        warn("双语检测失败:", e);
+      }
+      // 查询翻译缓存，自动填充已翻译的条目
+      try {
+        const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
+        const cached = await api.getCachedTranslations(
+          file.entries, sourceLang, targetLang, provider,
+          provider === "openai" ? (serviceId || undefined) : undefined,
+          provider === "openai" ? (model || undefined) : undefined,
+        );
+        if (cached && cached.length > 0) {
+          const currentState = get();
+          if (!currentState.file) return;
+          const entries = currentState.file.entries.map((e) => {
+            const tr = cached.find((c) => c.index === e.index);
+            return tr ? { ...e, translated: tr.translated } : e;
+          });
+          set({ file: { ...currentState.file, entries } });
+        }
+      } catch (e) {
+        warn("查询翻译缓存失败:", e);
       }
     } catch (e: any) {
       const msg = formatIpcError(e);
@@ -424,6 +446,8 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
     const undoPatch = pushUndo(state);
     const entries = state.file.entries.map((e) => ({ ...e, translated: "" }));
     set({ ...undoPatch, file: { ...state.file, entries } });
+    // 同时清除后端翻译缓存，避免重新翻译时读取旧的错位缓存
+    api.clearTranslateCache().catch(() => {});
   },
 
   splitBilingual: async () => {

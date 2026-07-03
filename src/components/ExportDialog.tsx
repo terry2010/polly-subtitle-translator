@@ -11,8 +11,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { api } from "../lib/api";
+import { error } from "../lib/logger";
 import { useVideoStore } from "../stores/videoStore";
 import { useTranslateStore } from "../stores/translateStore";
+import { useSubtitleStore } from "../stores/subtitleStore";
 import type { SubtitleFile, ExportOptions, AssBilingualStyle } from "../lib/ipc-types";
 import { DEFAULT_ASS_STYLE } from "../lib/ipc-types";
 import {
@@ -257,6 +259,11 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
   const [assStyle, setAssStyle] = useState<AssBilingualStyle>(DEFAULT_ASS_STYLE);
   const [merging, setMerging] = useState(false);
 
+  // 始终从 store 获取最新 file，避免翻译完成后 setFile 的响应式更新延迟
+  // 导致预览用旧数据（只有原文没有译文，或只有译文没有原文）
+  const storeFile = useSubtitleStore((s) => s.file);
+  const effectiveFile = storeFile ?? file;
+
   const videoPath = useVideoStore((s) => s.probeResult?.video_path ?? null);
   const videoWidth = useVideoStore((s) => s.probeResult?.video_stream?.width ?? null);
   const videoHeight = useVideoStore((s) => s.probeResult?.video_stream?.height ?? null);
@@ -272,8 +279,10 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
   // 因为弹层打开时播放器已经被隐藏了
   useEffect(() => {
     if (!open) return;
+    api.devLog("[ExportDialog] 调用 playerHide");
     api.playerHide().catch(() => { /* 播放器未初始化，忽略 */ });
     return () => {
+      api.devLog("[ExportDialog] cleanup 调用 playerShow");
       api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
     };
   }, [open]);
@@ -291,20 +300,22 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
 
   const handleExport = useCallback(async () => {
     const options = currentOptions();
+    const f = effectiveFile;
+    if (!f) return;
     // 前端过滤 _deleted 条目并剥离 _deleted 字段（Rust 端 SubtitleEntry 无此字段）
     const fileToExport: SubtitleFile = {
-      ...file,
-      entries: file.entries
+      ...f,
+      entries: f.entries
         .filter((e) => !e._deleted)
         .map(({ _deleted, ...rest }) => rest),
     };
     // 默认保存到视频所在目录（用户最期望的行为）
     const baseName = videoPath ? stripExt(videoPath)
-      : file.source_path ? stripExt(file.source_path)
+      : f.source_path ? stripExt(f.source_path)
       : "subtitle";
     const defaultFileName = buildExportFileName(options, sourceLang, targetLang, baseName);
     const videoDir = videoPath ? fileDir(videoPath)
-      : file.source_path ? fileDir(file.source_path)
+      : f.source_path ? fileDir(f.source_path)
       : "";
     const defaultPath = videoDir ? `${videoDir}${defaultFileName}` : defaultFileName;
     const outputPath = await save({
@@ -317,21 +328,23 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
       onOpenChange(false);
       toast.success(t("subtitle.exportSuccess"));
     } catch (e) {
-      console.error("导出失败:", e);
+      error("导出失败:", e);
       toast.error(t("subtitle.exportFailed"));
     }
-  }, [format, mode, monolingualLang, translatedFirst, assStyle, file, videoPath, sourceLang, targetLang, onOpenChange, t]);
+  }, [format, mode, monolingualLang, translatedFirst, assStyle, effectiveFile, videoPath, sourceLang, targetLang, onOpenChange, t]);
 
   // 合并字幕到视频：按当前选项渲染字幕到临时文件，再调用 mergeSubtitle
   // 智能选择输出位置：磁盘空间足够则直接修改原文件，不够则弹 save 对话框选其他盘
   const handleMergeToVideo = useCallback(async () => {
     if (!videoPath) return;
+    const f = effectiveFile;
+    if (!f) return;
     setMerging(true);
     try {
       const options = currentOptions();
       const fileToExport: SubtitleFile = {
-        ...file,
-        entries: file.entries
+        ...f,
+        entries: f.entries
           .filter((e) => !e._deleted)
           .map(({ _deleted, ...rest }) => rest),
       };
@@ -363,12 +376,12 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
       onOpenChange(false);
       toast.success(t("subtitle.mergeSuccess"));
     } catch (e) {
-      console.error("合并失败:", e);
+      error("合并失败:", e);
       toast.error(t("subtitle.mergeFailed"));
     } finally {
       setMerging(false);
     }
-  }, [videoPath, file, format, mode, monolingualLang, sourceLang, targetLang, onOpenChange, t]);
+  }, [videoPath, effectiveFile, format, mode, monolingualLang, sourceLang, targetLang, onOpenChange, t]);
 
   // 分段控件按钮样式
   const segBtn = (active: boolean) =>
@@ -560,7 +573,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
           {/* 实时预览 */}
           <div className="space-y-1">
             <div className="text-sm font-medium">{t("subtitle.exportPreview", "预览")}</div>
-            <ExportPreview file={file} options={currentOptions()} assStyle={assStyle} />
+            <ExportPreview file={effectiveFile!} options={currentOptions()} assStyle={assStyle} />
           </div>
         </div>
 

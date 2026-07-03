@@ -2,11 +2,13 @@
 // 对应需求文档 §3.6 F-09：libmpv 子窗口嵌入 + 播控条 + 位置事件联动
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { log, error } from "../lib/logger";
 import type { AudioStream, ProbeResult, InstalledPlayer, PlayerIcon, SubtitleEntry } from "../lib/ipc-types";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { platform } from "@tauri-apps/plugin-os";
+import { useVideoStore } from "../stores/videoStore";
 import { Film, Play, Pause, Loader2, Download, Volume2, VolumeX, X, FolderOpen, Info, ChevronRight, MonitorPlay, Languages } from "lucide-react";
 import { Button } from "./ui/button";
 import { uiState } from "../lib/utils";
@@ -122,9 +124,17 @@ function formatEta(secs: number): string {
   return `${m}分${s}秒`;
 }
 
+/// 模块级标志：player_init 是否正在进行中
+/// 防止 HMR 重挂载或 React StrictMode 双调用导致并发 player_init
+/// 导出供测试重置
+export let _resetPlayerInitLock: () => void = () => {};
+
 export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onShowVideoInfo }: VideoPlayerProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
+  // 防止并发 player_init 的锁（用 ref 确保组件重挂载时重置）
+  const initLockRef = useRef(false);
+  _resetPlayerInitLock = () => { initLockRef.current = false; };
   const subtitleStore = useSubtitleStore();
   const translateStore = useTranslateStore();
   // 下载状态从全局 store 获取（路由切换时不丢失）
@@ -145,6 +155,9 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
   const [speed, setSpeed] = useState(1);
   const [audioTrack, setAudioTrack] = useState(1); // mpv aid，1-based 音频流序号
   const [loadingVideo, setLoadingVideo] = useState(false);
+  // ref 镜像：卸载 cleanup 闭包需要最新值，避免捕获 stale state
+  const positionRef = useRef(0);
+  const playingRef = useRef(false);
   const speedOptions = [0.5, 0.75, 1, 1.25, 1.5, 2];
   // 右键菜单状态：屏幕物理坐标 → 转 CSS 坐标后定位
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -161,27 +174,51 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     try { setCurrentPlatform(platform()); } catch { /* ignore */ }
   }, []);
 
+  // 保持 ref 镜像同步，供卸载 cleanup 使用
+  useEffect(() => {
+    positionRef.current = position;
+    if (position > 0) api.devLog(`[VideoPlayer] positionRef 更新: ${position}`);
+  }, [position]);
+  useEffect(() => { playingRef.current = playing; }, [playing]);
+
   // 下载 libmpv（委托给 store，事件监听在 App.tsx 全局处理）
   const handleDownload = useCallback(() => {
     void startDownload();
   }, [startDownload]);
 
   // 初始化播放器并加载视频
-  const initAndLoad = useCallback(async (videoPath: string, dllPath: string, audioStreams: AudioStream[]) => {
+  // cancelledRef：由调用方（useEffect）传入的 ref，组件卸载时置为 true
+  // 每次 await 后检查 cancelledRef，如果已取消则立即返回，不再操作后端播放器
+  // 防止组件卸载后继续调用 playerInit/playerLoad 等，导致并发 mpv 实例和窗口泄漏
+  const initAndLoad = useCallback(async (
+    videoPath: string,
+    dllPath: string,
+    audioStreams: AudioStream[],
+    cancelledRef: { current: boolean },
+  ) => {
     if (!containerRef.current) return;
+    // 如果已有 init 在进行中，跳过（防止 HMR/StrictMode 双调用）
+    if (initLockRef.current) {
+      log("[VideoPlayer] player_init 已在进行中，跳过重复调用");
+      return;
+    }
+    initLockRef.current = true;
     const rect = containerRef.current.getBoundingClientRect();
-    console.log("[VideoPlayer] 容器 rect:", rect);
+    log("[VideoPlayer] 容器 rect:", rect);
     const win = getCurrentWindow();
     const scaleFactor = await win.scaleFactor();
+    if (cancelledRef.current) { log("[VideoPlayer] initAndLoad 在 scaleFactor 后被取消"); return; }
     const x = Math.round(rect.left * scaleFactor);
     const y = Math.round(rect.top * scaleFactor);
     const w = Math.round(rect.width * scaleFactor);
     const h = Math.round(rect.height * scaleFactor);
-    console.log("[VideoPlayer] player_init 坐标:", { x, y, w, h });
+    log("[VideoPlayer] player_init 坐标:", { x, y, w, h });
     try {
       await api.playerInit(dllPath, x, y, w, h);
+      if (cancelledRef.current) { log("[VideoPlayer] initAndLoad 在 playerInit 后被取消"); return; }
       setPlayerReady(true);
       await api.playerLoad(videoPath);
+      if (cancelledRef.current) { log("[VideoPlayer] initAndLoad 在 playerLoad 后被取消"); return; }
       setLoadingVideo(false);
       // 加载后主动设置音轨：mpv 默认 aid=auto 会自动选 disposition_default 的音轨，
       // 但下拉框初始值是数组序号。这里按 disposition_default 找到默认音轨的 aid
@@ -191,12 +228,54 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
         const aid = defaultIdx >= 0 ? defaultIdx + 1 : 1;
         setAudioTrack(aid);
         await api.playerSetAudioTrack(aid);
+        if (cancelledRef.current) { log("[VideoPlayer] initAndLoad 在 setAudioTrack 后被取消"); return; }
       }
-      // 自动播放
-      await api.playerPlay();
-      setPlaying(true);
+      // 自动播放：仅首次打开视频时自动播放，从设置返回时不自动播放
+      const videoState = useVideoStore.getState();
+      const shouldAutoPlay = videoState.autoPlayOnLoad;
+      api.devLog(`[VideoPlayer] initAndLoad: autoPlayOnLoad=${shouldAutoPlay}, savedPosition=${videoState.savedPosition}, wasPlaying=${videoState.wasPlaying}`);
+      if (shouldAutoPlay) {
+        await api.playerPlay();
+        if (cancelledRef.current) return;
+        setPlaying(true);
+        useVideoStore.getState().setAutoPlayOnLoad(false);
+      } else if (videoState.savedPosition > 0) {
+        // 从设置返回：恢复之前的位置和播放状态
+        // 轮询等待 mpv 完成文件加载（duration > 0 表示加载完成），再 seek
+        // 否则 seek 命令会在文件未加载完成时被丢弃，导致从头播放
+        let loaded = false;
+        for (let i = 0; i < 20; i++) { // 最多等 2 秒
+          await new Promise(r => setTimeout(r, 100));
+          if (cancelledRef.current) { log("[VideoPlayer] initAndLoad 在轮询加载时被取消"); return; }
+          try {
+            const [, dur] = await api.playerGetPosition();
+            if (dur > 0) { loaded = true; break; }
+          } catch { /* 播放器未就绪，继续等 */ }
+        }
+        if (loaded) {
+          log("[VideoPlayer] 文件已加载，seek 到", videoState.savedPosition);
+        } else {
+          log("[VideoPlayer] 等待文件加载超时，仍尝试 seek");
+        }
+        await api.playerSeek(videoState.savedPosition);
+        if (cancelledRef.current) return;
+        setPosition(videoState.savedPosition);
+        if (videoState.wasPlaying) {
+          await api.playerPlay();
+          if (cancelledRef.current) return;
+          setPlaying(true);
+        } else {
+          // mpv loadfile 后默认自动播放，暂停状态需要显式暂停
+          await api.playerPause();
+          if (cancelledRef.current) return;
+          setPlaying(false);
+        }
+        // 恢复后清除保存的状态，避免重复恢复
+        useVideoStore.getState().setSavedPosition(0);
+        useVideoStore.getState().setWasPlaying(false);
+      }
     } catch (e) {
-      console.error("初始化播放器失败:", e);
+      error("初始化播放器失败:", e);
       setPlayerReady(false);
       setLoadingVideo(false);
     }
@@ -205,7 +284,9 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
   // 视频变更时初始化播放器
   useEffect(() => {
     if (!probeResult || !libmpvStatus?.downloaded || !libmpvStatus.path) return;
-    let cancelled = false;
+    // 用 ref 而非局部变量传递 cancelled 状态给 initAndLoad
+    // ref 在组件重挂载时不会重置，但 cleanup 会置为 true
+    const cancelledRef = { current: false };
     setLoadingVideo(true);
     setPlayerReady(false);
     setAudioTrack(1); // 重置为默认音轨（load 后会按 disposition_default 校正）
@@ -213,13 +294,13 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     // （不 await 会导致多个 mpv 实例同时存在，旧实例脱离嵌入窗口变成独立窗口）
     (async () => {
       try { await api.playerDestroy(); } catch { /* 播放器未初始化，忽略 */ }
-      if (cancelled) return;
+      if (cancelledRef.current) return;
       // 延迟一帧让 DOM 更新后获取正确坐标
       await new Promise(r => setTimeout(r, 100));
-      if (cancelled) return;
-      initAndLoad(probeResult.video_path, libmpvStatus.path!, probeResult.audio_streams);
+      if (cancelledRef.current) return;
+      await initAndLoad(probeResult.video_path, libmpvStatus.path!, probeResult.audio_streams, cancelledRef);
     })();
-    return () => { cancelled = true; };
+    return () => { cancelledRef.current = true; initLockRef.current = false; };
   }, [probeResult, libmpvStatus, initAndLoad]);
 
   // 监听位置事件
@@ -234,11 +315,11 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
         if (lastPausedRef.current !== paused) {
           const prev = lastPausedRef.current;
           if (prev === null) {
-            console.log("[VideoPlayer] 播放开始", { pos, dur });
+            log("[VideoPlayer] 播放开始", { pos, dur });
           } else if (paused) {
-            console.log("[VideoPlayer] 暂停", { pos, dur });
+            log("[VideoPlayer] 暂停", { pos, dur });
           } else {
-            console.log("[VideoPlayer] 恢复播放", { pos, dur });
+            log("[VideoPlayer] 恢复播放", { pos, dur });
           }
           lastPausedRef.current = paused;
         }
@@ -299,8 +380,19 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
   // 组件卸载时销毁播放器
   // 先 hide 再 destroy：hide 立即设置 HOOK_HIDDEN 并隐藏子窗口，
   // 防止导航切换时 DOM 变化触发位置同步钩子把子窗口闪到错误位置。
+  // 同时保存播放位置和播放状态，以便从设置页返回时恢复。
   useEffect(() => {
     return () => {
+      // 保存播放位置和播放状态到全局 store（用于从设置返回时恢复）
+      const videoState = useVideoStore.getState();
+      api.devLog(`[VideoPlayer] 卸载 cleanup: positionRef=${positionRef.current}, playingRef=${playingRef.current}, probeResult=${!!videoState.probeResult}`);
+      // 仅在有真实播放位置时保存，避免路由切换时的瞬态空实例覆盖已保存的值
+      // （导航到设置页时 VideoPlayer 可能被卸载两次：第一次有真实位置，第二次 positionRef=0）
+      if (videoState.probeResult && positionRef.current > 0) {
+        videoState.setSavedPosition(positionRef.current);
+        videoState.setWasPlaying(playingRef.current);
+        api.devLog(`[VideoPlayer] 已保存 savedPosition=${positionRef.current}, wasPlaying=${playingRef.current}`);
+      }
       api.playerHide().catch(() => {});
       api.playerDestroy().catch(() => {});
     };
@@ -308,7 +400,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
 
   // 播控操作
   const togglePlay = useCallback(async () => {
-    console.log("[VideoPlayer] togglePlay 调用，当前 playing=", playing);
+    log("[VideoPlayer] togglePlay 调用，当前 playing=", playing);
     if (playing) {
       await api.playerPause();
       setPlaying(false);
@@ -326,33 +418,49 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     }
   }, [playing]);
 
-  // 空格键播放/暂停：仅当鼠标在程序窗口内且不在字幕编辑区时响应。
-  // - 鼠标在字幕编辑区：让用户在文本框内正常输入空格
-  // - 鼠标在程序窗口外：不响应（避免后台误触发）
-  // 用 ref 跟踪鼠标是否离开窗口（mouseleave on document.documentElement）
-  const mouseOutsideWindowRef = useRef(false);
+  // 空格键播放/暂停：两条路径互补
+  // 1. 后端 child_wnd_proc 捕获 WM_KEYDOWN（视频区域焦点在子窗口时）→ emit "player-space"
+  // 2. 前端 window keydown（WebView2 区域有焦点时）→ 直接 togglePlay
+  // 焦点在 input/textarea/contenteditable 时，两条路径都放行（让用户输入空格）
+  // 用后端 GetCursorPos + 窗口 rect 检查鼠标是否在窗口内
+  // 不用 mouseenter/mouseleave，因为 libmpv 子窗口是原生 OS 窗口，会误触发 WebView2 的 mouseleave
+  // 不用 focus/blur，因为鼠标移到窗口外时窗口仍有焦点
+  const cursorInWindowRef = useRef(true);
   useEffect(() => {
-    const onMouseLeave = () => { mouseOutsideWindowRef.current = true; };
-    const onMouseEnter = () => { mouseOutsideWindowRef.current = false; };
-    document.documentElement.addEventListener("mouseleave", onMouseLeave);
-    document.documentElement.addEventListener("mouseenter", onMouseEnter);
-    return () => {
-      document.documentElement.removeEventListener("mouseleave", onMouseLeave);
-      document.documentElement.removeEventListener("mouseenter", onMouseEnter);
+    let timer: ReturnType<typeof setInterval>;
+    const check = async () => {
+      try {
+        cursorInWindowRef.current = await api.isCursorInWindow();
+      } catch { /* fallback: 保持原值 */ }
     };
+    // 每 200ms 轮询一次鼠标位置（避免 mousemove 事件在原生子窗口上不触发的问题）
+    timer = setInterval(check, 200);
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
+    const unlisten = listen("player-space", () => {
+      // player-space 来自 child_wnd_proc（视频子窗口有焦点）
+      // 检查鼠标是否在窗口内（用后端 GetCursorPos，不受 WebView2 mouseleave 影响）
+      api.devLog(`[VideoPlayer] player-space 事件收到, playerReady=${playerReady}, cursorInWindow=${cursorInWindowRef.current}`);
+      if (playerReady && cursorInWindowRef.current) {
+        log("[VideoPlayer] 收到 player-space 事件");
+        void togglePlay();
+      }
+    });
+    api.devLog(`[VideoPlayer] player-space 监听器已注册, playerReady=${playerReady}`);
+    return () => { unlisten.then((fn) => fn()); };
+  }, [playerReady, togglePlay]);
+
+  // WebView2 区域的 keydown 监听（视频子窗口无焦点时）
+  useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== " " && e.code !== "Space") return;
-      // 鼠标在字幕编辑区内：不响应，保留给文本编辑
-      if (uiState.mouseInSubtitleEditor) return;
-      // 鼠标在程序窗口外：不响应
-      if (mouseOutsideWindowRef.current) return;
-      // 焦点在 input/textarea/contenteditable：让用户正常输入空格
+      // 鼠标不在程序窗口内：不响应
+      if (!cursorInWindowRef.current) return;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) return;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (target as HTMLElement | null)?.isContentEditable) return;
       if (!playerReady) return;
       e.preventDefault();
       void togglePlay();
@@ -361,11 +469,28 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [playerReady, togglePlay]);
 
+  // 焦点变化时通知后端启用/禁用空格键拦截（child_wnd_proc 中的 WM_KEYDOWN）
+  useEffect(() => {
+    const updateFocus = () => {
+      const el = document.activeElement;
+      const tag = el?.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || (el as HTMLElement | null)?.isContentEditable;
+      api.setSpaceDisabled(!!inInput);
+    };
+    document.addEventListener("focusin", updateFocus);
+    document.addEventListener("focusout", updateFocus);
+    updateFocus();
+    return () => {
+      document.removeEventListener("focusin", updateFocus);
+      document.removeEventListener("focusout", updateFocus);
+    };
+  }, [playerReady]);
+
   // 监听子窗口点击事件（WS_EX_TRANSPARENT 穿透不可靠，
   // 改由后端 child_wnd_proc 捕获 WM_LBUTTONDOWN 并 emit "player-click"）
   useEffect(() => {
     const unlisten = listen("player-click", () => {
-      console.log("[VideoPlayer] 收到 player-click 事件");
+      log("[VideoPlayer] 收到 player-click 事件");
       togglePlay();
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -385,11 +510,12 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
         const cssX = (screenX - pos.x) / sf;
         const cssY = (screenY - pos.y) / sf;
         // 隐藏悬浮窗，让 HTML 菜单可见
+        api.devLog("[VideoPlayer] 右键菜单 调用 playerHide");
         await api.playerHide();
         setContextMenu({ x: cssX, y: cssY });
         setPlayersSubmenuOpen(false);
       } catch (e) {
-        console.error("右键菜单定位失败:", e);
+        error("右键菜单定位失败:", e);
       }
     });
     return () => { unlisten.then((fn) => fn()); };
@@ -397,6 +523,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
 
   // 菜单关闭时恢复悬浮窗显示
   const closeContextMenu = useCallback(() => {
+    api.devLog("[VideoPlayer] closeContextMenu 调用 playerShow");
     setContextMenu(null);
     setPlayersSubmenuOpen(false);
     api.playerShow().catch(() => {});
@@ -434,7 +561,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
       }
       setIconMap(map);
     } catch (e) {
-      console.error("获取播放器列表失败:", e);
+      error("获取播放器列表失败:", e);
     }
   }, [probeResult]);
 
@@ -472,7 +599,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
       await api.playerPlay();
       setPlaying(true);
     } catch (e) {
-      console.error("从本字幕开头播放失败:", e);
+      error("从本字幕开头播放失败:", e);
     }
   }, [findCurrentEntry, closeContextMenu, t]);
 
@@ -493,7 +620,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
       await api.playerPlay();
       setPlaying(true);
     } catch (e) {
-      console.error("从下一句字幕播放失败:", e);
+      error("从下一句字幕播放失败:", e);
     }
   }, [subtitleStore.file, position, closeContextMenu, t]);
 
@@ -511,7 +638,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
         subtitleStore.updateEntry(index, { translated, failed });
       });
     } catch (e) {
-      console.error("翻译本条字幕失败:", e);
+      error("翻译本条字幕失败:", e);
     }
   }, [findCurrentEntry, translateStore, subtitleStore, closeContextMenu, t]);
 
@@ -532,7 +659,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
       await api.openWithPlayer(exePath, probeResult.video_path);
     } catch (e) {
       toast.error(t("player.openWithPlayerFailed", "打开播放器失败"));
-      console.error(e);
+      error(e);
     } finally {
       // 500ms 后释放锁，防止用户立刻再次点击
       setTimeout(() => { openingPlayerRef.current = false; }, 1000);
@@ -545,7 +672,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     if (!probeResult) return;
     void pauseVideo();
     api.revealInExplorer(probeResult.video_path).catch((e) => {
-      console.error("打开文件夹失败:", e);
+      error("打开文件夹失败:", e);
     });
   }, [probeResult, closeContextMenu, pauseVideo]);
 

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { setWindowSizeInitialized } from "./MainView";
-import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X, Star, Plus } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X, Star, Plus, Bug, Terminal, FolderOpen, FileText } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { SERVICES, ServiceDef, matchesSearch, getServiceById } from "../lib/services";
 import { Button } from "../components/ui/button";
@@ -19,9 +19,11 @@ import { useLibmpvStore } from "../stores/libmpvStore";
 import { useFfmpegStore } from "../stores/ffmpegStore";
 import { useUpdateStore } from "../stores/updateStore";
 import { api, formatIpcError } from "../lib/api";
+import type { PromptFailLogEntry } from "../lib/ipc-types";
+import { warn } from "../lib/logger";
 import { cn } from "../lib/utils";
 
-type SettingsTab = "general" | "translate" | "player" | "advanced" | "about";
+type SettingsTab = "general" | "translate" | "player" | "advanced" | "developer" | "about";
 
 export default function SettingsView() {
   const { t } = useTranslation();
@@ -100,12 +102,14 @@ export default function SettingsView() {
     : "general"
   );
   const [apiListContainer, setApiListContainer] = useState<HTMLDivElement | null>(null);
+  const devMode = useDevModeStore((s) => s.devMode);
 
   const navItems: { key: SettingsTab; label: string; icon: React.ReactNode }[] = [
     { key: "general", label: t("settings.general"), icon: <SettingsIcon className="h-4 w-4" /> },
     { key: "translate", label: t("settings.translateApi"), icon: <Languages className="h-4 w-4" /> },
     { key: "player", label: t("settings.player"), icon: <Film className="h-4 w-4" /> },
     { key: "advanced", label: t("settings.advanced"), icon: <Wrench className="h-4 w-4" /> },
+    ...(devMode ? [{ key: "developer" as SettingsTab, label: t("settings.developer", "开发者选项"), icon: <Bug className="h-4 w-4" /> }] : []),
     { key: "about", label: t("settings.about"), icon: <Info className="h-4 w-4" /> },
   ];
 
@@ -157,6 +161,7 @@ export default function SettingsView() {
             )}
             {activeTab === "player" && <PlayerSettings />}
             {activeTab === "advanced" && <AdvancedSettings />}
+            {activeTab === "developer" && devMode && <DeveloperSettings />}
             {activeTab === "about" && <AboutSettings />}
           </div>
         </div>
@@ -418,6 +423,16 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     setSelectedServiceId(null); // 默认显示官方 API
   }, [searchParams]);
 
+  // 非开发者模式下隐藏官方 API 卡片：若当前选中官方 API，则切到第一个已配置服务或添加面板
+  useEffect(() => {
+    if (!devMode && selectedServiceId === null) {
+      const traditional = SERVICES.filter((s) => s.category === "traditional" && configuredIds.has(s.id));
+      const ai = SERVICES.filter((s) => s.category === "ai" && configuredIds.has(s.id));
+      const firstConfigured = [...traditional, ...ai][0];
+      setSelectedServiceId(firstConfigured ? firstConfigured.id : "add:ai");
+    }
+  }, [devMode, selectedServiceId, configuredIds]);
+
   // 根据模型 id 自动识别 model_type
   const autoDetectModelTypeStr = useCallback((m: string): string => {
     const lower = m.toLowerCase();
@@ -536,10 +551,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         api.getConfig(`translate_${sid}_region`).catch(() => null),
         api.getCredential(sid, "secret").catch(() => null),
         api.getConfig(`translate_${sid}_use_proxy`).catch(() => null),
-      ]).then(([savedAppId, savedRegion, savedSecret, savedUseProxy]) => {
+        api.getConfig(`translate_${sid}_qps`).catch(() => null),
+      ]).then(([savedAppId, savedRegion, savedSecret, savedUseProxy, savedQps]) => {
         if (savedAppId) setAppId(savedAppId);
         if (savedRegion) setRegion(savedRegion);
         if (savedSecret) setSecretKey("••••••••");
+        if (savedQps) setQps(parseInt(savedQps) || currentService.presetQps || 5);
         setUseProxy(savedUseProxy === "true" ? true : savedUseProxy === "false" ? false : null);
         setLoading(false);
       });
@@ -596,6 +613,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       } else {
         await api.setConfig(`translate_${sid}_app_id`, appId);
         await api.setConfig(`translate_${sid}_region`, region);
+        await api.setConfig(`translate_${sid}_qps`, String(qps));
       }
       // 保存 per-service 代理开关（null→未设置，跟随软件代理）
       const proxyKey = currentService.category === "ai" ? `translate_openai_${sid}_use_proxy` : `translate_${sid}_use_proxy`;
@@ -609,7 +627,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           await api.saveCredential(keyringProvider, "secret", secretKey);
         } catch (e: any) {
           credentialSaved = false;
-          console.warn("saveCredential 失败:", e);
+          warn("saveCredential 失败:", e);
         }
       }
 
@@ -703,6 +721,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       } else {
         await api.setConfig(`translate_${sid}_app_id`, "");
         await api.setConfig(`translate_${sid}_region`, "");
+        await api.setConfig(`translate_${sid}_qps`, "");
         try { await api.deleteCredential(sid, "secret"); } catch { /* ignore */ }
       }
       setAppId("");
@@ -1012,6 +1031,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                 <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="global / china" />
               </div>
             )}
+            {/* QPS / 并发上限 */}
+            <div>
+              <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
+              <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDescTraditional", "该服务的请求频率上限。免费版通常为 1-5，付费版可按套餐调高。")}</p>
+              <Input type="number" value={qps} onChange={(e) => setQps(parseInt(e.target.value) || 1)} min={1} disabled={loading} className="w-24" />
+            </div>
             {/* 代理 */}
             <div className="flex items-center justify-between border-t pt-3">
               <div>
@@ -1188,7 +1213,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           {/* QPS */}
           <div>
             <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
-            <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDesc", "该服务的每秒最大并发请求数")}</p>
+            <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDesc", "该服务的并发请求上限。免费版通常较低，付费版可按套餐调高。")}</p>
             <Input type="number" value={qps} onChange={(e) => setQps(parseInt(e.target.value) || 1)} min={1} disabled={loading} className="w-24" />
           </div>
           {/* 代理 */}
@@ -1277,23 +1302,27 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   const listContent = (
     <div className="flex-1 overflow-y-auto space-y-2 p-2">
       {/* 快速接入 */}
-      <p className="text-xs text-muted-foreground px-3 pt-2">快速接入</p>
-      {/* 官方 API */}
-      <button
-        onClick={() => setSelectedServiceId(null)}
-        className={cn(
-          "w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors border",
-          selectedServiceId === null ? "bg-accent text-accent-foreground border-primary/50" : "hover:bg-accent/50 border-border"
-        )}
-      >
-        <span className="flex items-center gap-1 font-medium">
-          <Star className="h-4 w-4 text-yellow-500" />
-          {t("settings.officialApi", "官方 API")}
-        </span>
-        <p className="text-[10px] text-muted-foreground line-clamp-1 leading-tight mt-0.5">
-          {t("settings.officialApiDesc", "精译·省钱·免费")}
-        </p>
-      </button>
+      {devMode && (
+        <>
+          <p className="text-xs text-muted-foreground px-3 pt-2">快速接入</p>
+          {/* 官方 API */}
+          <button
+            onClick={() => setSelectedServiceId(null)}
+            className={cn(
+              "w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors border",
+              selectedServiceId === null ? "bg-accent text-accent-foreground border-primary/50" : "hover:bg-accent/50 border-border"
+            )}
+          >
+            <span className="flex items-center gap-1 font-medium">
+              <Star className="h-4 w-4 text-yellow-500" />
+              {t("settings.officialApi", "官方 API")}
+            </span>
+            <p className="text-[10px] text-muted-foreground line-clamp-1 leading-tight mt-0.5">
+              {t("settings.officialApiDesc", "精译·省钱·免费")}
+            </p>
+          </button>
+        </>
+      )}
 
       {/* 传统翻译 */}
       <div className="space-y-1">
@@ -1547,7 +1576,7 @@ function AdvancedSettings() {
   const handleClearCache = useCallback(async () => {
     await api.clearTranslateCache();
     // 同时清除播放器图标缓存
-    await api.clearPlayerIconsCache().catch((e) => console.warn("清除图标缓存失败:", e));
+    await api.clearPlayerIconsCache().catch((e) => warn("清除图标缓存失败:", e));
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 2000);
   }, []);
@@ -1809,6 +1838,409 @@ function ContextMenuSettings() {
           {subtitleRegistered ? t("settings.unregister", "注销") : t("settings.register", "注册")}
         </Button>
       </div>
+    </div>
+  );
+}
+
+// === 开发者选项 ===
+function DeveloperSettings() {
+  const { t } = useTranslation();
+  const logApiEnabled = useDevModeStore((s) => s.logApiEnabled);
+  const toggleLogApi = useDevModeStore((s) => s.toggleLogApi);
+  const devMode = useDevModeStore((s) => s.devMode);
+  const namePrecisionEnabled = useDevModeStore((s) => s.namePrecisionEnabled);
+  const toggleNamePrecision = useDevModeStore((s) => s.toggleNamePrecision);
+  const [crashDir, setCrashDir] = useState<string>("");
+  const [crashCount, setCrashCount] = useState<number>(0);
+  const [promptFailDir, setPromptFailDir] = useState<string>("");
+  const [promptFailLogs, setPromptFailLogs] = useState<PromptFailLogEntry[]>([]);
+  const [selectedLog, setSelectedLog] = useState<string | null>(null);
+  const [logContent, setLogContent] = useState<string>("");
+  const [loadingLog, setLoadingLog] = useState(false);
+  const [apiDebugDir, setApiDebugDir] = useState<string>("");
+  const [apiDebugCount, setApiDebugCount] = useState<number>(0);
+
+  useEffect(() => {
+    api.getCrashLogDir().then((dir) => {
+      setCrashDir(dir);
+      import("@tauri-apps/plugin-fs").then(({ readDir }) => {
+        readDir(dir).then((entries) => {
+          setCrashCount(entries.filter((e) => e.name?.endsWith(".log")).length);
+        }).catch(() => setCrashCount(0));
+      }).catch(() => setCrashCount(0));
+    }).catch(() => {});
+
+    // 加载 prompt 失败日志
+    api.getPromptFailDir().then((dir) => {
+      setPromptFailDir(dir);
+    }).catch(() => {});
+    api.listPromptFailLogs().then((logs) => {
+      setPromptFailLogs(logs);
+    }).catch(() => {});
+
+    // 加载 API 调试日志目录和文件列表
+    api.getApiDebugDir().then((dir) => {
+      setApiDebugDir(dir);
+    }).catch(() => {});
+    api.listApiDebugLogs().then((logs) => {
+      setApiDebugCount(logs.length);
+    }).catch(() => setApiDebugCount(0));
+  }, []);
+
+  const refreshPromptFailLogs = useCallback(() => {
+    api.listPromptFailLogs().then((logs) => {
+      setPromptFailLogs(logs);
+    }).catch(() => {});
+  }, []);
+
+  const handleOpenCrashDir = useCallback(async () => {
+    if (!crashDir) return;
+    try {
+      await api.openPath(crashDir);
+    } catch (e) {
+      toast.error(t("settings.openCrashDirFailed", "打开目录失败"));
+    }
+  }, [crashDir, t]);
+
+  const handleOpenDevtools = useCallback(async () => {
+    try {
+      await api.toggleDevtools(true);
+      toast.success(t("settings.devtoolsOpened", "DevTools 已打开"));
+    } catch (e) {
+      toast.error(t("settings.devtoolsFailed", "打开 DevTools 失败"));
+    }
+  }, [t]);
+
+  const handleOpenPromptFailDir = useCallback(async () => {
+    if (!promptFailDir) return;
+    try {
+      await api.openPath(promptFailDir);
+    } catch (e) {
+      toast.error(t("settings.openPromptFailDirFailed", "打开目录失败"));
+    }
+  }, [promptFailDir, t]);
+
+  const handleOpenApiDebugDir = useCallback(async () => {
+    if (!apiDebugDir) return;
+    try {
+      await api.openPath(apiDebugDir);
+    } catch (e) {
+      toast.error(t("settings.openApiDebugDirFailed", "打开目录失败"));
+    }
+  }, [apiDebugDir, t]);
+
+  const refreshCrashCount = useCallback(() => {
+    if (!crashDir) return;
+    import("@tauri-apps/plugin-fs").then(({ readDir }) => {
+      readDir(crashDir).then((entries) => {
+        setCrashCount(entries.filter((e) => e.name?.endsWith(".log")).length);
+      }).catch(() => setCrashCount(0));
+    }).catch(() => setCrashCount(0));
+  }, [crashDir]);
+
+  const handleClearCrashLogs = useCallback(async () => {
+    try {
+      const n = await api.clearCrashLogs();
+      refreshCrashCount();
+      toast.success(t("settings.clearLogsOk", "已清空 {{count}} 个日志", { count: n }));
+    } catch (e) {
+      toast.error(t("settings.clearLogsFailed", "清空失败"));
+    }
+  }, [refreshCrashCount, t]);
+
+  const handleClearPromptFailLogs = useCallback(async () => {
+    try {
+      const n = await api.clearPromptFailLogs();
+      refreshPromptFailLogs();
+      toast.success(t("settings.clearLogsOk", "已清空 {{count}} 个日志", { count: n }));
+    } catch (e) {
+      toast.error(t("settings.clearLogsFailed", "清空失败"));
+    }
+  }, [refreshPromptFailLogs, t]);
+
+  const handleClearApiDebugLogs = useCallback(async () => {
+    try {
+      const n = await api.clearApiDebugLogs();
+      api.listApiDebugLogs().then((logs) => setApiDebugCount(logs.length)).catch(() => setApiDebugCount(0));
+      toast.success(t("settings.clearLogsOk", "已清空 {{count}} 个日志", { count: n }));
+    } catch (e) {
+      toast.error(t("settings.clearLogsFailed", "清空失败"));
+    }
+  }, [t]);
+
+  const handleViewLog = useCallback(async (name: string) => {
+    setSelectedLog(name);
+    setLoadingLog(true);
+    setLogContent("");
+    try {
+      const content = await api.readPromptFailLog(name);
+      setLogContent(content);
+    } catch (e) {
+      toast.error(t("settings.readPromptFailFailed", "读取日志失败"));
+      setLogContent(t("settings.readPromptFailFailed", "读取日志失败"));
+    } finally {
+      setLoadingLog(false);
+    }
+  }, [t]);
+
+  const handleDeleteLog = useCallback(async (name: string) => {
+    try {
+      await api.deletePromptFailLog(name);
+      toast.success(t("settings.deletePromptFailOk", "已删除"));
+      if (selectedLog === name) {
+        setSelectedLog(null);
+        setLogContent("");
+      }
+      refreshPromptFailLogs();
+    } catch (e) {
+      toast.error(t("settings.deletePromptFailFailed", "删除失败"));
+    }
+  }, [selectedLog, refreshPromptFailLogs, t]);
+
+  const formatTime = (ts: number) => {
+    if (!ts) return "";
+    const d = new Date(ts * 1000);
+    return d.toLocaleString();
+  };
+
+  const formatSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-xl font-semibold">{t("settings.developer", "开发者选项")}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.developerDesc", "调试与诊断工具")}</p>
+      </div>
+
+      {/* 崩溃日志 */}
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <div className="flex items-center gap-2">
+            <Bug className="h-5 w-5 text-muted-foreground" />
+            <h3 className="text-base font-medium">{t("settings.crashLogs", "崩溃日志")}</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {t("settings.crashLogsDesc", "程序崩溃时自动生成日志文件，用于诊断问题。")}
+          </p>
+          {crashDir && (
+            <p className="text-xs text-muted-foreground font-mono break-all bg-muted/50 rounded px-2 py-1">
+              {crashDir}
+            </p>
+          )}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              {crashCount > 0
+                ? t("settings.crashCount", { count: crashCount, defaultValue: "{{count}} 个崩溃日志" })
+                : t("settings.noCrashes", "暂无崩溃日志")}
+            </span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={handleClearCrashLogs} disabled={!crashDir || crashCount === 0}>
+                <Trash2 className="h-4 w-4 mr-1" />
+                {t("settings.clearLogs", "清空")}
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleOpenCrashDir} disabled={!crashDir}>
+                <FolderOpen className="h-4 w-4 mr-1" />
+                {t("settings.openCrashDir", "打开目录")}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Prompt 失败日志 */}
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <div className="flex items-center gap-2">
+            <FileText className="h-5 w-5 text-muted-foreground" />
+            <h3 className="text-base font-medium">{t("settings.promptFailLogs", "Prompt 失败日志")}</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {t("settings.promptFailLogsDesc", "翻译对齐失败时自动记录发送的 prompt 和模型返回内容，用于诊断翻译问题。")}
+          </p>
+          {promptFailDir && (
+            <p className="text-xs text-muted-foreground font-mono break-all bg-muted/50 rounded px-2 py-1">
+              {promptFailDir}
+            </p>
+          )}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              {promptFailLogs.length > 0
+                ? t("settings.promptFailCount", { count: promptFailLogs.length, defaultValue: "{{count}} 个失败日志" })
+                : t("settings.noPromptFails", "暂无失败日志")}
+            </span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={refreshPromptFailLogs}>
+                <RefreshCw className="h-4 w-4 mr-1" />
+                {t("settings.refresh", "刷新")}
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleClearPromptFailLogs} disabled={!promptFailDir || promptFailLogs.length === 0}>
+                <Trash2 className="h-4 w-4 mr-1" />
+                {t("settings.clearLogs", "清空")}
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleOpenPromptFailDir} disabled={!promptFailDir}>
+                <FolderOpen className="h-4 w-4 mr-1" />
+                {t("settings.openPromptFailDir", "打开目录")}
+              </Button>
+            </div>
+          </div>
+          {/* 日志列表 */}
+          {promptFailLogs.length > 0 && (
+            <div className="border rounded-md max-h-48 overflow-y-auto">
+              {promptFailLogs.map((log) => (
+                <div
+                  key={log.name}
+                  className={cn(
+                    "flex items-center justify-between px-3 py-2 text-xs border-b last:border-b-0 cursor-pointer hover:bg-muted/50",
+                    selectedLog === log.name && "bg-muted"
+                  )}
+                  onClick={() => handleViewLog(log.name)}
+                >
+                  <div className="flex-1 min-w-0">
+                    <span className="font-mono truncate block">{log.name}</span>
+                    <span className="text-muted-foreground">{formatTime(log.modified)} · {formatSize(log.size)}</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-destructive"
+                    onClick={(e) => { e.stopPropagation(); handleDeleteLog(log.name); }}
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          {/* 日志内容查看 */}
+          {selectedLog && (
+            <div className="border rounded-md">
+              <div className="flex items-center justify-between px-3 py-2 border-b bg-muted/30">
+                <span className="text-xs font-mono truncate">{selectedLog}</span>
+                <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => { setSelectedLog(null); setLogContent(""); }}>
+                  <X className="h-3 w-3" />
+                </Button>
+              </div>
+              <div className="p-3 max-h-96 overflow-y-auto">
+                {loadingLog ? (
+                  <div className="flex items-center justify-center py-4">
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  </div>
+                ) : (
+                  <pre className="text-xs font-mono whitespace-pre-wrap break-all">{logContent}</pre>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* API 调试日志 */}
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <FileText className="h-5 w-5 text-muted-foreground" />
+              <h3 className="text-base font-medium">{t("settings.apiDebugLogs", "翻译日志")}</h3>
+            </div>
+            <input
+              type="checkbox"
+              checked={logApiEnabled}
+              onChange={() => toggleLogApi()}
+              disabled={!devMode}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {t("settings.apiDebugLogsDesc", "开启后记录所有翻译 API 的请求和响应数据。仅在开发者模式下生效。")}
+          </p>
+          {!devMode && (
+            <p className="text-xs text-orange-600">
+              {t("settings.apiDebugRequiresDevMode", "需先开启开发者模式才能使用此功能")}
+            </p>
+          )}
+          {apiDebugDir && (
+            <p className="text-xs text-muted-foreground font-mono break-all bg-muted/50 rounded px-2 py-1">
+              {apiDebugDir}
+            </p>
+          )}
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">
+              {apiDebugCount > 0
+                ? t("settings.apiDebugCount", { count: apiDebugCount, defaultValue: "{{count}} 个调试日志" })
+                : t("settings.noApiDebugLogs", "暂无调试日志")}
+            </span>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={handleClearApiDebugLogs} disabled={!apiDebugDir || apiDebugCount === 0}>
+                <Trash2 className="h-4 w-4 mr-1" />
+                {t("settings.clearLogs", "清空")}
+              </Button>
+              <Button size="sm" variant="outline" onClick={handleOpenApiDebugDir} disabled={!apiDebugDir}>
+                <FolderOpen className="h-4 w-4 mr-1" />
+                {t("settings.openApiDebugDir", "打开文件夹")}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* 人名精译 */}
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Languages className="h-5 w-5 text-muted-foreground" />
+              <h3 className="text-base font-medium">{t("settings.namePrecision", "人名精译")}</h3>
+            </div>
+            <input
+              type="checkbox"
+              checked={namePrecisionEnabled}
+              onChange={() => toggleNamePrecision()}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {t("settings.namePrecisionDesc", "翻译前自动扫描字幕提取人名，建立统一译名表注入每个翻译批次，保证跨批次人名一致。同时要求 AI 在译文中标记人名，翻译后自动检测不一致并修正。")}
+          </p>
+          <div className="space-y-1 text-xs text-muted-foreground">
+            <p>• {t("settings.namePrecisionFlow1", "预扫描：翻译前用一次 API 调用从全部字幕中提取人名，按模型大小自动分段")}</p>
+            <p>• {t("settings.namePrecisionFlow2", "译名表注入：提取的人名表注入每个翻译批次的 system prompt，所有批次使用同一份译名表")}</p>
+            <p>• {t("settings.namePrecisionFlow3", "人名标记：AI 在译文中用 <name=Kaleb>卡莱布</name> 标记人名，翻译后自动检测不一致")}</p>
+            <p>• {t("settings.namePrecisionFlow4", "后处理修正：发现同一人名的多个译名时，按频率选定标准译名，全局替换并剥离标签")}</p>
+          </div>
+          <div className="space-y-1 text-xs">
+            <p className="text-orange-600">
+              {t("settings.namePrecisionCost", "额外开销：翻译前多一次 API 调用（约 3-15 秒），翻译时多约 5% token 消耗（人名标记标签）")}
+            </p>
+            <p className="text-green-600">
+              {t("settings.namePrecisionBenefit", "优点：彻底解决跨批次人名翻译不一致问题，尤其适合教学/纪录片等分批引入人名的长视频")}
+            </p>
+            <p className="text-muted-foreground">
+              {t("settings.namePrecisionNote", "仅 AI 翻译引擎支持。启用后退出开发模式仍保持启用，可在下方开关随时关闭。")}
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* DevTools */}
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <div className="flex items-center gap-2">
+            <Terminal className="h-5 w-5 text-muted-foreground" />
+            <h3 className="text-base font-medium">{t("settings.devtoolsTitle", "开发者工具")}</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {t("settings.devtoolsDesc", "打开浏览器开发者工具，查看控制台日志、网络请求和元素。")}
+          </p>
+          <Button size="sm" variant="outline" onClick={handleOpenDevtools}>
+            <Terminal className="h-4 w-4 mr-1" />
+            {t("settings.openDevtools", "打开 DevTools")}
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }
