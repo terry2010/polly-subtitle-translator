@@ -11,6 +11,7 @@ import { useTranslateStore } from "../stores/translateStore";
 import { useVideoStore } from "../stores/videoStore";
 import { AutoTextarea } from "./AutoTextarea";
 import { api } from "../lib/api";
+import { error } from "../lib/logger";
 import type { SubtitleEntry } from "../lib/ipc-types";
 import { uiState } from "../lib/utils";
 import { ExportDialog } from "./ExportDialog";
@@ -423,16 +424,20 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       return;
     }
     closeContextMenu();
+    // 已有翻译时跳过缓存，强制重新请求 API
+    const skipCache = !!entry.translated;
     try {
       const result = await translateStore.startTranslate(
         [entry],
         (index, translated, failed) => {
           // 单条翻译完成，立即更新（含翻译失败标记）
           store.updateEntry(index, { translated, failed });
-        }
+        },
+        skipCache
       );
-    } catch (e) {
-      console.error("翻译单条失败:", e);
+    } catch (e: any) {
+      error("翻译单条失败:", e);
+      toast.error(typeof e === "string" ? e : (e?.message || "翻译单条失败"));
     }
   }, [file, translateStore, store, closeContextMenu]);
 
@@ -474,7 +479,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       await api.playerSeek(startSec);
       await api.playerPlay();
     } catch (e) {
-      console.error("跳转播放失败:", e);
+      error("跳转播放失败:", e);
       toast.error(t("subtitle.playFromHereFailed"));
     }
   }, [file, closeContextMenu, t]);
@@ -528,7 +533,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
 
   // === SECTION 1 END ===
 
-  if (extracting && !file) {
+  if (extracting) {
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <div className="text-center w-48">
@@ -1078,7 +1083,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             disabled={translateStore.translating}
           >
             <Languages className="h-3.5 w-3.5" />
-            {t("subtitle.translateOne", "翻译此条字幕")}
+            {file.entries.find((e) => e.index === contextMenu.entryIndex)?.translated
+              ? t("subtitle.retranslateOne", "重新翻译字幕")
+              : t("subtitle.translateOne", "翻译此条字幕")}
           </button>
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent"

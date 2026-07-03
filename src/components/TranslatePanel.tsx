@@ -164,17 +164,21 @@ export function TranslatePanel() {
   }, []);
 
   const handleTranslate = useCallback(async () => {
-    if (!subtitleStore.file) return;
-    const result = await translateStore.startTranslate(subtitleStore.file.entries);
-    if (result) {
+    const store = useSubtitleStore.getState();
+    if (!store.file) return;
+    const result = await translateStore.startTranslate(store.file.entries);
+    if (result && result.translations.length > 0) {
       // 将翻译结果回填到字幕
-      const entries = subtitleStore.file.entries.map((e) => {
+      // 用 getState() 获取最新状态，避免闭包捕获旧值
+      const latest = useSubtitleStore.getState();
+      if (!latest.file) return;
+      const entries = latest.file.entries.map((e) => {
         const translated = result.translations.find((r) => r.index === e.index);
-        return translated ? { ...e, translated: translated.translated } : e;
+        return translated ? { ...e, translated: translated.translated, failed: translated.failed } : e;
       });
-      subtitleStore.setFile({ ...subtitleStore.file, entries });
+      latest.setFile({ ...latest.file, entries });
     }
-  }, [subtitleStore, translateStore]);
+  }, [translateStore]);
 
   const hasEntries = subtitleStore.file && subtitleStore.file.entries.length > 0;
 

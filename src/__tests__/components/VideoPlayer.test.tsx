@@ -1,13 +1,13 @@
 // VideoPlayer 组件测试（覆盖核心渲染和交互）
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { VideoPlayer } from "../../components/VideoPlayer";
+import { VideoPlayer, _resetPlayerInitLock } from "../../components/VideoPlayer";
 import { useLibmpvStore } from "../../stores/libmpvStore";
 import { useSubtitleStore } from "../../stores/subtitleStore";
 import { useTranslateStore } from "../../stores/translateStore";
 import type { ProbeResult, AudioStream } from "../../lib/ipc-types";
 
-const { mockPlayerInit, mockPlayerDestroy, mockPlayerPlay, mockPlayerPause, mockPlayerSeek, mockPlayerSetVolume, mockPlayerSetSpeed, mockPlayerSetAudioTrack, mockPlayerLoad, mockPlayerResize, mockPlayerHide, mockPlayerShow, mockListen } = vi.hoisted(() => ({
+const { mockPlayerInit, mockPlayerDestroy, mockPlayerPlay, mockPlayerPause, mockPlayerSeek, mockPlayerSetVolume, mockPlayerSetSpeed, mockPlayerSetAudioTrack, mockPlayerLoad, mockPlayerResize, mockPlayerHide, mockPlayerShow, mockPlayerGetPosition, mockListen } = vi.hoisted(() => ({
   mockPlayerInit: vi.fn(),
   mockPlayerDestroy: vi.fn(),
   mockPlayerPlay: vi.fn(),
@@ -20,6 +20,7 @@ const { mockPlayerInit, mockPlayerDestroy, mockPlayerPlay, mockPlayerPause, mock
   mockPlayerResize: vi.fn(),
   mockPlayerHide: vi.fn(),
   mockPlayerShow: vi.fn(),
+  mockPlayerGetPosition: vi.fn(() => Promise.resolve([0, 0])),
   mockListen: vi.fn(),
 }));
 
@@ -37,6 +38,10 @@ vi.mock("../../lib/api", () => ({
     playerResize: mockPlayerResize,
     playerHide: mockPlayerHide,
     playerShow: mockPlayerShow,
+    playerGetPosition: mockPlayerGetPosition,
+    isCursorInWindow: vi.fn(() => Promise.resolve(true)),
+    devLog: vi.fn(() => Promise.resolve()),
+    setSpaceDisabled: vi.fn(() => Promise.resolve()),
     listInstalledPlayers: vi.fn(() => Promise.resolve([])),
     extractPlayerIcons: vi.fn(() => Promise.resolve([])),
     openWithPlayer: vi.fn(() => Promise.resolve()),
@@ -89,6 +94,7 @@ function makeProbe(audioStreams: AudioStream[] = [makeAudioStream(0)]): ProbeRes
 
 beforeEach(() => {
   vi.clearAllMocks();
+  _resetPlayerInitLock();
   mockPlayerInit.mockResolvedValue(undefined);
   mockPlayerDestroy.mockResolvedValue(undefined);
   mockPlayerPlay.mockResolvedValue(undefined);

@@ -23,8 +23,10 @@ export function SearchDialog({ open, onOpenChange, videoName }: SearchDialogProp
   // 弹层打开时隐藏播放器子窗口，关闭时恢复。
   useEffect(() => {
     if (!open) return;
+    api.devLog("[SearchDialog] 调用 playerHide");
     api.playerHide().catch(() => { /* 播放器未初始化，忽略 */ });
     return () => {
+      api.devLog("[SearchDialog] cleanup 调用 playerShow");
       api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
     };
   }, [open]);

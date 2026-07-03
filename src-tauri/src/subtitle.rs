@@ -1212,15 +1212,15 @@ fn build_entry_text(entry: &SubtitleEntry, options: &ExportOptions) -> String {
         ExportMode::Bilingual => {
             let first = options.bilingual_translated_first.unwrap_or(true);
             let (top, bottom) = if first {
-                (&entry.translated, &entry.text)
+                (entry.translated.trim(), entry.text.trim())
             } else {
-                (&entry.text, &entry.translated)
+                (entry.text.trim(), entry.translated.trim())
             };
             // 如果其中一方为空，只输出非空的一方（避免产生空行）
             if top.is_empty() {
-                bottom.clone()
+                bottom.to_string()
             } else if bottom.is_empty() {
-                top.clone()
+                top.to_string()
             } else {
                 format!("{}\n{}", top, bottom)
             }

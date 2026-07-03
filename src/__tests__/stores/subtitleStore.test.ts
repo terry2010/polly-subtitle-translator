@@ -11,6 +11,8 @@ vi.mock("../../lib/api", () => ({
     detectBilingual: vi.fn(() => Promise.resolve({ is_bilingual: false })),
     saveSubtitleFile: vi.fn(),
     splitBilingualSubtitle: vi.fn(),
+    getCachedTranslations: vi.fn(() => Promise.resolve([])),
+    clearTranslateCache: vi.fn(() => Promise.resolve(0)),
   },
   formatIpcError: vi.fn((e: unknown) => String(e)),
 }));
@@ -18,6 +20,11 @@ vi.mock("../../lib/api", () => ({
 // mock i18n
 vi.mock("../../lib/i18n", () => ({
   default: { t: (key: string, fallback: string) => fallback, exists: () => false },
+}));
+
+// mock translateStore（避免循环依赖）
+vi.mock("../../stores/translateStore", () => ({
+  useTranslateStore: { getState: () => ({ sourceLang: "en", targetLang: "zh", provider: "baidu", serviceId: null, model: "" }) },
 }));
 
 function makeEntry(index: number, text: string, translated = "", startMs = 0, endMs = 1000): SubtitleEntry {

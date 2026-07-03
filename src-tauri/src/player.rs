@@ -64,6 +64,10 @@ static HOOK_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 #[cfg(windows)]
 static GLOBAL_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
+/// 空格键是否被前端禁用（焦点在输入框时前端设置）
+#[cfg(windows)]
+pub static SPACE_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 // === libmpv FFI 类型定义 ===
 
 /// mpv 实例句柄（不透明指针）
@@ -1663,6 +1667,9 @@ impl Player {
                 position_sync_loop(parent, child, stop_for_hook);
             });
 
+            // 空格键播放/暂停通过 child_wnd_proc 的 WM_KEYDOWN 捕获（仅视频子窗口有焦点时）
+            // 不使用 WH_KEYBOARD_LL 全局钩子（会拦截其他程序的空格键）
+
             Ok(Player {
                 api,
                 mpv,
@@ -1848,6 +1855,7 @@ impl Player {
             } else {
                 tracing::info!("DestroyWindow 成功, 销毁线程={}", tid);
             }
+            // 低级键盘钩子由独立线程在 stop_flag=true 时自动卸载
         }
         tracing::info!("Player::destroy 完成");
     }
@@ -3144,7 +3152,6 @@ fn set_property(api: &MpvApi, mpv: *mut MpvHandle, name: &str, value: &str) -> R
     }
 }
 
-/// 窗口过程：不擦除背景，让 mpv 直接渲染
 /// 捕获 WM_LBUTTONDOWN：单击视频区域切换播放/暂停（WS_EX_TRANSPARENT 穿透不可靠，
 /// 改为在子窗口直接捕获点击并通过 Tauri 事件通知前端）
 #[cfg(windows)]
@@ -3179,6 +3186,22 @@ unsafe extern "system" fn child_wnd_proc(
         }
         0x0205 => return LRESULT(0), // WM_RBUTTONUP：吞掉，防止 DefWindowProc 生成 WM_CONTEXTMENU
         0x007B => return LRESULT(0), // WM_CONTEXTMENU：吞掉，阻止系统默认右键菜单
+        0x0100 | 0x0104 => { // WM_KEYDOWN | WM_SYSKEYDOWN
+            // 空格键（VK_SPACE = 0x20）
+            if (wparam.0 & 0xFFFF) == 0x20 {
+                let disabled = SPACE_DISABLED.load(std::sync::atomic::Ordering::Relaxed);
+                tracing::info!("child_wnd_proc: 空格键按下, SPACE_DISABLED={}", disabled);
+                if !disabled {
+                    use tauri::Emitter;
+                    if let Some(app) = GLOBAL_APP_HANDLE.get() {
+                        let _ = app.emit("player-space", ());
+                        tracing::info!("child_wnd_proc: 已 emit player-space");
+                    }
+                    return LRESULT(0); // 拦截
+                }
+            }
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
+        }
         _ => {}
     }
     DefWindowProcW(hwnd, msg, wparam, lparam)

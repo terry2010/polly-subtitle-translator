@@ -21,6 +21,20 @@ vi.mock("../../lib/api", () => ({
   formatIpcError: vi.fn((e: unknown) => String(e)),
 }));
 
+// mock logger：透传到 console，使 vi.spyOn(console, "warn") 能正常工作
+vi.mock("../../lib/logger", () => ({
+  log: (...args: unknown[]) => console.log(...args),
+  warn: (...args: unknown[]) => console.warn(...args),
+  error: (...args: unknown[]) => console.error(...args),
+  debug: (...args: unknown[]) => console.debug(...args),
+  setDevModeEnabled: vi.fn(),
+}));
+
+// mock sonner toast
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
+}));
+
 function makeEntry(index: number, text: string): SubtitleEntry {
   return { index, start_ms: 0, end_ms: 1000, text, translated: "", style: null };
 }
@@ -31,6 +45,7 @@ beforeEach(() => {
     translating: false, progress: 0, total: 0, result: null, error: null,
     sourceLang: "en", targetLang: "zh", provider: "baidu",
     model: "", modelType: "", serviceId: null,
+    totalChars: 0, translatedChars: 0, startTime: 0, lastProgressTime: 0, speed: 0, eta: -1,
   });
   mockOnTranslateProgress.mockResolvedValue(() => {});
   mockOnTranslateEntryDone.mockResolvedValue(() => {});
@@ -118,7 +133,7 @@ describe("translateStore - startTranslate", () => {
     mockTranslateSubtitle.mockResolvedValue({ translations: [], provider: "openai", cached_count: 0 });
     await useTranslateStore.getState().startTranslate([makeEntry(0, "a")]);
     expect(mockTranslateSubtitle).toHaveBeenCalledWith(
-      [expect.any(Object)], "en", "zh", "openai", "deepseek-chat", undefined, "deepseek",
+      [expect.any(Object)], "en", "zh", "openai", "deepseek-chat", undefined, "deepseek", undefined, undefined, undefined,
     );
   });
 
@@ -127,7 +142,7 @@ describe("translateStore - startTranslate", () => {
     mockTranslateSubtitle.mockResolvedValue({ translations: [], provider: "baidu", cached_count: 0 });
     await useTranslateStore.getState().startTranslate([makeEntry(0, "a")]);
     expect(mockTranslateSubtitle).toHaveBeenCalledWith(
-      [expect.any(Object)], "en", "zh", "baidu", undefined, undefined, undefined,
+      [expect.any(Object)], "en", "zh", "baidu", undefined, undefined, undefined, undefined, undefined, undefined,
     );
   });
 });

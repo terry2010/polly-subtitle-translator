@@ -17,6 +17,7 @@ import { useFfmpegStore } from "./stores/ffmpegStore";
 import { useUpdateStore } from "./stores/updateStore";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { api } from "./lib/api";
+import { log, error } from "./lib/logger";
 import { Toaster } from "sonner";
 
 export default function App() {
@@ -173,7 +174,7 @@ export default function App() {
           }
         }
       } catch (e) {
-        console.error("静默流程失败:", e);
+        error("静默流程失败:", e);
       }
     };
 
@@ -221,8 +222,8 @@ export default function App() {
       }
       const savedSrc = await api.getConfig("default_source_lang");
       if (savedSrc) useTranslateStore.getState().setSourceLang(savedSrc);
-      const savedProvider = await api.getConfig("default_api_provider");
-      if (savedProvider) useTranslateStore.getState().setProvider(savedProvider);
+      // 注意：provider/serviceId/model 由 MainView 从 db 加载，这里不重复设置
+      // 避免用错误的 default_api_provider 覆盖正确的 translate_provider
     };
     void initLangs();
   }, []);
@@ -243,7 +244,7 @@ export default function App() {
     };
 
     const unlisten = listen<string[]>("app://file-drop", (event) => {
-      console.log("[App] app://file-drop received:", event.payload);
+      log("[App] app://file-drop received:", event.payload);
       const paths = event.payload;
       if (paths && paths.length > 0) {
         handleFile(paths[0]);

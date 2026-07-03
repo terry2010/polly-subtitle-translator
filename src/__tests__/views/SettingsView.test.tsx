@@ -105,6 +105,7 @@ beforeEach(() => {
 
 describe("TranslateApiSettings - 左列表渲染", () => {
   it("默认显示官方 API 面板", async () => {
+    useDevModeStore.setState({ devMode: true });
     renderComponent();
     await waitFor(() => {
       // 官方 API 同时出现在左列表和右面板标题
@@ -113,6 +114,7 @@ describe("TranslateApiSettings - 左列表渲染", () => {
   });
 
   it("左列表显示官方 API 卡片", async () => {
+    useDevModeStore.setState({ devMode: true });
     renderComponent();
     await waitFor(() => {
       expect(screen.getAllByText("settings.officialApi").length).toBeGreaterThanOrEqual(1);
@@ -128,6 +130,7 @@ describe("TranslateApiSettings - 左列表渲染", () => {
   });
 
   it("官方 API 面板显示三个功能介绍", async () => {
+    useDevModeStore.setState({ devMode: true });
     renderComponent();
     await waitFor(() => {
       expect(screen.getByText("settings.officialApiJingyi")).toBeInTheDocument();
@@ -137,9 +140,18 @@ describe("TranslateApiSettings - 左列表渲染", () => {
   });
 
   it("官方 API 面板显示登陆按钮", async () => {
+    useDevModeStore.setState({ devMode: true });
     renderComponent();
     await waitFor(() => {
       expect(screen.getByText("settings.officialApiLoginButton")).toBeInTheDocument();
+    });
+  });
+
+  it("非开发者模式下隐藏官方 API 卡片", async () => {
+    useDevModeStore.setState({ devMode: false });
+    renderComponent();
+    await waitFor(() => {
+      expect(screen.queryByText("settings.officialApi")).not.toBeInTheDocument();
     });
   });
 });
@@ -151,7 +163,7 @@ describe("TranslateApiSettings - 添加 API 面板", () => {
     const user = userEvent.setup();
     renderComponent();
     await waitFor(() => {
-      expect(screen.getAllByText("settings.officialApi").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("settings.addApi").length).toBeGreaterThanOrEqual(2);
     });
     // 点击传统翻译的"添加 API"
     const addButtons = screen.getAllByText("settings.addApi");
@@ -165,7 +177,7 @@ describe("TranslateApiSettings - 添加 API 面板", () => {
     const user = userEvent.setup();
     renderComponent();
     await waitFor(() => {
-      expect(screen.getAllByText("settings.officialApi").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("settings.addApi").length).toBeGreaterThanOrEqual(2);
     });
     // 点击 AI 大模型的"添加 API"（第二个）
     const addButtons = screen.getAllByText("settings.addApi");
@@ -179,7 +191,7 @@ describe("TranslateApiSettings - 添加 API 面板", () => {
     const user = userEvent.setup();
     renderComponent();
     await waitFor(() => {
-      expect(screen.getAllByText("settings.officialApi").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("settings.addApi").length).toBeGreaterThanOrEqual(2);
     });
     const addButtons = screen.getAllByText("settings.addApi");
     await user.click(addButtons[1]);
@@ -193,6 +205,7 @@ describe("TranslateApiSettings - 添加 API 面板", () => {
 
 describe("TranslateApiSettings - 官方 API 登陆按钮", () => {
   it("点击登陆按钮调用 openUrl", async () => {
+    useDevModeStore.setState({ devMode: true });
     const user = userEvent.setup();
     renderComponent();
     await waitFor(() => {
@@ -247,7 +260,7 @@ describe("TranslateApiSettings - 保存后刷新左侧列表", () => {
     const user = userEvent.setup();
     renderComponent();
     await waitFor(() => {
-      expect(screen.getAllByText("settings.officialApi").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("settings.addApi").length).toBeGreaterThanOrEqual(2);
     });
     // 进入添加传统翻译面板
     const addButtons = screen.getAllByText("settings.addApi");
@@ -311,7 +324,7 @@ describe("TranslateApiSettings - 服务配置面板", () => {
     const user = userEvent.setup();
     renderComponent();
     await waitFor(() => {
-      expect(screen.getAllByText("settings.officialApi").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("settings.addApi").length).toBeGreaterThanOrEqual(2);
     });
     // 点击添加传统翻译
     const addButtons = screen.getAllByText("settings.addApi");
@@ -331,7 +344,7 @@ describe("TranslateApiSettings - 服务配置面板", () => {
     const user = userEvent.setup();
     renderComponent();
     await waitFor(() => {
-      expect(screen.getAllByText("settings.officialApi").length).toBeGreaterThanOrEqual(1);
+      expect(screen.getAllByText("settings.addApi").length).toBeGreaterThanOrEqual(2);
     });
     // 点击添加 AI 大模型
     const addButtons = screen.getAllByText("settings.addApi");

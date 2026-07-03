@@ -128,10 +128,19 @@ export interface TranslateEntry {
   failed: boolean;
 }
 
+/** token 用量统计（仅 AI 翻译有值，传统翻译为 undefined） */
+export interface TokenUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
 export interface TranslateResult {
   translations: TranslateEntry[];
   provider: string;
   cached_count: number;
+  /** token 用量（仅 AI 翻译有值，传统翻译为 undefined） */
+  token_usage?: TokenUsage;
 }
 
 export interface TestConnectionResult {
@@ -186,6 +195,13 @@ export interface InstalledPlayer {
 export interface PlayerIcon {
   exe_path: string;
   icon_path: string;
+}
+
+// === Prompt 失败日志 ===
+export interface PromptFailLogEntry {
+  name: string;
+  size: number;
+  modified: number;
 }
 
 // === IPC 错误 ===

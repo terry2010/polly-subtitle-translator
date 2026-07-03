@@ -27,6 +27,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { api } from "../lib/api";
+import { error } from "../lib/logger";
 import { save } from "@tauri-apps/plugin-dialog";
 import { withPlayerHidden } from "../lib/utils";
 import type { SubtitleStream, SubtitleStreamEdit } from "../lib/ipc-types";
@@ -161,8 +162,10 @@ export function SubtitleStreamEditorDialog({
   // 弹层打开时隐藏播放器子窗口，关闭时恢复。
   useEffect(() => {
     if (!open) return;
+    api.devLog("[SubtitleStreamEditorDialog] 调用 playerHide");
     api.playerHide().catch(() => { /* 播放器未初始化，忽略 */ });
     return () => {
+      api.devLog("[SubtitleStreamEditorDialog] cleanup 调用 playerShow");
       api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
     };
   }, [open]);
@@ -228,7 +231,7 @@ export function SubtitleStreamEditorDialog({
       await api.extractSubtitle(videoPath, item.originalIndex, outputPath);
       toast.success(t("subtitle.streamExportSuccess"));
     } catch (e) {
-      console.error("字幕流导出失败:", e);
+      error("字幕流导出失败:", e);
       toast.error(t("subtitle.streamExportFailed"));
     } finally {
       setExportingIndex(null);
@@ -271,7 +274,7 @@ export function SubtitleStreamEditorDialog({
       onSaved();
       toast.success(t("subtitle.streamEditSuccess"));
     } catch (e) {
-      console.error("字幕流编辑失败:", e);
+      error("字幕流编辑失败:", e);
       toast.error(t("subtitle.streamEditFailed"));
     } finally {
       setSaving(false);
