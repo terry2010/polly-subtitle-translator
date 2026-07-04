@@ -1,6 +1,6 @@
 // SubtitleStreamEditorDialog 组件测试
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SubtitleStreamEditorDialog } from "../../components/SubtitleStreamEditorDialog";
 import type { SubtitleStream } from "../../lib/ipc-types";
@@ -22,6 +22,7 @@ vi.mock("../../lib/api", () => ({
     editSubtitleStreams: mockEditSubtitleStreams,
     checkMergeSpace: mockCheckMergeSpace,
     extractSubtitle: mockExtractSubtitle,
+    devLog: vi.fn(() => Promise.resolve()),
   },
 }));
 
@@ -178,6 +179,55 @@ describe("SubtitleStreamEditorDialog - 保存", () => {
         "/output/video.edited.mkv",
       );
     });
+  });
+
+  it("空间不足时 defaultPath 使用平台正确的路径分隔符（macOS/Linux 正斜杠）", async () => {
+    // videoPath 用 unix 风格路径（正斜杠），defaultPath 应拼接为 /test/video.edited.mkv
+    mockCheckMergeSpace.mockResolvedValue({ video_size: 100000, free_space: 100, enough: false });
+    mockSave.mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderDialog();
+    const titleInput = screen.getByDisplayValue("English");
+    await user.clear(titleInput);
+    await user.type(titleInput, "Modified");
+    await user.click(screen.getByText("common.save"));
+    await waitFor(() => screen.getByText("common.confirm"));
+    await user.click(screen.getByText("common.confirm"));
+    await waitFor(() => expect(mockSave).toHaveBeenCalled());
+    const defaultPath = mockSave.mock.calls[0][0].defaultPath as string;
+    // 正斜杠路径不应包含反斜杠，且应保留目录结构
+    expect(defaultPath).not.toContain("\\");
+    expect(defaultPath).toBe("/test/video.edited.mkv");
+  });
+
+  it("空间不足时 defaultPath 对 Windows 风格路径使用反斜杠", async () => {
+    // videoPath 用 windows 风格路径（反斜杠），defaultPath 应拼接为 C:\test\video.edited.mkv
+    mockCheckMergeSpace.mockResolvedValue({ video_size: 100000, free_space: 100, enough: false });
+    mockSave.mockResolvedValue(null);
+    const user = userEvent.setup();
+    renderDialog({} as any); // 先用默认 props 渲染
+    // 覆盖 videoPath 需要重新渲染，这里直接验证逻辑：用 windows 路径单独渲染
+    cleanup();
+    // JSX 字符串属性不处理转义，用 JS 表达式传递含反斜杠的路径
+    const winPath = "C:\\test\\video.mkv";
+    render(
+      <SubtitleStreamEditorDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        videoPath={winPath}
+        streams={[makeStream(0)]}
+        onSaved={vi.fn()}
+      />,
+    );
+    const titleInput = screen.getByDisplayValue("English");
+    await user.clear(titleInput);
+    await user.type(titleInput, "Modified");
+    await user.click(screen.getByText("common.save"));
+    await waitFor(() => screen.getByText("common.confirm"));
+    await user.click(screen.getByText("common.confirm"));
+    await waitFor(() => expect(mockSave).toHaveBeenCalled());
+    const defaultPath = mockSave.mock.calls[0][0].defaultPath as string;
+    expect(defaultPath).toBe("C:\\test\\video.edited.mkv");
   });
 
   it("空间不足且用户取消保存时不调用 editSubtitleStreams", async () => {

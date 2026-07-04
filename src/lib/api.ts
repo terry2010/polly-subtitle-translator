@@ -231,8 +231,8 @@ export const api = {
   saveCredential: (provider: string, key: string, value: string) =>
     callIpc<void>("save_credential", { provider, key, value }),
 
-  getCredential: (provider: string, key: string) =>
-    callIpcNullable<string>("get_credential", { provider, key }),
+  getCredential: (provider: string, key: string, reason?: string) =>
+    callIpcNullable<string>("get_credential", { provider, key, reason: reason ?? "未指定" }),
 
   deleteCredential: (provider: string, key: string) =>
     callIpc<void>("delete_credential", { provider, key }),

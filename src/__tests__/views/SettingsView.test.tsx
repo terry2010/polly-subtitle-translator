@@ -307,7 +307,7 @@ describe("TranslateApiSettings - 保存后刷新左侧列表", () => {
     // 验证保存后 checkAllServiceConfigs 被调用并刷新左侧列表
     await waitFor(() => {
       expect(mockGetConfig).toHaveBeenCalledWith("translate_baidu_app_id");
-      expect(mockGetCredential).toHaveBeenCalledWith("baidu", "secret");
+      expect(mockGetCredential).toHaveBeenCalledWith("baidu", "secret", expect.any(String));
     });
 
     await waitFor(() => {
