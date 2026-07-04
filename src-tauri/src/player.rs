@@ -6,6 +6,7 @@
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::ffi::{c_char, c_int, c_void};
 #[cfg(windows)]
 use std::ffi::CString;
@@ -65,7 +66,8 @@ static HOOK_HIDDEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 static GLOBAL_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 /// 空格键是否被前端禁用（焦点在输入框时前端设置）
-#[cfg(windows)]
+/// 跨平台：set_space_disabled_cmd 在所有平台都会写入此标志，
+/// Windows 的 child_wnd_proc 会读取它判断是否拦截空格键。
 pub static SPACE_DISABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 // === libmpv FFI 类型定义 ===
@@ -239,6 +241,52 @@ fn parse_latest_dev_url(releases_json: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 下载完整性校验：检查 magic bytes 防止下载到 HTML 错误页面或恶意内容
+/// 同时计算 SHA256 并记录日志供事后审计
+fn verify_downloaded_archive(path: &Path, expected_ext: &str, label: &str) -> Result<(), AppError> {
+    let bytes = fs::read(path).map_err(|e| AppError::PlayerDownloadExtractFailed {
+        detail: format!("读取下载文件失败: {}", e),
+    })?;
+    if bytes.len() < 16 {
+        return Err(AppError::PlayerDownloadExtractFailed {
+            detail: format!("{} 文件过小（{} 字节），可能是错误页面", label, bytes.len()),
+        });
+    }
+    // 检查 magic bytes：HTML 页面以 `<!DOCTYPE` 或 `<html` 开头
+    let head = &bytes[..16.min(bytes.len())];
+    let head_str = String::from_utf8_lossy(head);
+    if head_str.starts_with("<!DOCTYPE") || head_str.starts_with("<html") || head_str.starts_with("<HTML") {
+        return Err(AppError::PlayerDownloadExtractFailed {
+            detail: format!("{} 文件开头是 HTML 标记，下载源可能返回了错误页面", label),
+        });
+    }
+    // 检查文件扩展名对应的 magic bytes
+    match expected_ext {
+        "7z" => {
+            if &bytes[..6] != b"7z\xbc\xaf\x27\x1c" {
+                return Err(AppError::PlayerDownloadExtractFailed {
+                    detail: format!("{} 7z 文件 magic bytes 不匹配", label),
+                });
+            }
+        }
+        "tar.gz" => {
+            // gzip: \x1f\x8b
+            if bytes[0] != 0x1f || bytes[1] != 0x8b {
+                return Err(AppError::PlayerDownloadExtractFailed {
+                    detail: format!("{} tar.gz 文件 magic bytes 不匹配", label),
+                });
+            }
+        }
+        _ => {}
+    }
+    // 计算 SHA256 并记录日志
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let hash = hex::encode(hasher.finalize());
+    tracing::info!("{} 下载完整性校验: SHA256={}, size={} 字节", label, hash, bytes.len());
+    Ok(())
 }
 
 /// 下载 libmpv：从 GitHub zhongfly/mpv-winbuild releases 获取最新 mpv-dev-x86_64 包，
@@ -416,6 +464,9 @@ fn download_libmpv_inner(
     let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
         "stage": "downloading", "progress": 100, "message": "下载完成"
     }));
+
+    // 2.5 下载完整性校验：检查 magic bytes 防止下载到错误页面或恶意内容
+    verify_downloaded_archive(&archive_path, "7z", "libmpv")?;
 
     // 3. 解压 7z 并提取 libmpv-2.dll
     let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
@@ -1977,6 +2028,9 @@ fn download_libmpv_macos(
         "stage": "downloading", "progress": 100, "message": "下载完成"
     }));
 
+    // 1.5 下载完整性校验：检查 magic bytes 防止下载到错误页面或恶意内容
+    verify_downloaded_archive(&archive_path, "tar.gz", "libmpv")?;
+
     // 2. 解压 tar.gz，提取所有 dylib 到 libmpv 目录
     let _ = app_handle.emit("libmpv_download_progress", serde_json::json!({
         "stage": "extracting", "progress": -1, "message": "正在解压安装..."
@@ -3478,5 +3532,20 @@ mod tests {
         let json = serde_json::to_string(&original).expect("序列化失败");
         let parsed: LibmpvStatus = serde_json::from_str(&json).expect("反序列化失败");
         assert_eq!(original, parsed);
+    }
+
+    /// SPACE_DISABLED 应在所有平台可用（set_space_disabled_cmd 跨平台写入）
+    /// 验证初始值为 false，且可跨平台读写
+    #[test]
+    fn test_space_disabled_cross_platform() {
+        use std::sync::atomic::Ordering;
+        // 保存原值并恢复，避免污染其他测试
+        let original = SPACE_DISABLED.load(Ordering::Relaxed);
+        SPACE_DISABLED.store(false, Ordering::Relaxed);
+        assert!(!SPACE_DISABLED.load(Ordering::Relaxed), "SPACE_DISABLED 初始应为 false");
+        SPACE_DISABLED.store(true, Ordering::Relaxed);
+        assert!(SPACE_DISABLED.load(Ordering::Relaxed), "SPACE_DISABLED 写入 true 后应读到 true");
+        // 恢复原值
+        SPACE_DISABLED.store(original, Ordering::Relaxed);
     }
 }

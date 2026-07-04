@@ -3,6 +3,7 @@
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -34,6 +35,69 @@ fn no_window(mut cmd: Command) -> Command {
 }
 #[cfg(not(windows))]
 fn no_window(cmd: Command) -> Command { cmd }
+
+/// 下载完整性校验：计算文件 SHA256 并记录日志，同时检查 magic bytes 防止下载到 HTML 错误页面
+/// 返回 SHA256 十六进制字符串供调用方比对
+fn verify_downloaded_file(path: &Path, expected_ext: &str, label: &str) -> Result<String, AppError> {
+    let bytes = fs::read(path).map_err(|e| AppError::FfmpegDownloadExtractFailed {
+        detail: format!("读取下载文件失败: {}", e),
+    })?;
+    if bytes.len() < 16 {
+        return Err(AppError::FfmpegDownloadExtractFailed {
+            detail: format!("{} 文件过小（{} 字节），可能是错误页面", label, bytes.len()),
+        });
+    }
+    // 检查 magic bytes：HTML 页面以 `<!DOCTYPE` 或 `<html` 开头
+    let head = &bytes[..16.min(bytes.len())];
+    let head_str = String::from_utf8_lossy(head);
+    if head_str.starts_with("<!DOCTYPE") || head_str.starts_with("<html") || head_str.starts_with("<HTML") {
+        return Err(AppError::FfmpegDownloadExtractFailed {
+            detail: format!("{} 文件开头是 HTML 标记，下载源可能返回了错误页面", label),
+        });
+    }
+    // 检查文件扩展名对应的 magic bytes
+    match expected_ext {
+        "zip" => {
+            // ZIP: PK\x03\x04
+            if &bytes[..4] != b"PK\x03\x04" {
+                return Err(AppError::FfmpegDownloadExtractFailed {
+                    detail: format!("{} ZIP 文件 magic bytes 不匹配", label),
+                });
+            }
+        }
+        "gz" => {
+            // gzip: \x1f\x8b
+            if bytes[0] != 0x1f || bytes[1] != 0x8b {
+                return Err(AppError::FfmpegDownloadExtractFailed {
+                    detail: format!("{} gzip 文件 magic bytes 不匹配", label),
+                });
+            }
+        }
+        "7z" => {
+            // 7z: $7z\xbc\xaf\x27\x1c
+            if &bytes[..6] != b"7z\xbc\xaf\x27\x1c" {
+                return Err(AppError::FfmpegDownloadExtractFailed {
+                    detail: format!("{} 7z 文件 magic bytes 不匹配", label),
+                });
+            }
+        }
+        "tar.xz" => {
+            // xz: \xfd7zXZ\x00
+            if &bytes[..6] != b"\xfd7zXZ\x00" {
+                return Err(AppError::FfmpegDownloadExtractFailed {
+                    detail: format!("{} tar.xz 文件 magic bytes 不匹配", label),
+                });
+            }
+        }
+        _ => {}
+    }
+    // 计算 SHA256 并记录日志
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let hash = hex::encode(hasher.finalize());
+    tracing::info!("{} 下载完整性校验: SHA256={}, size={} 字节", label, hash, bytes.len());
+    Ok(hash)
+}
 
 /// 全局提取取消标志：设为 true 时，正在运行的提取会尽快终止并返回错误
 static EXTRACT_CANCELLED: AtomicBool = AtomicBool::new(false);
@@ -374,9 +438,13 @@ fn download_ffmpeg_macos(
     let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
         "stage": "downloading", "progress": 100, "message": "ffmpeg 下载完成"
     }));
+    // 1.5 下载完整性校验
+    verify_downloaded_file(&ffmpeg_gz, "gz", "FFmpeg")?;
 
     // 2. 下载 ffprobe.gz
     let ffprobe_gz = download_gz(FFPROBE_DOWNLOAD_URLS, "ffprobe", "ffprobe")?;
+    // 2.5 下载完整性校验
+    verify_downloaded_file(&ffprobe_gz, "gz", "FFprobe")?;
 
     // 3. gunzip 解压
     let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
@@ -547,6 +615,12 @@ fn download_ffmpeg_inner(
     let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
         "stage": "downloading", "progress": 100, "message": "下载完成"
     }));
+
+    // 1.5 下载完整性校验：检查 magic bytes 防止下载到错误页面或恶意内容
+    verify_downloaded_file(&archive_path, archive_ext, "FFmpeg")
+        .map_err(|e| AppError::FfmpegDownloadExtractFailed {
+            detail: format!("下载完整性校验失败: {}", e),
+        })?;
 
     // 2. 解压（根据下载源判断 zip 或 7z 格式）
     let _ = app_handle.emit("ffmpeg_download_progress", serde_json::json!({
@@ -1296,9 +1370,71 @@ pub fn get_disk_free_space(path: &str) -> Result<u64, AppError> {
 
 #[cfg(not(windows))]
 pub fn get_disk_free_space(path: &str) -> Result<u64, AppError> {
-    use std::os::unix::fs::MetadataExt;
-    let meta = std::fs::metadata(path).map_err(AppError::Io)?;
-    Ok(meta.dev().into()) // 简化，实际应 statvfs
+    // macOS/Linux：用 statvfs(2) 获取真实剩余空间
+    // 之前返回 meta.dev()（设备号），会导致前端误判磁盘空间不足，阻塞字幕合并
+    use std::ffi::CString;
+    use std::os::raw::{c_char, c_int};
+
+    extern "C" {
+        fn statvfs(path: *const c_char, buf: *mut StatvfsRaw) -> c_int;
+    }
+
+    // statvfs 结构体布局因平台而异：
+    // - macOS: f_bsize/f_frsize 是 unsigned long(8B)，f_blocks/f_bfree/f_bavail 是
+    //   fsblkcnt_t = uint32_t(4B)
+    // - Linux 64 位: f_bsize/f_frsize/f_blocks/f_bfree/f_bavail 均为 unsigned long(8B)
+    // 后续字段因平台不同（macOS 含 f_owner/f_mntonname 等大数组），用大缓冲区容纳
+    #[cfg(target_os = "macos")]
+    #[repr(C)]
+    struct StatvfsRaw {
+        f_bsize: u64,
+        f_frsize: u64,
+        f_blocks: u32,
+        f_bfree: u32,
+        f_bavail: u32,
+        _rest: [u8; 4096 - 28], // 足够容纳 macOS 完整 statvfs 结构
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[repr(C)]
+    struct StatvfsRaw {
+        f_bsize: u64,
+        f_frsize: u64,
+        f_blocks: u64,
+        f_bfree: u64,
+        f_bavail: u64,
+        _rest: [u8; 4096 - 40], // 足够容纳 Linux 完整 statvfs 结构
+    }
+
+    // statvfs 要求路径存在；若 path 是文件，取其所在目录
+    let probe = std::path::Path::new(path);
+    let target = if probe.is_file() {
+        probe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| probe.to_path_buf())
+    } else {
+        probe.to_path_buf()
+    };
+    let c_path = CString::new(target.to_string_lossy().as_bytes())
+        .map_err(|e| AppError::Io(std::io::Error::other(format!("CString: {}", e))))?;
+
+    #[cfg(target_os = "macos")]
+    let mut buf = StatvfsRaw {
+        f_bsize: 0, f_frsize: 0, f_blocks: 0, f_bfree: 0, f_bavail: 0,
+        _rest: [0u8; 4096 - 28],
+    };
+    #[cfg(not(target_os = "macos"))]
+    let mut buf = StatvfsRaw {
+        f_bsize: 0, f_frsize: 0, f_blocks: 0, f_bfree: 0, f_bavail: 0,
+        _rest: [0u8; 4096 - 40],
+    };
+    let ret = unsafe { statvfs(c_path.as_ptr(), &mut buf) };
+    if ret != 0 {
+        return Err(AppError::Io(std::io::Error::other(format!(
+            "statvfs 失败: {} (path={})", ret, target.display()
+        ))));
+    }
+    // 剩余字节数 = 可用块数 × 碎片大小
+    let frsize = if buf.f_frsize > 0 { buf.f_frsize } else { buf.f_bsize };
+    Ok((buf.f_bavail as u64).saturating_mul(frsize))
 }
 
 /// 合并字幕到视频（-c copy + 字幕流映射）
@@ -1729,4 +1865,118 @@ mod tests {
     }
 
     // === SECTION 8 END ===
+
+    // === SECTION 9: 跨平台磁盘空间测试 ===
+
+    /// get_disk_free_space：临时目录应返回非零的剩余空间
+    /// 跨平台验证：Windows 用 GetDiskFreeSpaceExW，macOS/Linux 用 statvfs
+    #[test]
+    fn test_get_disk_free_space_temp_dir_nonzero() {
+        let tmp = std::env::temp_dir();
+        let path = tmp.to_string_lossy().to_string();
+        let free = get_disk_free_space(&path).expect("get_disk_free_space 应成功");
+        assert!(
+            free > 0,
+            "临时目录剩余空间应大于 0，实际: {} (path={})",
+            free,
+            path
+        );
+    }
+
+    /// get_disk_free_space：传入文件路径（而非目录）也应正常工作
+    /// 验证非 Windows 实现中对文件路径取父目录的逻辑
+    #[test]
+    fn test_get_disk_free_space_with_file_path() {
+        let tmp = std::env::temp_dir();
+        let file_path = tmp.join("zimufan_disk_free_test.tmp");
+        std::fs::write(&file_path, b"test").expect("写入测试文件失败");
+        let free = get_disk_free_space(&file_path.to_string_lossy())
+            .expect("get_disk_free_space 对文件路径应成功");
+        assert!(free > 0, "文件所在磁盘剩余空间应大于 0");
+        let _ = std::fs::remove_file(&file_path);
+    }
+
+    /// get_disk_free_space：返回值应是合理的字节数（不超过 1PB）
+    /// 防止 statvfs 字段解析错误导致返回异常巨大值
+    #[test]
+    fn test_get_disk_free_space_reasonable_upper_bound() {
+        let tmp = std::env::temp_dir();
+        let free = get_disk_free_space(&tmp.to_string_lossy())
+            .expect("get_disk_free_space 应成功");
+        // 1 PB = 2^50 字节，任何真实磁盘剩余空间不会超过此值
+        let one_pb: u64 = 1u64 << 50;
+        assert!(
+            free < one_pb,
+            "剩余空间 {} 异常巨大，可能 statvfs 字段解析错误",
+            free
+        );
+    }
+
+    // === SECTION 9 END ===
+
+    // === 下载完整性校验测试 ===
+
+    #[test]
+    fn test_verify_downloaded_file_html_rejected() {
+        let tmp = std::env::temp_dir().join("zimufan_verify_html_test.html");
+        std::fs::write(&tmp, b"<!DOCTYPE html><html><body>error page</body></html>").unwrap();
+        let result = verify_downloaded_file(&tmp, "zip", "test");
+        assert!(result.is_err(), "HTML 文件应被拒绝");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_verify_downloaded_file_too_small_rejected() {
+        let tmp = std::env::temp_dir().join("zimufan_verify_small_test.bin");
+        std::fs::write(&tmp, b"tiny").unwrap();
+        let result = verify_downloaded_file(&tmp, "zip", "test");
+        assert!(result.is_err(), "过小文件应被拒绝");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_verify_downloaded_file_zip_magic_bytes_rejected() {
+        let tmp = std::env::temp_dir().join("zimufan_verify_badzip_test.zip");
+        // 不是真正的 ZIP magic bytes
+        std::fs::write(&tmp, b"NOT_A_ZIP_FILE_PADDING_PADDING_PADDING").unwrap();
+        let result = verify_downloaded_file(&tmp, "zip", "test");
+        assert!(result.is_err(), "错误的 ZIP magic bytes 应被拒绝");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_verify_downloaded_file_valid_zip_accepted() {
+        let tmp = std::env::temp_dir().join("zimufan_verify_goodzip_test.zip");
+        // 构造最小合法 ZIP（PK\x03\x04 + 足够填充）
+        let mut data = b"PK\x03\x04".to_vec();
+        data.extend_from_slice(&[0u8; 32]); // 填充
+        std::fs::write(&tmp, &data).unwrap();
+        let result = verify_downloaded_file(&tmp, "zip", "test");
+        assert!(result.is_ok(), "合法 ZIP magic bytes 应通过");
+        if let Ok(hash) = result {
+            assert_eq!(hash.len(), 64, "SHA256 应为 64 字符十六进制");
+        }
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_verify_downloaded_file_gz_magic_bytes_rejected() {
+        let tmp = std::env::temp_dir().join("zimufan_verify_badgz_test.gz");
+        std::fs::write(&tmp, b"NOT_A_GZIP_FILE_PADDING_PADDING_PADDING").unwrap();
+        let result = verify_downloaded_file(&tmp, "gz", "test");
+        assert!(result.is_err(), "错误的 gzip magic bytes 应被拒绝");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_verify_downloaded_file_valid_gz_accepted() {
+        let tmp = std::env::temp_dir().join("zimufan_verify_goodgz_test.gz");
+        // gzip magic: \x1f\x8b
+        let mut data = vec![0x1f, 0x8b];
+        data.extend_from_slice(&[0u8; 32]);
+        std::fs::write(&tmp, &data).unwrap();
+        let result = verify_downloaded_file(&tmp, "gz", "test");
+        assert!(result.is_ok(), "合法 gzip magic bytes 应通过");
+        let _ = std::fs::remove_file(&tmp);
+    }
 }

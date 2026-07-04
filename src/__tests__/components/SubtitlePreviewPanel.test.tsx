@@ -13,6 +13,7 @@ vi.mock("../../lib/api", () => ({
     playerHide: vi.fn(() => Promise.resolve()),
     playerShow: vi.fn(() => Promise.resolve()),
     exportSubtitle: vi.fn(() => Promise.resolve()),
+    devLog: vi.fn(() => Promise.resolve()),
   },
   formatIpcError: vi.fn((e: unknown) => String(e)),
 }));

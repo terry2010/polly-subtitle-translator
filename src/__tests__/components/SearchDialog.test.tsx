@@ -20,6 +20,7 @@ vi.mock("../../lib/api", () => ({
     playerHide: mockPlayerHide,
     playerShow: mockPlayerShow,
     simplifySearchKeyword: mockSimplifyKeyword,
+    devLog: vi.fn(() => Promise.resolve()),
   },
   formatIpcError: vi.fn((e: unknown) => String(e)),
 }));

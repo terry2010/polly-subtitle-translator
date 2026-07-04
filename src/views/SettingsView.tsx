@@ -521,7 +521,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         api.getConfig(`translate_openai_${sid}_selected_model_types`).catch(() => null),
         api.getConfig(`translate_openai_${sid}_qps`).catch(() => null),
         api.getConfig(`translate_openai_${sid}_use_proxy`).catch(() => null),
-        api.getCredential(`openai_${sid}`, "secret").catch(() => null),
+        api.getCredential(`openai_${sid}`, "secret", `设置页加载凭据(${sid})`).catch(() => null),
       ]).then(([savedBaseUrl, savedSelected, savedModelTypes, savedQps, savedUseProxy, savedSecret]) => {
         if (savedBaseUrl) {
           setBaseUrl(savedBaseUrl);
@@ -549,7 +549,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       Promise.all([
         api.getConfig(`translate_${sid}_app_id`).catch(() => null),
         api.getConfig(`translate_${sid}_region`).catch(() => null),
-        api.getCredential(sid, "secret").catch(() => null),
+        api.getCredential(sid, "secret", `设置页加载凭据(${sid})`).catch(() => null),
         api.getConfig(`translate_${sid}_use_proxy`).catch(() => null),
         api.getConfig(`translate_${sid}_qps`).catch(() => null),
       ]).then(([savedAppId, savedRegion, savedSecret, savedUseProxy, savedQps]) => {

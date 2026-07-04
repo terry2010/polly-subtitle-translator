@@ -25,7 +25,7 @@ impl ProxyConfig {
             host: get("proxy_host"),
             port: get("proxy_port").parse().unwrap_or(0),
             username: if user.is_empty() { None } else { Some(user) },
-            password: crate::config::CredentialStore::load("proxy", "pass").ok(),
+            password: crate::config::CredentialStore::load("proxy", "pass", "构建翻译/搜索代理客户端").ok(),
         }
     }
 

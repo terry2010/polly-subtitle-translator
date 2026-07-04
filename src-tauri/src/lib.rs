@@ -362,12 +362,45 @@ pub fn log_prompt_fail(
 }
 
 /// 尝试获取 app data 目录（与 Tauri 的 app_data_dir 一致）
+/// 跨平台：
+/// - Windows: %APPDATA%\com.zimufan.ai-subtrans
+/// - macOS:   ~/Library/Application Support/com.zimufan.ai-subtrans
+/// - Linux:   $XDG_CONFIG_HOME/com.zimufan.ai-subtrans 或 ~/.config/com.zimufan.ai-subtrans
 fn get_app_data_dir() -> Option<std::path::PathBuf> {
-    if let Ok(dir) = std::env::var("APPDATA") {
-        let app_dir = std::path::PathBuf::from(dir)
-            .join("com.zimufan.ai-subtrans");
-        Some(app_dir)
-    } else {
+    // Windows: %APPDATA%
+    #[cfg(windows)]
+    {
+        if let Ok(dir) = std::env::var("APPDATA") {
+            return Some(std::path::PathBuf::from(dir).join("com.zimufan.ai-subtrans"));
+        }
+        return None;
+    }
+    // macOS: ~/Library/Application Support
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return Some(
+                std::path::PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+                    .join("com.zimufan.ai-subtrans"),
+            );
+        }
+        return None;
+    }
+    // Linux/其他: XDG_CONFIG_HOME 或 ~/.config
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        if let Ok(dir) = std::env::var("XDG_CONFIG_HOME") {
+            return Some(std::path::PathBuf::from(dir).join("com.zimufan.ai-subtrans"));
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            return Some(
+                std::path::PathBuf::from(home)
+                    .join(".config")
+                    .join("com.zimufan.ai-subtrans"),
+            );
+        }
         None
     }
 }
@@ -789,4 +822,52 @@ pub fn run() {
     builder
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// === 跨平台单元测试 ===
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// get_app_data_dir 应返回含 bundle id 的路径（跨平台）
+    /// 验证不再只依赖 Windows 的 APPDATA
+    #[test]
+    fn test_get_app_data_dir_contains_bundle_id() {
+        let dir = get_app_data_dir();
+        // 各平台都应能获取到 app data 目录（CI 环境可能有 HOME 缺失，但开发机不会）
+        if let Some(d) = dir {
+            let s = d.to_string_lossy();
+            assert!(
+                s.contains("com.zimufan.ai-subtrans"),
+                "app data 目录应含 bundle id，实际: {}",
+                s
+            );
+        }
+        // None 时说明 HOME/APPDATA 都缺失（罕见），不视为失败
+    }
+
+    /// get_crash_dir 应返回 crashes 子目录
+    #[test]
+    fn test_get_crash_dir_ends_with_crashes() {
+        let dir = get_crash_dir();
+        let s = dir.to_string_lossy();
+        assert!(
+            s.ends_with("crashes") || s.ends_with("crashes/"),
+            "crash 目录应以 crashes 结尾，实际: {}",
+            s
+        );
+    }
+
+    /// get_prompt_fail_dir 应返回 prompt_fails 子目录
+    #[test]
+    fn test_get_prompt_fail_dir_ends_with_prompt_fails() {
+        let dir = get_prompt_fail_dir();
+        let s = dir.to_string_lossy();
+        assert!(
+            s.ends_with("prompt_fails") || s.ends_with("prompt_fails/"),
+            "prompt_fail 目录应以 prompt_fails 结尾，实际: {}",
+            s
+        );
+    }
 }
