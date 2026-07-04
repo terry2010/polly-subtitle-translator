@@ -37,6 +37,13 @@ interface TranslateState {
   extractingNames: boolean;     // 是否正在预扫描提取人名
   glossaryDialogOpen: boolean;  // 译名表确认弹窗是否打开
   glossaryDraft: GlossaryEntry[]; // 译名表草稿（弹窗中编辑的，含候选译名）
+  // 人名预扫描进度
+  extractNamesProgress: number;  // 已完成段数
+  extractNamesTotal: number;    // 总段数
+  extractNamesStartTime: number; // 开始时间戳（performance.now()）
+  extractNamesLastProgressTime: number; // 上次进度更新时间戳
+  extractNamesSpeed: number;    // EMA 速度（段/秒）
+  extractNamesEta: number;      // 剩余时间（秒），-1=计算中
 
   setSourceLang: (lang: string) => void;
   setTargetLang: (lang: string) => void;
@@ -49,6 +56,7 @@ interface TranslateState {
   setGlossaryDraft: (draft: GlossaryEntry[]) => void;
   setExtractingNames: (v: boolean) => void;
   extractNames: (entries: SubtitleEntry[]) => Promise<GlossaryEntry[] | null>;
+  resetExtractNamesProgress: () => void;
   startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean) => Promise<TranslateResult | null>;
   cancelTranslate: () => Promise<void>;
   reset: () => void;
@@ -78,6 +86,12 @@ export const useTranslateStore = create<TranslateState>()(
       extractingNames: false,
       glossaryDialogOpen: false,
       glossaryDraft: [],
+      extractNamesProgress: 0,
+      extractNamesTotal: 0,
+      extractNamesStartTime: 0,
+      extractNamesLastProgressTime: 0,
+      extractNamesSpeed: 0,
+      extractNamesEta: -1,
 
       setSourceLang: (lang) => set({ sourceLang: lang }),
       setTargetLang: (lang) => set({ targetLang: lang }),
@@ -89,11 +103,35 @@ export const useTranslateStore = create<TranslateState>()(
       setGlossaryDialogOpen: (open) => set({ glossaryDialogOpen: open }),
       setGlossaryDraft: (draft) => set({ glossaryDraft: draft }),
       setExtractingNames: (v) => set({ extractingNames: v }),
+      resetExtractNamesProgress: () => set({ extractNamesProgress: 0, extractNamesTotal: 0, extractNamesStartTime: 0, extractNamesLastProgressTime: 0, extractNamesSpeed: 0, extractNamesEta: -1 }),
 
       extractNames: async (entries: SubtitleEntry[]) => {
         const { sourceLang, targetLang, provider, model, modelType, serviceId } = get();
         if (provider !== "openai") return null; // 仅 AI 翻译支持
-        set({ extractingNames: true });
+        const startTime = performance.now();
+        set({ extractingNames: true, extractNamesProgress: 0, extractNamesTotal: 0, extractNamesStartTime: startTime, extractNamesLastProgressTime: startTime, extractNamesSpeed: 0, extractNamesEta: -1 });
+
+        // 监听进度事件
+        let unlistenProgress: (() => void) | null = null;
+        try {
+          unlistenProgress = await api.onExtractNamesProgress((progress, total, done) => {
+            const state = get();
+            const now = performance.now();
+            const dt = (now - (state.extractNamesLastProgressTime || now)) / 1000;
+            let speed = state.extractNamesSpeed;
+            if (dt > 0.1 && progress > state.extractNamesProgress) {
+              const deltaSegments = progress - state.extractNamesProgress;
+              const instantSpeed = deltaSegments / dt;
+              speed = speed > 0 ? speed * 0.7 + instantSpeed * 0.3 : instantSpeed;
+            }
+            const remaining = total - progress;
+            const eta = speed > 0 ? remaining / speed : -1;
+            set({ extractNamesProgress: progress, extractNamesTotal: total, extractNamesSpeed: speed, extractNamesEta: eta, extractNamesLastProgressTime: now });
+          });
+        } catch (e) {
+          warn("人名预扫描进度监听失败:", e);
+        }
+
         try {
           const texts = entries.map((e) => e.text);
           const names = await api.extractNames(texts, sourceLang, targetLang, provider, model || undefined, modelType || undefined, serviceId || undefined);
@@ -109,6 +147,8 @@ export const useTranslateStore = create<TranslateState>()(
           error("人名预扫描失败:", e);
           set({ extractingNames: false });
           return null;
+        } finally {
+          if (unlistenProgress) unlistenProgress();
         }
       },
 
