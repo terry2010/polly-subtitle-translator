@@ -471,7 +471,7 @@ pub async fn translate_subtitle(
     } else {
         provider.clone()
     };
-    let secret = match config::CredentialStore::load(&keyring_provider, "secret") {
+    let secret = match config::CredentialStore::load(&keyring_provider, "secret", "翻译字幕") {
         Ok(s) => {
             tracing::info!("translate_subtitle secret from keyring: 已获取");
             Some(s)
@@ -722,7 +722,7 @@ pub async fn extract_names(
         Some(sid) => format!("openai_{}", sid),
         None => "openai".to_string(),
     };
-    let api_key = match config::CredentialStore::load(&keyring_provider, "secret") {
+    let api_key = match config::CredentialStore::load(&keyring_provider, "secret", "人名预扫描") {
         Ok(s) => Some(s),
         Err(_) => None,
     };
@@ -840,7 +840,7 @@ pub async fn test_translate_connection(
         } else {
             provider.clone()
         };
-        config::CredentialStore::load(&keyring_provider, "secret")
+        config::CredentialStore::load(&keyring_provider, "secret", "测试翻译连接")
             .ok()
             .filter(|s| !s.is_empty())
     } else {
@@ -965,8 +965,9 @@ pub fn save_credential(
 
 /// get_credential：从 keyring 读取凭据
 #[tauri::command]
-pub fn get_credential(provider: String, key: String) -> IpcResult<Option<String>> {
-    let result = match config::CredentialStore::load(&provider, &key) {
+pub fn get_credential(provider: String, key: String, reason: Option<String>) -> IpcResult<Option<String>> {
+    let reason = reason.unwrap_or_else(|| "前端查询凭据".to_string());
+    let result = match config::CredentialStore::load(&provider, &key, &reason) {
         Ok(v) => Some(v),
         Err(AppError::StorageCredentialNotFound { .. }) => None,
         Err(e) => return ipc_result(Err(e)),
@@ -1831,6 +1832,12 @@ pub async fn set_space_disabled_cmd(disabled: bool) -> Result<(), ()> {
 
 /// is_cursor_in_window_cmd：检查鼠标光标是否在主窗口范围内
 /// 用于前端空格键播放/暂停的判断（避免鼠标在窗口外时误触发）
+///
+/// 平台实现：
+/// - Windows: GetCursorPos（屏幕坐标原点在左上角）
+/// - macOS:   NSEvent::mouseLocation（屏幕坐标原点在左下角，需翻转 y）
+/// - Linux/其他: 无 libmpv 内嵌播放支持，fallback 返回 true
+#[cfg(windows)]
 #[tauri::command]
 pub async fn is_cursor_in_window_cmd(window: tauri::Window) -> Result<bool, ()> {
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -1850,6 +1857,51 @@ pub async fn is_cursor_in_window_cmd(window: tauri::Window) -> Result<bool, ()> 
         let inside = point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
         Ok(inside)
     }
+}
+
+/// is_cursor_in_window_cmd (macOS)：用 NSEvent::mouseLocation 获取全局鼠标坐标
+/// macOS 屏幕坐标原点在左下角，Tauri outer_position 原点在左上角，
+/// 需要用主显示器高度翻转 y 轴后再比较。
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn is_cursor_in_window_cmd(window: tauri::Window) -> Result<bool, ()> {
+    use objc::{class, msg_send, sel, sel_impl};
+    use objc::runtime::Object;
+
+    // NSPoint / NSRect / NSSize 在 64 位 macOS 上均为 f64 字段
+    #[repr(C)]
+    struct NSPoint { x: f64, y: f64 }
+    #[repr(C)]
+    struct NSSize { width: f64, height: f64 }
+    #[repr(C)]
+    struct NSRect { origin: NSPoint, size: NSSize }
+
+    let pos = window.outer_position().map_err(|_| ())?;
+    let size = window.outer_size().map_err(|_| ())?;
+    unsafe {
+        // [NSEvent mouseLocation] 返回当前鼠标在屏幕坐标系（原点左下角）的位置
+        let point: NSPoint = msg_send![class!(NSEvent), mouseLocation];
+        // 主显示器高度，用于把左下角原点的 y 翻转为左上角原点
+        let screen: *mut Object = msg_send![class!(NSScreen), mainScreen];
+        let frame: NSRect = msg_send![screen, frame];
+        let screen_height = frame.size.height;
+        let cursor_x = point.x as i32;
+        let cursor_y_top = (screen_height - point.y) as i32; // 翻转为左上角原点
+        let left = pos.x;
+        let top = pos.y;
+        let right = pos.x + size.width as i32;
+        let bottom = pos.y + size.height as i32;
+        let inside = cursor_x >= left && cursor_x <= right
+            && cursor_y_top >= top && cursor_y_top <= bottom;
+        Ok(inside)
+    }
+}
+
+/// is_cursor_in_window_cmd (Linux/其他平台)：无 libmpv 内嵌播放支持，fallback true
+#[cfg(not(any(windows, target_os = "macos")))]
+#[tauri::command]
+pub async fn is_cursor_in_window_cmd(_window: tauri::Window) -> Result<bool, ()> {
+    Ok(true)
 }
 
 /// player_resize_cmd：调整子窗口位置和大小
@@ -2009,7 +2061,7 @@ pub fn get_proxy(db: State<'_, Database>) -> IpcResult<serde_json::Value> {
     let host = db.get_config("proxy_host").ok().flatten().unwrap_or_default();
     let port = db.get_config("proxy_port").ok().flatten().unwrap_or_default();
     let user = db.get_config("proxy_user").ok().flatten().unwrap_or_default();
-    let has_password = config::CredentialStore::load("proxy", "pass").is_ok();
+    let has_password = config::CredentialStore::load("proxy", "pass", "读取代理配置").is_ok();
     ipc_result(Ok(serde_json::json!({
         "mode": mode,
         "host": host,
@@ -2081,7 +2133,7 @@ pub async fn test_proxy(url: String, db: State<'_, Database>) -> Result<serde_js
 
 /// get_system_lang：探测系统语言，返回归一化后的 ISO 639-1 码
 /// Windows: GetUserDefaultLocaleName
-/// macOS:   NSLocale.currentLocaleIdentifier
+/// macOS/Linux: LANG / LC_ALL / LC_MESSAGES 环境变量
 #[tauri::command]
 pub fn get_system_lang() -> IpcResult<String> {
     let lang = detect_system_lang();
@@ -2119,10 +2171,18 @@ fn detect_system_lang() -> String {
 }
 
 /// 将 locale 标识符归一化为 ISO 639-1 两字母码
-/// zh-CN/zh-Hans → zh, zh-TW/zh-Hant → zh, en-US → en, ja-JP → ja, ko-KR → ko
+/// zh-CN/zh-Hans → zh, zh-TW/zh-Hant → zh, en-US/en_US.UTF-8 → en, ja-JP → ja, ko-KR → ko
+/// 兼容 Windows（GetUserDefaultLocaleName 返回 "en-US" 连字符格式）
+/// 和 macOS/Linux（LANG 环境变量 "en_US.UTF-8" 下划线格式）
 fn normalize_locale(locale: &str) -> String {
     let lower = locale.to_lowercase();
-    let lang = lower.split('-').next().unwrap_or("zh");
+    // 同时按 '-' 和 '_' 分割，取第一段作为主语言码
+    // 兼容 "en-US"、"en_US.UTF-8"、"zh_Hans_CN" 等格式
+    let lang = lower
+        .split(|c| c == '-' || c == '_')
+        .next()
+        .filter(|s| !s.is_empty())
+        .unwrap_or("zh");
     // 归一化映射：仅取主语言码（一期不区分简繁）
     match lang {
         "zh" | "en" | "ja" | "ko" | "fr" | "de" | "es" | "ru" | "it" | "pt" | "th" | "vi" | "ar" => lang.to_string(),
@@ -2331,3 +2391,65 @@ pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), Ip
 }
 
 // === SECTION 7 END ===
+
+// === SECTION 8: 跨平台单元测试 ===
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// normalize_locale：常见 locale 应归一化为 ISO 639-1 两字母码
+    #[test]
+    fn normalize_locale_common_locales() {
+        assert_eq!(normalize_locale("zh-CN"), "zh");
+        assert_eq!(normalize_locale("zh-Hans"), "zh");
+        assert_eq!(normalize_locale("zh-TW"), "zh");
+        assert_eq!(normalize_locale("zh_Hans_CN"), "zh");
+        assert_eq!(normalize_locale("en-US"), "en");
+        assert_eq!(normalize_locale("en_US.UTF-8"), "en");
+        assert_eq!(normalize_locale("ja-JP"), "ja");
+        assert_eq!(normalize_locale("ko-KR"), "ko");
+        assert_eq!(normalize_locale("fr_FR"), "fr");
+        assert_eq!(normalize_locale("de_DE"), "de");
+        assert_eq!(normalize_locale("es-ES"), "es");
+    }
+
+    /// normalize_locale：大小写不敏感
+    #[test]
+    fn normalize_locale_case_insensitive() {
+        assert_eq!(normalize_locale("EN-us"), "en");
+        assert_eq!(normalize_locale("JA"), "ja");
+        assert_eq!(normalize_locale("Ko-KR"), "ko");
+    }
+
+    /// normalize_locale：未知语言 fallback 为 zh
+    #[test]
+    fn normalize_locale_unknown_fallback_zh() {
+        assert_eq!(normalize_locale("xx-YY"), "zh");
+        assert_eq!(normalize_locale("foobar"), "zh");
+        assert_eq!(normalize_locale(""), "zh");
+    }
+
+    /// normalize_locale：只取主语言码，忽略地区后缀
+    #[test]
+    fn normalize_locale_takes_primary_tag() {
+        assert_eq!(normalize_locale("pt-BR"), "pt");
+        assert_eq!(normalize_locale("vi-VN"), "vi");
+        assert_eq!(normalize_locale("th"), "th");
+        assert_eq!(normalize_locale("ar-SA"), "ar");
+    }
+
+    /// detect_system_lang：应返回归一化后的合法语言码（跨平台）
+    /// 不依赖具体系统语言，只校验返回值在已知集合内
+    #[test]
+    fn detect_system_lang_returns_valid_code() {
+        let lang = detect_system_lang();
+        let valid = ["zh", "en", "ja", "ko", "fr", "de", "es", "ru", "it", "pt", "th", "vi", "ar"];
+        assert!(
+            valid.contains(&lang.as_str()),
+            "detect_system_lang 返回了非预期值: {}",
+            lang
+        );
+    }
+}
+

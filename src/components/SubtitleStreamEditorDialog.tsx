@@ -257,8 +257,10 @@ export function SubtitleStreamEditorDialog({
       if (!spaceInfo.enough) {
         // 空间不够，弹 save 对话框让用户选其他盘
         const baseName = videoPath.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "");
-        const videoDir = videoPath.split(/[\\/]/).slice(0, -1).join(/[\\/]/.test(videoPath) ? "\\" : "/");
-        const defaultOutput = `${videoDir}${videoDir ? "\\" : ""}${baseName}.edited.mkv`;
+        // 根据路径实际使用的分隔符决定拼接分隔符（Windows 用 \，macOS/Linux 用 /）
+        const sep = videoPath.includes("\\") ? "\\" : "/";
+        const videoDir = videoPath.split(/[\\/]/).slice(0, -1).join(sep);
+        const defaultOutput = `${videoDir}${videoDir ? sep : ""}${baseName}.edited.mkv`;
         outputPath = await withPlayerHidden(() => save({
           defaultPath: defaultOutput,
           filters: [{ name: "MKV", extensions: ["mkv"] }],

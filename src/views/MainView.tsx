@@ -519,7 +519,7 @@ export default function MainView() {
       try {
         const [appId, secretKeyring, secretConfig] = await Promise.all([
           api.getConfig(`translate_${p}_app_id`).catch(() => null),
-          api.getCredential(p, "secret").catch(() => null),
+          api.getCredential(p, "secret", `启动检查配置状态(${p})`).catch(() => null),
           api.getConfig(`translate_${p}_secret`).catch(() => null),
         ]);
         const configured = !!(appId && (secretKeyring || secretConfig));
@@ -537,7 +537,7 @@ export default function MainView() {
         ]);
         if (!baseUrl || !selectedModels) return [s.id, false] as [string, boolean];
         if (s.requiresApiKey) {
-          const apiKey = await api.getCredential(`openai_${s.id}`, "secret").catch(() => null);
+          const apiKey = await api.getCredential(`openai_${s.id}`, "secret", `启动检查配置状态(${s.id})`).catch(() => null);
           if (!apiKey) return [s.id, false] as [string, boolean];
         }
         return [s.id, true] as [string, boolean];
