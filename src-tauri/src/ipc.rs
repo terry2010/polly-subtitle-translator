@@ -8,10 +8,12 @@ use crate::ffmpeg;
 use crate::subtitle;
 use crate::translate::{self, TranslateProvider, ProviderCredentials, ProxyConfig, TestConnectionResult};
 use tauri::{Emitter, Manager, State};
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 
-/// 全局翻译取消令牌
-pub type CancelToken = Arc<AtomicBool>;
+/// 全局翻译取消令牌（代际计数器）
+/// 每次新翻译 fetch_add 获得唯一代际号，cancel 时 fetch_add 使旧代际失效
+/// 运行中的翻译检查 counter != my_gen 则视为被取消
+pub type CancelToken = Arc<AtomicU64>;
 
 /// 将 AppError 转为 IpcError（用于 async 命令返回 Result<T, IpcError>）
 fn to_ipc_err(e: AppError) -> IpcError {
@@ -409,8 +411,8 @@ pub async fn translate_subtitle(
 ) -> Result<translate::TranslateResult, IpcError> {
     tracing::info!("translate_subtitle 调用: provider={}, model={:?}, model_type={:?}, service_id={:?}, entries={}, source={}, target={}, glossary={}, name_tagging={:?}", provider, model, model_type, service_id, entries.len(), source_lang, target_lang, glossary.as_ref().map(|g| g.len()).unwrap_or(0), name_tagging.unwrap_or(false));
 
-    // 重置取消标志
-    cancel_token.store(false, Ordering::Relaxed);
+    // 代际计数器：获取唯一代际号，使之前的翻译任务自动失效
+    let my_gen = cancel_token.fetch_add(1, Ordering::Relaxed) + 1;
 
     // comingSoon 拦截：在 TranslateProvider::from_str 之前，返回友好错误
 
@@ -590,6 +592,7 @@ pub async fn translate_subtitle(
         prov_instance,
         provider_name,
         cancel_token.inner().clone(),
+        my_gen,
     )
     .with_concurrency_and_rate_limit(user_concurrency, rate_limit);
 
@@ -672,7 +675,7 @@ pub async fn translate_subtitle(
 /// cancel_translate：取消正在进行的翻译
 #[tauri::command]
 pub fn cancel_translate(cancel_token: State<'_, CancelToken>) -> IpcResult<()> {
-    cancel_token.store(true, Ordering::Relaxed);
+    cancel_token.fetch_add(1, Ordering::Relaxed);
     tracing::info!("收到取消翻译请求");
     ipc_result(Ok(()))
 }
@@ -690,10 +693,11 @@ pub async fn extract_names(
     service_id: Option<String>,
     db: State<'_, Database>,
     cancel_token: State<'_, CancelToken>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Vec<translate::ExtractedName>, IpcError> {
     tracing::info!("extract_names 调用: provider={}, model={:?}, texts={}, source={}, target={}", provider, model, texts.len(), source_lang, target_lang);
     let extract_start = std::time::Instant::now();
-    cancel_token.store(false, Ordering::Relaxed);
+    let my_gen = cancel_token.fetch_add(1, Ordering::Relaxed) + 1;
 
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
         AppError::TranslateUnknownProvider { provider: provider.clone() }
@@ -757,6 +761,8 @@ pub async fn extract_names(
     let result = translate::extract_names_from_subtitles(
         prov_instance, &texts, &source_lang, &target_lang, max_input_tokens,
         cancel_token.inner().clone(),
+        my_gen,
+        Some(app_handle),
     ).await.map_err(to_ipc_err)?;
 
     let elapsed = extract_start.elapsed();

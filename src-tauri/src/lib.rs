@@ -674,7 +674,7 @@ pub fn run() {
             app.manage(db);
 
             // 初始化翻译取消令牌
-            app.manage(std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)) as crate::ipc::CancelToken);
+            app.manage(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)) as crate::ipc::CancelToken);
 
             // 初始化 ffmpeg 的 app_data_dir（供 find_ffmpeg 查找下载的 ffmpeg）
             crate::ffmpeg::init_app_data_dir(app_data_dir.clone());

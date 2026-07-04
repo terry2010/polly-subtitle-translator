@@ -20,6 +20,7 @@ vi.mock("../../lib/api", () => ({
   api: {
     playerHide: mockPlayerHide,
     playerShow: mockPlayerShow,
+    devLog: vi.fn(),
     exportSubtitle: mockExportSubtitle,
     mergeSubtitle: mockMergeSubtitle,
     checkMergeSpace: mockCheckMergeSpace,

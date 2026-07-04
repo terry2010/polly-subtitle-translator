@@ -30,17 +30,6 @@ export function GlossaryConfirmDialog({
     setLocalGlossary(glossary);
   }, [glossary]);
 
-  // libmpv 子窗口是原生 OS 窗口，z-order 高于 WebView2，会遮盖 Dialog。
-  // 弹层打开时隐藏播放器子窗口，关闭时恢复。
-  useEffect(() => {
-    api.devLog("[GlossaryConfirmDialog] 调用 playerHide");
-    api.playerHide().catch(() => { /* 播放器未初始化，忽略 */ });
-    return () => {
-      api.devLog("[GlossaryConfirmDialog] cleanup 调用 playerShow");
-      api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
-    };
-  }, []);
-
   const handleEdit = (index: number, field: "english" | "chinese", value: string) => {
     const updated = [...localGlossary];
     updated[index] = { ...updated[index], [field]: value };
@@ -126,13 +115,22 @@ export function GlossaryConfirmDialog({
                 onChange={(e) => handleEdit(index, "english", e.target.value)}
                 placeholder="English"
               />
-              <ComboSelect
-                className="w-[40%]"
-                value={entry.chinese}
-                options={Array.from(new Set([entry.chinese, ...entry.alternatives])).filter(Boolean)}
-                onChange={(value) => handleEdit(index, "chinese", value)}
-                placeholder="中文"
-              />
+              {entry.alternatives.length > 0 || entry.chinese.includes("/") ? (
+                <TagInput
+                  className="w-[40%]"
+                  value={entry.chinese}
+                  options={entry.alternatives}
+                  onChange={(value) => handleEdit(index, "chinese", value)}
+                  placeholder="中文"
+                />
+              ) : (
+                <Input
+                  className="w-[40%]"
+                  value={entry.chinese}
+                  onChange={(e) => handleEdit(index, "chinese", e.target.value)}
+                  placeholder="中文"
+                />
+              )}
               <Button
                 size="sm"
                 variant="ghost"
@@ -179,10 +177,13 @@ export function GlossaryConfirmDialog({
   );
 }
 
-/// 复合下拉框：输入框 + 下拉候选列表组合（多选模式）
-/// 候选列表用复选框，选中的译名用 / 分隔显示在输入框中
-/// 用户也可以直接在输入框中编辑（手动输入的值不受复选框控制）
-function ComboSelect({
+/// 标签输入框：用于多译名词，支持多个标签 + 下拉备选选择
+/// - 输入框内显示多个标签（按 / 分隔）
+/// - 点击标签进入编辑模式
+/// - 标签右侧有 X 可删除
+/// - 点击输入框内标签外的区域可输入新标签
+/// - 下拉框显示所有备选名字，点击即可切换选中/取消
+function TagInput({
   className,
   value,
   options,
@@ -196,13 +197,20 @@ function ComboSelect({
   placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [newTagValue, setNewTagValue] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const newInputRef = useRef<HTMLInputElement>(null);
+
+  const tags = value.split("/").map((s) => s.trim()).filter(Boolean);
+  const allOptions = Array.from(new Set([...tags, ...options])).filter(Boolean);
 
   // 点击外部关闭下拉
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setOpen(false);
       }
     };
@@ -210,63 +218,133 @@ function ComboSelect({
     return () => document.removeEventListener("mousedown", onClick);
   }, [open]);
 
-  // 无候选时用普通 Input
-  if (!options || options.length === 0) {
-    return (
-      <Input
-        className={className}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-      />
-    );
-  }
+  const updateTags = (newTags: string[]) => {
+    onChange(newTags.join("/"));
+  };
 
-  // 当前选中的译名列表（按 / 分隔）
-  const selected = value.split("/").map((s) => s.trim()).filter(Boolean);
+  // 点击标签进入编辑模式
+  const handleTagClick = (index: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingIndex(index);
+    setEditValue(tags[index]);
+    setOpen(false);
+  };
 
-  // 切换某个候选的选中状态
-  const toggleOption = (opt: string) => {
-    if (selected.includes(opt)) {
-      // 取消选中
-      const next = selected.filter((s) => s !== opt);
-      onChange(next.join("/"));
+  // 完成编辑标签
+  const finishEdit = () => {
+    if (editingIndex === null) return;
+    const newTags = [...tags];
+    if (editValue.trim()) {
+      newTags[editingIndex] = editValue.trim();
     } else {
-      // 选中（追加）
-      const next = [...selected, opt];
-      onChange(next.join("/"));
+      newTags.splice(editingIndex, 1);
+    }
+    updateTags(newTags);
+    setEditingIndex(null);
+    setEditValue("");
+  };
+
+  // 删除标签
+  const handleDeleteTag = (index: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newTags = tags.filter((_, i) => i !== index);
+    updateTags(newTags);
+  };
+
+  // 添加新标签
+  const handleAddTag = () => {
+    if (!newTagValue.trim()) return;
+    const newTags = [...tags, newTagValue.trim()];
+    updateTags(newTags);
+    setNewTagValue("");
+  };
+
+  // 下拉选项切换
+  const toggleOption = (opt: string) => {
+    if (tags.includes(opt)) {
+      updateTags(tags.filter((t) => t !== opt));
+    } else {
+      updateTags([...tags, opt]);
     }
   };
 
   return (
-    <div ref={ref} className={`relative ${className ?? ""}`}>
-      <div className="flex">
-        <Input
-          className="rounded-r-none flex-1"
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={placeholder}
+    <div ref={containerRef} className={`relative ${className ?? ""}`}>
+      <div
+        className="flex flex-wrap items-center gap-1 min-h-9 px-2 py-1 border rounded-md bg-background cursor-text focus-within:ring-1 focus-within:ring-ring"
+        onClick={() => {
+          setOpen(true);
+          newInputRef.current?.focus();
+        }}
+      >
+        {tags.map((tag, i) =>
+          editingIndex === i ? (
+            <input
+              key={i}
+              type="text"
+              className="w-24 px-1 py-0.5 text-sm border rounded outline-none"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onBlur={finishEdit}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  finishEdit();
+                } else if (e.key === "Escape") {
+                  setEditingIndex(null);
+                  setEditValue("");
+                }
+              }}
+              autoFocus
+              onClick={(e) => e.stopPropagation()}
+            />
+          ) : (
+            <span
+              key={i}
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-sm bg-secondary rounded-md cursor-pointer hover:bg-secondary/80"
+              onClick={(e) => handleTagClick(i, e)}
+            >
+              {tag}
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-destructive"
+                onClick={(e) => handleDeleteTag(i, e)}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          )
+        )}
+        <input
+          ref={newInputRef}
+          type="text"
+          className="flex-1 min-w-[60px] bg-transparent outline-none text-sm"
+          value={newTagValue}
+          onChange={(e) => setNewTagValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              handleAddTag();
+            }
+          }}
+          onBlur={handleAddTag}
+          placeholder={tags.length === 0 ? placeholder : ""}
+          onClick={(e) => e.stopPropagation()}
         />
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="rounded-l-none border-l-0 h-9 px-2"
-          onClick={() => setOpen(!open)}
-        >
-          <ChevronDown className="h-4 w-4" />
-        </Button>
       </div>
       {open && (
         <div className="absolute z-50 top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md">
-          {options.map((opt, i) => {
-            const checked = selected.includes(opt);
+          {allOptions.map((opt, i) => {
+            const checked = tags.includes(opt);
             return (
               <button
                 key={i}
                 type="button"
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent text-left"
-                onClick={() => toggleOption(opt)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleOption(opt);
+                }}
               >
                 <span className={`flex h-4 w-4 items-center justify-center rounded border ${checked ? "bg-primary border-primary" : "border-input"}`}>
                   {checked && <Check className="h-3 w-3 text-primary-foreground" />}

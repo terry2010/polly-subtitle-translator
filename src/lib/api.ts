@@ -145,6 +145,13 @@ export const api = {
     });
   },
 
+  onExtractNamesProgress: async (callback: (progress: number, total: number, done: boolean) => void) => {
+    const { listen } = await import("@tauri-apps/api/event");
+    return listen<{ progress: number; total: number; done: boolean }>("extract-names-progress", (event) => {
+      callback(event.payload.progress, event.payload.total, event.payload.done);
+    });
+  },
+
   onTranslateEntryDone: async (callback: (entry: { index: number; original: string; translated: string; from_cache: boolean; failed: boolean }) => void) => {
     const { listen } = await import("@tauri-apps/api/event");
     return listen<{ index: number; original: string; translated: string; from_cache: boolean; failed: boolean }>("translate-entry-done", (event) => {

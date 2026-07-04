@@ -957,23 +957,29 @@ export default function MainView() {
           // 先隐藏播放器子窗口（await 确保 IPC 执行完成），避免 Dialog 渲染时被视频遮盖
           api.devLog("[MainView] 翻译前调用 playerHide");
           await api.playerHide().catch(() => { /* 播放器未初始化，忽略 */ });
-          translateStore.setGlossaryDraft(extracted);
-          translateStore.setGlossaryDialogOpen(true);
-          // 等待用户确认（通过轮询 store 状态）
-          const confirmed = await new Promise<boolean>((resolve) => {
-            const checkInterval = setInterval(() => {
-              if (!useTranslateStore.getState().glossaryDialogOpen) {
-                clearInterval(checkInterval);
-                resolve(glossaryConfirmedRef.current);
-              }
-            }, 200);
-          });
-          if (!confirmed) {
-            translateStore.setExtractingNames(false);
-            toast.info(t("translate.nameExtractCancelled", "人名精译已取消，翻译中止"));
-            return;
+          try {
+            translateStore.setGlossaryDraft(extracted);
+            translateStore.setGlossaryDialogOpen(true);
+            // 等待用户确认（通过轮询 store 状态）
+            const confirmed = await new Promise<boolean>((resolve) => {
+              const checkInterval = setInterval(() => {
+                if (!useTranslateStore.getState().glossaryDialogOpen) {
+                  clearInterval(checkInterval);
+                  resolve(glossaryConfirmedRef.current);
+                }
+              }, 200);
+            });
+            if (!confirmed) {
+              translateStore.setExtractingNames(false);
+              toast.info(t("translate.nameExtractCancelled", "人名精译已取消，翻译中止"));
+              return;
+            }
+            glossary = useTranslateStore.getState().glossaryDraft.map((g) => [g.english, g.chinese] as [string, string]);
+          } finally {
+            // 弹窗关闭后恢复播放器（无论确认还是取消）
+            api.devLog("[MainView] 弹窗关闭后调用 playerShow");
+            api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
           }
-          glossary = useTranslateStore.getState().glossaryDraft.map((g) => [g.english, g.chinese] as [string, string]);
         }
       } catch (e: any) {
         warn("人名预扫描失败，继续正常翻译:", e);
@@ -1442,6 +1448,21 @@ export default function MainView() {
                     <span>{translateStore.totalChars.toLocaleString()} 字</span>
                     <span>{translateStore.speed > 0 ? `${translateStore.speed.toFixed(0)} 字/秒` : "计算中..."}</span>
                     <span>{translateStore.eta > 0 ? `剩余 ${formatEta(translateStore.eta)}` : ""}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* 人名预扫描进度 */}
+              {nameExtracting && translateStore.extractNamesTotal > 0 && (
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span>{t("translate.nameExtracting", "正在预扫描提取人名...")}</span>
+                    <span>{translateStore.extractNamesProgress} / {translateStore.extractNamesTotal}</span>
+                  </div>
+                  <Progress value={(translateStore.extractNamesProgress / translateStore.extractNamesTotal) * 100} />
+                  <div className="flex justify-between text-[10px] text-muted-foreground">
+                    <span>{translateStore.extractNamesSpeed > 0 ? `${translateStore.extractNamesSpeed.toFixed(1)} 段/秒` : "计算中..."}</span>
+                    <span>{translateStore.extractNamesEta > 0 ? `剩余 ${formatEta(translateStore.extractNamesEta)}` : ""}</span>
                   </div>
                 </div>
               )}
