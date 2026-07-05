@@ -5862,6 +5862,25 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_numbered_response_json_split_detection() {
+        // AI 拆分了含多行的条目，返回了超出范围的编号 n=6（期望 5）
+        // 应检测为对齐失败，触发降级重试（而非 silently 过滤 n=6 后数量恰好匹配）
+        let content = r#"```json
+[{"n": 1, "t": "杰瑞："}, {"n": 2, "t": "呃，我太紧张了！"}, {"n": 3, "t": "因为不再失业了。"}, {"n": 4, "t": "这是个担忧虫。"}, {"n": 5, "t": "我们要吃早餐药吗？"}, {"n": 6, "t": "没人给谁当经销商。"}]
+```"#;
+        let result = OpenAiProvider::parse_numbered_response(content, 5);
+        assert!(result.is_err(), "AI 返回超出范围的编号应触发对齐失败");
+    }
+
+    #[test]
+    fn test_parse_numbered_response_json_normal_5() {
+        // 正常的 5 条 JSON 响应应成功解析
+        let content = r#"[{"n": 1, "t": "你好"}, {"n": 2, "t": "世界"}, {"n": 3, "t": "测试"}, {"n": 4, "t": "四"}, {"n": 5, "t": "五"}]"#;
+        let result = OpenAiProvider::parse_numbered_response(content, 5).unwrap();
+        assert_eq!(result, vec!["你好", "世界", "测试", "四", "五"]);
+    }
+
+    #[test]
     fn test_parse_numbered_response_with_extra_text() {
         // 模型可能加额外说明行，编号解析应忽略非编号行
         let content = "Here are the translations:\n1. 你好\n2. 世界\n\nDone.";
