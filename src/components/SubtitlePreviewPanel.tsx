@@ -2,21 +2,38 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
-import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight, ChevronUp, ChevronDown } from "lucide-react";
+import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight, ChevronUp, ChevronDown, AlertTriangle, FileText } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
 import { useVideoStore } from "../stores/videoStore";
+import { useDevModeStore } from "../stores/devModeStore";
 import { AutoTextarea } from "./AutoTextarea";
 import { api } from "../lib/api";
 import { error } from "../lib/logger";
 import type { SubtitleEntry } from "../lib/ipc-types";
-import { uiState } from "../lib/utils";
+import { save } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "@tauri-apps/plugin-fs";
+import { uiState, withPlayerHidden } from "../lib/utils";
 import { ExportDialog } from "./ExportDialog";
 
 type PreviewMode = "original" | "bilingual" | "translated";
+
+/// 判断文本是否为音效/环境声标记，如 [clattering continues] / [碰撞声持续]
+function looksLikeSoundEffect(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  if (t.startsWith("[") && t.endsWith("]")) return true;
+  // 去掉 [Name] 前缀后，剩余部分仍被 [] 包裹
+  const m = t.match(/^\s*\[[^\]]+\]\s*(.*)$/);
+  if (m) {
+    const rest = m[1].trim();
+    if (rest && rest.startsWith("[") && rest.endsWith("]")) return true;
+  }
+  return false;
+}
 
 function formatTimecode(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -32,6 +49,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   const store = useSubtitleStore();
   const { file, bilingualDetect, isSplit } = store;
   const videoStore = useVideoStore();
+  const devMode = useDevModeStore((s) => s.devMode);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [showFindReplace, setShowFindReplace] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("bilingual");
@@ -583,6 +601,133 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
         <Button size="sm" variant="ghost" onClick={handleResetClick} disabled={store.undoStack.length === 0} className="h-7 px-2" title={t("subtitle.reset", "重置")}>
           <RotateCcw className="h-3.5 w-3.5" />
         </Button>
+        {/* 开发者模式：翻译状态统计图标 */}
+        {devMode && file && (() => {
+          const total = file.entries.length;
+          const targetLang = useTranslateStore.getState().targetLang;
+          // CJK 字符检测：目标语言是中文时，译文应包含 CJK 字符
+          const hasCjk = (s: string) => /[一-鿿]/.test(s);
+          // "未翻译"判定：译文为空、译文=原文、目标语言是中文但译文无 CJK（且原文也无 CJK）、
+          // 或音效标记类型不一致（如 "you need every week." → "[碰撞声持续]"，AI 错位翻译）
+          const isUntranslated = (e: typeof file.entries[0]) =>
+            !e.translated
+            || e.translated.trim() === e.text.trim()
+            || (targetLang.startsWith("zh") && !hasCjk(e.translated) && !hasCjk(e.text))
+            || looksLikeSoundEffect(e.text) !== looksLikeSoundEffect(e.translated);
+          const translatedCount = file.entries.filter((e) => e.translated && !e.failed && !isUntranslated(e)).length;
+          const cacheCount = file.entries.filter((e) => e.from_cache).length;
+          const failedCount = file.entries.filter((e) => e.failed).length;
+          const missingCount = file.entries.filter((e) => isUntranslated(e)).length;
+          const hasIssues = failedCount > 0 || missingCount > 0;
+          const tooltip = `共 ${total} 条 | 已翻译 ${translatedCount} 条（缓存 ${cacheCount}）| 失败 ${failedCount} 条 | 未翻译 ${missingCount} 条`;
+          if (!hasIssues) {
+            // 全部翻译成功，显示绿色成功图标
+            return (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-green-600 hover:text-green-700"
+                title={tooltip}
+              >
+                <Check className="mr-1 h-3.5 w-3.5" />
+                {total}
+              </Button>
+            );
+          }
+          // 收集所有问题条目的索引（用于循环跳转）
+          const issueEntries = file.entries.filter((e) => e.failed || isUntranslated(e));
+          const jumpToNextIssue = () => {
+            if (issueEntries.length === 0) return;
+            // 找当前编辑条目在 issueEntries 中的位置，跳到下一个
+            const currentIdx = issueEntries.findIndex((e) => e.index === editingIndex);
+            const nextIdx = (currentIdx + 1) % issueEntries.length;
+            const target = issueEntries[nextIdx];
+            const entryIdx = file.entries.findIndex((e) => e.index === target.index);
+            if (entryIdx >= 0) {
+              // 设置自动滚动锁，防止 onScroll → maybeScrollToActive 把滚动拉回当前播放位置
+              isAutoScrollingRef.current = true;
+              rowVirtualizer.scrollToIndex(entryIdx, { align: "center" });
+              setEditingIndex(target.index);
+              // 释放锁：给滚动动画 + onScroll debounce 足够时间
+              window.setTimeout(() => {
+                isAutoScrollingRef.current = false;
+              }, 1200);
+            }
+          };
+          return (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs text-orange-500 hover:text-orange-600"
+              title={tooltip}
+              onClick={jumpToNextIssue}
+            >
+              <AlertTriangle className="mr-1 h-3.5 w-3.5" />
+              {failedCount}/{missingCount}
+            </Button>
+          );
+        })()}
+        {/* 开发者模式：导出源语言/翻译后字幕为 txt */}
+        {devMode && file && (
+          <>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0"
+              title={t("subtitle.exportSourceTxt", "导出源语言字幕（txt）")}
+              onClick={async () => {
+                try {
+                  const outputPath = await withPlayerHidden(() => save({
+                    defaultPath: "source.txt",
+                    filters: [{ name: "Text", extensions: ["txt"] }],
+                  }));
+                  if (!outputPath) return;
+                  const lines = file.entries
+                    .filter((e) => !e._deleted)
+                    .map((e) => {
+                      const start = formatTimecode(e.start_ms);
+                      const end = formatTimecode(e.end_ms);
+                      return `[${start} --> ${end}] ${e.text}`;
+                    });
+                  await writeTextFile(outputPath, lines.join("\n"));
+                  toast.success(t("subtitle.exportSourceTxtOk", "已导出源语言字幕"));
+                } catch (e) {
+                  toast.error(t("subtitle.exportFailed", "导出失败") + ": " + String(e));
+                }
+              }}
+            >
+              <FileText className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0"
+              title={t("subtitle.exportTranslatedTxt", "导出翻译后字幕（txt）")}
+              onClick={async () => {
+                try {
+                  const outputPath = await withPlayerHidden(() => save({
+                    defaultPath: "translated.txt",
+                    filters: [{ name: "Text", extensions: ["txt"] }],
+                  }));
+                  if (!outputPath) return;
+                  const lines = file.entries
+                    .filter((e) => !e._deleted)
+                    .map((e) => {
+                      const start = formatTimecode(e.start_ms);
+                      const end = formatTimecode(e.end_ms);
+                      return `[${start} --> ${end}] ${e.translated || e.text}`;
+                    });
+                  await writeTextFile(outputPath, lines.join("\n"));
+                  toast.success(t("subtitle.exportTranslatedTxtOk", "已导出翻译后字幕"));
+                } catch (e) {
+                  toast.error(t("subtitle.exportFailed", "导出失败") + ": " + String(e));
+                }
+              }}
+            >
+              <Languages className="h-3.5 w-3.5" />
+            </Button>
+          </>
+        )}
         <div className="flex-1" />
         {/* 切换原译：将原文和译文对调（仅已拆分时可用） */}
         {isSplit && (

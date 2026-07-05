@@ -14,6 +14,8 @@
     "core:path:default",
     "dialog:default",
     "fs:default",
+    "fs:allow-write-text-file",
+    "fs:write-files",
     "shell:default",
     "shell:allow-open",
     "os:default",

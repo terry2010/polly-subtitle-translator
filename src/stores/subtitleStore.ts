@@ -145,7 +145,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
           if (!currentState.file) return;
           const entries = currentState.file.entries.map((e) => {
             const tr = cached.find((c) => c.index === e.index);
-            return tr ? { ...e, translated: tr.translated } : e;
+            return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
           });
           set({ file: { ...currentState.file, entries } });
         }

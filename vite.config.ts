@@ -48,6 +48,7 @@ export default defineConfig({
         "**/src-tauri/**",
         "**/*.srt", "**/*.ass", "**/*.ssa", "**/*.vtt",
         "**/*.mkv", "**/*.mp4", "**/*.avi", "**/*.mov",
+        "**/*.txt", "**/*.log",
       ],
     },
   },

@@ -20,6 +20,46 @@ fn to_ipc_err(e: AppError) -> IpcError {
     e.to_ipc_error()
 }
 
+/// 计算翻译（含人名预扫描）的实际并发数
+/// 规则：用户可覆盖 provider 的默认限流策略（config key 形如 translate_openai_{sid}_qps），
+/// 再与全局 translate_concurrency 取最小值。Qps 模式下强制串行（1 并发）。
+fn resolve_translation_concurrency(
+    db: &Database,
+    prov: &TranslateProvider,
+    service_id: &Option<String>,
+) -> Result<usize, IpcError> {
+    let default_policy = prov.rate_limit_policy();
+    let config_key = if *prov == TranslateProvider::OpenAi {
+        service_id.as_ref()
+            .map(|sid| format!("translate_openai_{}_qps", sid))
+            .unwrap_or_else(|| "translate_openai_qps".to_string())
+    } else {
+        format!("translate_{}_qps", prov.as_str())
+    };
+    let user_override = db.get_config(&config_key)
+        .ok().flatten()
+        .and_then(|v| v.parse::<usize>().ok());
+    let rate_limit = match (default_policy, user_override) {
+        (translate::RateLimitPolicy::Qps(_), Some(q)) => translate::RateLimitPolicy::Qps(q),
+        (translate::RateLimitPolicy::Concurrency(_), Some(c)) => translate::RateLimitPolicy::Concurrency(c),
+        (policy, None) => policy,
+    };
+
+    let user_concurrency = db.get_config("translate_concurrency")
+        .map_err(to_ipc_err)?
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(3);
+    let final_concurrency = match &rate_limit {
+        translate::RateLimitPolicy::Qps(_) => 1,
+        translate::RateLimitPolicy::Concurrency(max_n) => user_concurrency.min(*max_n).max(1),
+    };
+    tracing::info!(
+        "翻译并发解析: 用户配置并发={}, 限流策略={:?}, 最终并发={}, config_key={}",
+        user_concurrency, rate_limit, final_concurrency, config_key
+    );
+    Ok(final_concurrency)
+}
+
 /// 获取所有 IPC 命令 handler
 pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> {
     Box::new(tauri::generate_handler![
@@ -549,14 +589,10 @@ pub async fn translate_subtitle(
         provider.clone()
     };
 
-    // 限流策略：按各 API 官方政策，用户可自定义覆盖
-    // 默认策略由 provider.rate_limit_policy() 给出（Qps 或 Concurrency）
-    // 用户可通过 config key "translate_{provider}_qps" 覆盖默认值
-    //   - Qps 类 provider：覆盖 QPS 值（如百度付费后改为 10）
-    //   - Concurrency 类 provider：覆盖并发上限（如 OpenAI 付费后改为 20）
-    let default_policy = prov.rate_limit_policy();
+    // 计算实际并发数（限流策略 + 用户覆盖 + 全局并发数取最小）
+    let final_concurrency = resolve_translation_concurrency(&db, &prov, &service_id)?;
+    let rate_limit = prov.rate_limit_policy();
     let config_key = if prov == TranslateProvider::OpenAi {
-        // OpenAI 按 service_id 区分（不同服务可能有不同限流）
         service_id.as_ref()
             .map(|sid| format!("translate_openai_{}_qps", sid))
             .unwrap_or_else(|| "translate_openai_qps".to_string())
@@ -566,26 +602,11 @@ pub async fn translate_subtitle(
     let user_override = db.get_config(&config_key)
         .ok().flatten()
         .and_then(|v| v.parse::<usize>().ok());
-    let rate_limit = match (default_policy, user_override) {
+    let rate_limit = match (rate_limit, user_override) {
         (translate::RateLimitPolicy::Qps(_), Some(q)) => translate::RateLimitPolicy::Qps(q),
         (translate::RateLimitPolicy::Concurrency(_), Some(c)) => translate::RateLimitPolicy::Concurrency(c),
         (policy, None) => policy,
     };
-
-    // 读取用户配置的全局并发数（仅对 Concurrency 模式生效）
-    let user_concurrency = db.get_config("translate_concurrency")
-        .map_err(to_ipc_err)?
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(3);
-    // 最终并发数 = min(用户配置, 限流策略上限)，至少 1
-    let final_concurrency = match &rate_limit {
-        translate::RateLimitPolicy::Qps(_) => 1,
-        translate::RateLimitPolicy::Concurrency(max_n) => user_concurrency.min(*max_n).max(1),
-    };
-    tracing::info!(
-        "翻译调度: 用户配置并发={}, 限流策略={:?}, 最终并发={}, config_key={}",
-        user_concurrency, rate_limit, final_concurrency, config_key
-    );
 
     let scheduler = translate::TranslateScheduler::with_cancel_token(
         &db,
@@ -594,7 +615,13 @@ pub async fn translate_subtitle(
         cancel_token.inner().clone(),
         my_gen,
     )
-    .with_concurrency_and_rate_limit(user_concurrency, rate_limit);
+    .with_concurrency_and_rate_limit(
+        db.get_config("translate_concurrency")
+            .map_err(to_ipc_err)?
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(3),
+        rate_limit,
+    );
 
     // 进度回调：通过 Tauri 事件推送进度
     let app_handle = app.clone();
@@ -758,11 +785,15 @@ pub async fn extract_names(
     ).map_err(to_ipc_err)?;
 
     let max_input_tokens = model_type.max_input_tokens();
+    // 人名预扫描使用与翻译阶段相同的最终并发数（QPS 上限/全局并发数取最小）
+    let final_concurrency = resolve_translation_concurrency(&db, &prov, &service_id)?;
+    tracing::info!("人名预扫描并发度: {}", final_concurrency);
     let result = translate::extract_names_from_subtitles(
         prov_instance, &texts, &source_lang, &target_lang, max_input_tokens,
         cancel_token.inner().clone(),
         my_gen,
         Some(app_handle),
+        final_concurrency,
     ).await.map_err(to_ipc_err)?;
 
     let elapsed = extract_start.elapsed();
@@ -796,6 +827,7 @@ pub async fn get_cached_translations(
     };
 
     // 获取凭据（缓存查询不需要凭据，但需要 provider_name）
+    let provider_name_log = provider_name.clone();
     let scheduler = translate::TranslateScheduler::new(
         &db,
         std::sync::Arc::new(translate::BaiduProvider::new(String::new(), String::new()))
@@ -807,7 +839,10 @@ pub async fn get_cached_translations(
         .get_cached_entries(&entries, &source_lang, &target_lang)
         .map_err(to_ipc_err)?;
 
-    tracing::info!("缓存查询: {} 条中命中 {} 条", entries.len(), cached.len());
+    tracing::info!(
+        "缓存查询: {} 条中命中 {} 条 (provider={}, source={}, target={})",
+        entries.len(), cached.len(), provider_name_log, source_lang, target_lang
+    );
     Ok(cached)
 }
 

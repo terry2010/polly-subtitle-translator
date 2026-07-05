@@ -361,6 +361,24 @@ impl Database {
             Ok(count)
         })
     }
+
+    /// 清除"假翻译"缓存条目：
+    /// 1. 译文=原文（AI 未实际翻译，原样返回）
+    /// 2. 目标语言是中文但译文无 CJK 字符（且原文也无 CJK）
+    ///    注意：用 `[一-鿿]` 精确匹配 CJK 范围，而非 `[^ -~]`（后者会把 ♪ 等非 ASCII 也算作"有 CJK"）
+    pub fn purge_fake_translate_cache(&self) -> Result<usize, AppError> {
+        self.with_conn(|conn| {
+            let count = conn.execute(
+                "DELETE FROM translate_cache WHERE \
+                 TRIM(translated_text) = TRIM(source_text) \
+                 OR (target_lang LIKE 'zh%' \
+                     AND translated_text NOT GLOB '*[一-鿿]*' \
+                     AND source_text NOT GLOB '*[一-鿿]*')",
+                [],
+            )?;
+            Ok(count)
+        })
+    }
 }
 
 // === SECTION 3 END ===

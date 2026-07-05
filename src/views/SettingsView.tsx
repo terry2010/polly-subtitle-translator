@@ -18,6 +18,7 @@ import { useDevModeStore } from "../stores/devModeStore";
 import { useLibmpvStore } from "../stores/libmpvStore";
 import { useFfmpegStore } from "../stores/ffmpegStore";
 import { useUpdateStore } from "../stores/updateStore";
+import { useSubtitleStore } from "../stores/subtitleStore";
 import { api, formatIpcError } from "../lib/api";
 import type { PromptFailLogEntry } from "../lib/ipc-types";
 import { warn } from "../lib/logger";
@@ -1568,18 +1569,30 @@ function PlayerSettings() {
   );
 }
 
-// === 高级设置 ===
-function AdvancedSettings() {
-  const { t } = useTranslation();
+// === 清除缓存（共享 hook，供高级设置和开发者设置复用）===
+function useClearCache() {
   const [cacheCleared, setCacheCleared] = useState(false);
-
   const handleClearCache = useCallback(async () => {
-    await api.clearTranslateCache();
-    // 同时清除播放器图标缓存
+    // 清除播放器图标缓存
     await api.clearPlayerIconsCache().catch((e) => warn("清除图标缓存失败:", e));
+    // 清空当前已加载字幕的译文（内部同时清后端翻译缓存）
+    const subtitleState = useSubtitleStore.getState();
+    if (subtitleState.file) {
+      subtitleState.clearTranslations();
+    } else {
+      // 没有加载字幕时，直接清后端缓存
+      await api.clearTranslateCache().catch(() => {});
+    }
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 2000);
   }, []);
+  return { cacheCleared, handleClearCache };
+}
+
+// === 高级设置 ===
+function AdvancedSettings() {
+  const { t } = useTranslation();
+  const { cacheCleared, handleClearCache } = useClearCache();
 
   return (
     <div className="space-y-4">
@@ -1845,6 +1858,7 @@ function ContextMenuSettings() {
 // === 开发者选项 ===
 function DeveloperSettings() {
   const { t } = useTranslation();
+  const { cacheCleared, handleClearCache } = useClearCache();
   const logApiEnabled = useDevModeStore((s) => s.logApiEnabled);
   const toggleLogApi = useDevModeStore((s) => s.toggleLogApi);
   const devMode = useDevModeStore((s) => s.devMode);
@@ -2016,6 +2030,28 @@ function DeveloperSettings() {
         <p className="text-sm text-muted-foreground mt-1">{t("settings.developerDesc", "调试与诊断工具")}</p>
       </div>
 
+      {/* 清除缓存 */}
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-muted-foreground" />
+              <div>
+                <h3 className="text-base font-medium">{t("settings.clearCache")}</h3>
+                <p className="text-sm text-muted-foreground">{t("settings.clearCacheDesc")}</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {cacheCleared && <span className="text-sm text-green-600"><Check className="inline h-4 w-4" /> ✓</span>}
+              <Button size="sm" variant="destructive" onClick={handleClearCache}>
+                <Trash2 className="h-4 w-4 mr-1" />
+                {t("settings.clearCache")}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* 崩溃日志 */}
       <Card>
         <CardContent className="pt-6 space-y-3">
@@ -2073,10 +2109,6 @@ function DeveloperSettings() {
                 : t("settings.noPromptFails", "暂无失败日志")}
             </span>
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" onClick={refreshPromptFailLogs}>
-                <RefreshCw className="h-4 w-4 mr-1" />
-                {t("settings.refresh", "刷新")}
-              </Button>
               <Button size="sm" variant="outline" onClick={handleClearPromptFailLogs} disabled={!promptFailDir || promptFailLogs.length === 0}>
                 <Trash2 className="h-4 w-4 mr-1" />
                 {t("settings.clearLogs", "清空")}

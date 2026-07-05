@@ -179,6 +179,19 @@ export default function MainView() {
   // refs for promise-based dialog flow
   const glossaryConfirmedRef = useRef(false);
   const nameExtractCancelledRef = useRef(false);
+  // 自动翻译模式：弹窗弹出后翻译已在后台进行，弹窗关闭时不中止翻译
+  const glossaryAutoModeRef = useRef(false);
+  // 自动模式下翻译是否已完成（用于弹窗按钮状态）
+  const [glossaryTranslateDone, setGlossaryTranslateDone] = useState(false);
+  // 预扫描提取完毕后是否自动翻译字幕（仅专有名词精译启用时可见）
+  // 未设置过默认为 false，用户点击后持久化最后一次状态
+  const [autoTranslateAfterExtract, setAutoTranslateAfterExtract] = useState(false);
+  // ref 镜像，避免 useCallback 闭包捕获旧值（异步流程中用户可能修改复选框）
+  const autoTranslateAfterExtractRef = useRef(false);
+  // 用户是否已点击过翻译按钮（控制"提取后自动翻译"选项的显示时机）
+  const [translateClicked, setTranslateClicked] = useState(false);
+  // 是否已加载持久化配置
+  const [autoTranslateLoaded, setAutoTranslateLoaded] = useState(false);
   // 导入的外部字幕列表
   const [importedSubtitles, setImportedSubtitles] = useState<{ name: string; path: string }[]>([]);
   // 字幕流提取缓存（模块级变量，避免从设置返回时丢失缓存导致重新提取）
@@ -192,6 +205,20 @@ export default function MainView() {
   const [videoInfoOverlay, setVideoInfoOverlay] = useState(false);
   const [overlayFading, setOverlayFading] = useState(false);
   const cardCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 加载"提取后自动翻译"的持久化配置（未设置过则默认为 false）
+  useEffect(() => {
+    api.getConfig("auto_translate_after_extract")
+      .then((val) => {
+        if (val !== null) {
+          const checked = val === "true";
+          setAutoTranslateAfterExtract(checked);
+          autoTranslateAfterExtractRef.current = checked;
+        }
+      })
+      .catch(() => { /* 未配置时保持默认 false */ })
+      .finally(() => setAutoTranslateLoaded(true));
+  }, []);
 
   // 打开视频后默认展开，5秒后收起（鼠标 hover 时不收起）
   useEffect(() => {
@@ -388,7 +415,7 @@ export default function MainView() {
         if (cachedTr && cachedTr.length > 0) {
           const entries = cached.entries.map((e: any) => {
             const tr = cachedTr.find((c) => c.index === e.index);
-            return tr ? { ...e, translated: tr.translated } : e;
+            return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
           });
           subtitleStore.setFile({ ...cached, entries });
         }
@@ -443,7 +470,7 @@ export default function MainView() {
           if (cached && cached.length > 0) {
             const entries = subtitleState.file.entries.map((e) => {
               const tr = cached.find((c) => c.index === e.index);
-              return tr ? { ...e, translated: tr.translated } : e;
+              return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
             });
             subtitleState.setFile({ ...subtitleState.file, entries });
           }
@@ -587,10 +614,22 @@ export default function MainView() {
         }
       }
 
-      // 2. 检查 effectiveProvider 是否已配置，未配置时切换到第一个已配置的引擎
-      const isCurrentConfigured =
-        (effectiveProvider !== "openai" && configured[effectiveProvider]) ||
-        (effectiveProvider === "openai" && effectiveServiceId && configured[effectiveServiceId]);
+      // 记录切换前的引擎信息，用于 toast 提示
+      const oldProvider = effectiveProvider;
+      const oldServiceId = effectiveServiceId;
+      const oldModel = effectiveModel;
+
+      // 2. 检查 effectiveProvider 是否已配置
+      // 对于 AI 服务，必须同时检查 serviceId 已配置且当前 model 在该服务的已选模型列表中
+      let isCurrentConfigured = false;
+      let currentSelectedModels: string[] = [];
+      if (effectiveProvider === "openai" && effectiveServiceId) {
+        const savedModels = await api.getConfig(`translate_openai_${effectiveServiceId}_selected_models`).catch(() => null);
+        currentSelectedModels = savedModels ? savedModels.split(",").filter(Boolean) : [];
+        isCurrentConfigured = configured[effectiveServiceId] && currentSelectedModels.includes(effectiveModel || "");
+      } else if (effectiveProvider !== "openai") {
+        isCurrentConfigured = configured[effectiveProvider];
+      }
 
       if (!isCurrentConfigured) {
         // 优先找传统翻译
@@ -616,6 +655,12 @@ export default function MainView() {
             api.setConfig("translate_current_model", effectiveModel).catch(() => {});
           }
         }
+      } else if (effectiveProvider === "openai" && effectiveServiceId && !currentSelectedModels.includes(effectiveModel || "")) {
+        // service 已配置，但当前 model 已不在该服务的已选模型列表中，切换到该服务的第一个模型
+        effectiveModel = currentSelectedModels[0] || "";
+        if (effectiveModel) {
+          api.setConfig("translate_current_model", effectiveModel).catch(() => {});
+        }
       } else if (effectiveProvider === "openai" && !effectiveModel && effectiveServiceId) {
         // provider 已配置但 model 为空，加载第一个模型
         const models = await api.getConfig(`translate_openai_${effectiveServiceId}_selected_models`).catch(() => null);
@@ -629,6 +674,22 @@ export default function MainView() {
       translateStore.setProvider(effectiveProvider);
       translateStore.setServiceId(effectiveServiceId);
       if (effectiveModel) translateStore.setModel(effectiveModel);
+
+      // 4. 如果发生了引擎切换，提示用户
+      const hasChanged = effectiveProvider !== oldProvider || effectiveServiceId !== oldServiceId || effectiveModel !== oldModel;
+      if (hasChanged) {
+        const getProviderName = (provider: string, serviceId: string | null, model: string) => {
+          if (provider === "openai" && serviceId && model) {
+            const service = SERVICES.find((s) => s.id === serviceId);
+            return service ? `${service.name} - ${model}` : model;
+          }
+          const service = SERVICES.find((s) => s.id === provider);
+          return service?.name || provider;
+        };
+        const oldName = getProviderName(oldProvider, oldServiceId, oldModel);
+        const newName = getProviderName(effectiveProvider, effectiveServiceId, effectiveModel);
+        toast.info(t("translate.engineSwitched", "上次使用的翻译引擎（{{oldProvider}}）已不可用，已自动切换为 {{newProvider}}", { oldProvider: oldName, newProvider: newName }));
+      }
     });
   }, []);
 
@@ -907,6 +968,7 @@ export default function MainView() {
 
   const handleTranslateAndMerge = useCallback(async () => {
     if (!subtitleStore.file) return;
+    setTranslateClicked(true);
     const { sourceLang, provider, serviceId } = translateStore;
     // 检查：翻译 API 是否已配置凭据
     // AI 服务：检查 serviceId 对应的配置；传统翻译：检查 provider 对应的配置
@@ -953,32 +1015,44 @@ export default function MainView() {
           return;
         }
         if (extracted && extracted.length > 0) {
-          // 弹窗让用户确认/修改译名表
           // 先隐藏播放器子窗口（await 确保 IPC 执行完成），避免 Dialog 渲染时被视频遮盖
           api.devLog("[MainView] 翻译前调用 playerHide");
           await api.playerHide().catch(() => { /* 播放器未初始化，忽略 */ });
-          try {
+
+          if (autoTranslateAfterExtractRef.current) {
+            // 勾选了"自动翻译"：弹出译名表供查看，但不等待确认，直接开始翻译
+            // 播放器保持隐藏（弹窗显示期间不恢复），避免视频覆盖弹窗
+            glossaryAutoModeRef.current = true;
             translateStore.setGlossaryDraft(extracted);
             translateStore.setGlossaryDialogOpen(true);
-            // 等待用户确认（通过轮询 store 状态）
-            const confirmed = await new Promise<boolean>((resolve) => {
-              const checkInterval = setInterval(() => {
-                if (!useTranslateStore.getState().glossaryDialogOpen) {
-                  clearInterval(checkInterval);
-                  resolve(glossaryConfirmedRef.current);
-                }
-              }, 200);
-            });
-            if (!confirmed) {
-              translateStore.setExtractingNames(false);
-              toast.info(t("translate.nameExtractCancelled", "人名精译已取消，翻译中止"));
-              return;
+            glossary = extracted.map((g) => [g.english, g.chinese] as [string, string]);
+            api.devLog("[MainView] 自动模式：弹窗已弹出，播放器保持隐藏，开始翻译");
+          } else {
+            // 未勾选：弹窗让用户确认/修改译名表，等待用户操作
+            glossaryAutoModeRef.current = false;
+            try {
+              translateStore.setGlossaryDraft(extracted);
+              translateStore.setGlossaryDialogOpen(true);
+              // 等待用户确认（通过轮询 store 状态）
+              const confirmed = await new Promise<boolean>((resolve) => {
+                const checkInterval = setInterval(() => {
+                  if (!useTranslateStore.getState().glossaryDialogOpen) {
+                    clearInterval(checkInterval);
+                    resolve(glossaryConfirmedRef.current);
+                  }
+                }, 200);
+              });
+              if (!confirmed) {
+                translateStore.setExtractingNames(false);
+                toast.info(t("translate.nameExtractCancelled", "人名精译已取消，翻译中止"));
+                return;
+              }
+              glossary = useTranslateStore.getState().glossaryDraft.map((g) => [g.english, g.chinese] as [string, string]);
+            } finally {
+              // 弹窗关闭后恢复播放器（无论确认还是取消）
+              api.devLog("[MainView] 弹窗关闭后调用 playerShow");
+              api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
             }
-            glossary = useTranslateStore.getState().glossaryDraft.map((g) => [g.english, g.chinese] as [string, string]);
-          } finally {
-            // 弹窗关闭后恢复播放器（无论确认还是取消）
-            api.devLog("[MainView] 弹窗关闭后调用 playerShow");
-            api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
           }
         }
       } catch (e: any) {
@@ -989,11 +1063,12 @@ export default function MainView() {
     }
 
     // 逐条翻译、逐条填充
+    setGlossaryTranslateDone(false);
     const result = await translateStore.startTranslate(
       subtitleStore.file.entries,
       (index, translated, failed) => {
         // 每条翻译完成后立即更新字幕预览区（含翻译失败标记）
-        subtitleStore.updateEntry(index, { translated, failed });
+        subtitleStore.updateEntry(index, { translated, failed, from_cache: false });
       },
       undefined,
       glossary,
@@ -1010,6 +1085,8 @@ export default function MainView() {
       });
       subtitleStore.setFile({ ...subtitleStore.file, entries });
     }
+    // 翻译完成，更新弹窗按钮状态
+    setGlossaryTranslateDone(true);
   }, [subtitleStore, translateStore, t, providerConfigured, navigate, namePrecisionEnabled]);
 
   const formatDuration = (s: number | null) => {
@@ -1436,6 +1513,24 @@ export default function MainView() {
                 </Button>
               )}
 
+              {/* 专有名词精译：提取后自动翻译开关（仅 AI 引擎 + 精译启用 + 已点击翻译 + 未在翻译/提取中时显示） */}
+              {autoTranslateLoaded && translateClicked && namePrecisionEnabled && translateStore.provider === "openai" && !translateStore.translating && !translateStore.extractingNames && !glossaryDialogOpen && (
+                <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none py-0.5">
+                  <input
+                    type="checkbox"
+                    checked={autoTranslateAfterExtract}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setAutoTranslateAfterExtract(checked);
+                      autoTranslateAfterExtractRef.current = checked;
+                      api.setConfig("auto_translate_after_extract", String(checked)).catch(() => {});
+                    }}
+                    className="h-3.5 w-3.5 rounded border-gray-300 accent-primary flex-shrink-0"
+                  />
+                  <span>{t("translate.autoTranslateAfterExtract", "提取完毕后自动翻译字幕")}</span>
+                </label>
+              )}
+
               {/* 翻译进度 */}
               {translateStore.translating && (
                 <div className="space-y-1">
@@ -1535,13 +1630,27 @@ export default function MainView() {
         <GlossaryConfirmDialog
           glossary={glossaryDraft}
           onGlossaryChange={(g) => translateStore.setGlossaryDraft(g)}
+          autoTranslating={glossaryAutoModeRef.current}
+          translateDone={glossaryAutoModeRef.current && glossaryTranslateDone}
           onConfirm={() => {
             glossaryConfirmedRef.current = true;
             translateStore.setGlossaryDialogOpen(false);
+            // 自动模式下播放器一直隐藏，弹窗关闭时恢复
+            if (glossaryAutoModeRef.current) {
+              api.devLog("[MainView] 自动模式弹窗关闭，恢复播放器");
+              api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
+            }
           }}
           onCancel={() => {
-            glossaryConfirmedRef.current = false;
-            translateStore.setGlossaryDialogOpen(false);
+            // 自动模式下弹窗只是查看窗口，关闭不中止翻译
+            if (glossaryAutoModeRef.current) {
+              translateStore.setGlossaryDialogOpen(false);
+              api.devLog("[MainView] 自动模式弹窗关闭，恢复播放器");
+              api.playerShow().catch(() => { /* 播放器未初始化，忽略 */ });
+            } else {
+              glossaryConfirmedRef.current = false;
+              translateStore.setGlossaryDialogOpen(false);
+            }
           }}
         />
       )}
