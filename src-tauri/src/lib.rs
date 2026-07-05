@@ -12,7 +12,7 @@ pub mod search;
 pub mod context_menu;
 pub mod player;
 
-use tauri::Manager;
+use tauri::{Manager, Listener};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 /// 解析命令行参数，提取运行模式和文件路径
@@ -704,6 +704,12 @@ pub fn run() {
             let db_path = app_data_dir.join("zimufan.db");
             let db = db::Database::open(&db_path)?;
             db.migrate()?;
+            // 启动时清理"假翻译"缓存（译文=原文，AI 未实际翻译）
+            match db.purge_fake_translate_cache() {
+                Ok(n) if n > 0 => tracing::info!("启动清理：删除 {} 条假翻译缓存（译文=原文）", n),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("启动清理假翻译缓存失败: {:?}", e),
+            }
             app.manage(db);
 
             // 初始化翻译取消令牌
@@ -714,8 +720,8 @@ pub fn run() {
 
             tracing::info!("AI-SubTrans 启动完成，数据目录: {:?}", app_data_dir);
 
-            // 显式显示窗口并获取焦点，居中到鼠标所在显示器
-            if let Some(window) = app.get_webview_window("main") {
+            // 窗口初始位置：根据鼠标所在显示器居中计算（先定位不显示）
+            let initial_position = {
                 #[cfg(windows)]
                 {
                     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
@@ -735,24 +741,39 @@ pub fn run() {
                                 let mon_top = mi.rcMonitor.top;
                                 let mon_w = mi.rcMonitor.right - mi.rcMonitor.left;
                                 let mon_h = mi.rcMonitor.bottom - mi.rcMonitor.top;
-
-                                let scale = window.scale_factor().unwrap_or(1.0);
-                                let win_w = 520.0 * scale;
-                                let win_h = 325.0 * scale;
-                                let x = mon_left + ((mon_w as f64 - win_w) / 2.0).round() as i32;
-                                let y = mon_top + ((mon_h as f64 - win_h) / 2.0).round() as i32;
-                                let _ = window.set_position(tauri::PhysicalPosition {
-                                    x: x.max(0),
-                                    y: y.max(0),
-                                });
+                                Some((mon_left, mon_top, mon_w, mon_h))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
                     }
                 }
                 #[cfg(not(windows))]
                 {
+                    None
+                }
+            };
+
+            if let Some(window) = app.get_webview_window("main") {
+                #[cfg(windows)]
+                {
+                    if let Some((mon_left, mon_top, mon_w, mon_h)) = initial_position {
+                        let scale = window.scale_factor().unwrap_or(1.0);
+                        let win_w = 520.0 * scale;
+                        let win_h = 325.0 * scale;
+                        let x = mon_left + ((mon_w as f64 - win_w) / 2.0).round() as i32;
+                        let y = mon_top + ((mon_h as f64 - win_h) / 2.0).round() as i32;
+                        let _ = window.set_position(tauri::PhysicalPosition {
+                            x: x.max(0),
+                            y: y.max(0),
+                        });
+                    }
+                }
+                #[cfg(not(windows))]
+                {
                     // macOS/Linux：用 Tauri 跨平台 API 居中到主显示器
-                    // available_monitors 返回所有显示器，第一个通常是主显示器
                     if let Ok(monitors) = window.available_monitors() {
                         if let Some(monitor) = monitors.first() {
                             let pos = monitor.position();
@@ -769,8 +790,17 @@ pub fn run() {
                         }
                     }
                 }
+                // 启动时先显示窗口（不置顶），让用户看到白框加载状态
                 let _ = window.show();
-                let _ = window.set_focus();
+                // 前端页面加载完成后再置顶，避免加载完成前抢占其他窗口焦点
+                let app_handle = app.handle().clone();
+                let app_handle_for_closure = app_handle.clone();
+                let _ = app_handle.listen("app://ready", move |_event| {
+                    if let Some(window) = app_handle_for_closure.get_webview_window("main") {
+                        let _ = window.set_focus();
+                        tracing::info!("前端页面加载完成，主窗口已置顶");
+                    }
+                });
             }
 
             // 解析命令行参数

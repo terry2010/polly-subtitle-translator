@@ -1,7 +1,7 @@
 import { useEffect, lazy, Suspense } from "react";
 import { HashRouter, Routes, Route, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import MainView from "./views/MainView";
@@ -205,6 +205,11 @@ export default function App() {
     };
     window.addEventListener("contextmenu", handler, true);
     return () => { window.removeEventListener("contextmenu", handler, true); };
+  }, []);
+
+  // 前端初始加载完成，通知后端可以显示/置顶窗口
+  useEffect(() => {
+    emit("app://ready", {});
   }, []);
 
   // 启动时从 config 初始化翻译默认语言（含跟随系统语言）

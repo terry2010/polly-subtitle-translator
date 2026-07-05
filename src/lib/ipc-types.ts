@@ -90,6 +90,8 @@ export interface SubtitleEntry {
   _deleted?: boolean;
   /** 翻译是否失败（仅内存状态，不写入字幕文件） */
   failed?: boolean;
+  /** 译文是否来自缓存（仅内存状态，用于统计显示） */
+  from_cache?: boolean;
 }
 
 export interface SubtitleFile {

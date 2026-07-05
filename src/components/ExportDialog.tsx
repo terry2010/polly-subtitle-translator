@@ -15,6 +15,7 @@ import { error } from "../lib/logger";
 import { useVideoStore } from "../stores/videoStore";
 import { useTranslateStore } from "../stores/translateStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
+import { useDevModeStore } from "../stores/devModeStore";
 import type { SubtitleFile, ExportOptions, AssBilingualStyle } from "../lib/ipc-types";
 import { DEFAULT_ASS_STYLE } from "../lib/ipc-types";
 import {
@@ -30,6 +31,19 @@ interface ExportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   file: SubtitleFile; // 调用方保证非 null（见 §5.2 条件渲染）
+}
+
+/// 判断文本是否为音效/环境声标记，如 [clattering continues] / [碰撞声持续]
+function looksLikeSoundEffect(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  if (t.startsWith("[") && t.endsWith("]")) return true;
+  const m = t.match(/^\s*\[[^\]]+\]\s*(.*)$/);
+  if (m) {
+    const rest = m[1].trim();
+    if (rest && rest.startsWith("[") && rest.endsWith("]")) return true;
+  }
+  return false;
 }
 
 type FormatKind = "srt" | "ass" | "vtt";
@@ -143,24 +157,27 @@ function ExportPreview({ file, options, assStyle }: {
       className="rounded-md p-4 min-h-[200px] flex flex-col justify-center gap-1 w-full text-white"
       style={{ background: "linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)" }}
     >
-      {samples.map((entry, i) => (
-        <div key={i} className="mb-2 w-full">
-          {options.mode === "bilingual" ? (
-            <>
+      {samples.map((entry, i) => {
+        const hasTranslation = !!entry.translated && entry.translated.trim() !== entry.text.trim();
+        return (
+          <div key={i} className="mb-2 w-full">
+            {options.mode === "bilingual" && hasTranslation ? (
+              <>
+                <div style={lineStyle(true)} className="w-full whitespace-pre-line">
+                  {stripAssTags(options.bilingual_translated_first ? entry.translated : entry.text)}
+                </div>
+                <div style={lineStyle(false)} className="w-full whitespace-pre-line">
+                  {stripAssTags(options.bilingual_translated_first ? entry.text : entry.translated)}
+                </div>
+              </>
+            ) : (
               <div style={lineStyle(true)} className="w-full whitespace-pre-line">
-                {stripAssTags(options.bilingual_translated_first ? entry.translated : entry.text)}
+                {stripAssTags(options.monolingual_lang === "source" || !entry.translated ? entry.text : entry.translated)}
               </div>
-              <div style={lineStyle(false)} className="w-full whitespace-pre-line">
-                {stripAssTags(options.bilingual_translated_first ? entry.text : entry.translated)}
-              </div>
-            </>
-          ) : (
-            <div style={lineStyle(true)} className="w-full whitespace-pre-line">
-              {stripAssTags(options.monolingual_lang === "source" ? entry.text : entry.translated)}
-            </div>
-          )}
-        </div>
-      ))}
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -252,6 +269,7 @@ function StyleRow({
 
 export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
   const { t } = useTranslation();
+  const devMode = useDevModeStore((s) => s.devMode);
   const [format, setFormat] = useState<FormatKind>("srt");
   const [mode, setMode] = useState<ModeKind>("bilingual");
   const [monolingualLang, setMonolingualLang] = useState<MonoLang>("translated");
@@ -327,6 +345,25 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
       await api.exportSubtitle(fileToExport, outputPath, options);
       onOpenChange(false);
       toast.success(t("subtitle.exportSuccess"));
+      // 开发者模式：显示导出数据详情
+      if (devMode) {
+        const total = fileToExport.entries.length;
+        const targetLang = useTranslateStore.getState().targetLang;
+        const hasCjk = (s: string) => /[一-鿿]/.test(s);
+        const isUntranslated = (e: typeof fileToExport.entries[0]) =>
+          !e.translated
+          || e.translated.trim() === e.text.trim()
+          || (targetLang.startsWith("zh") && !hasCjk(e.translated) && !hasCjk(e.text))
+          || looksLikeSoundEffect(e.text) !== looksLikeSoundEffect(e.translated);
+        const translated = fileToExport.entries.filter((e) => e.translated && !e.failed && !isUntranslated(e)).length;
+        const failed = fileToExport.entries.filter((e) => e.failed).length;
+        const missing = fileToExport.entries.filter((e) => isUntranslated(e)).length;
+        const fromCache = fileToExport.entries.filter((e) => (e as any).from_cache).length;
+        toast.info(
+          `[导出] 格式=${format}, 模式=${mode}, 总计=${total}条, 已翻译=${translated}条, 失败=${failed}条, 未翻译=${missing}条, 缓存=${fromCache}条\n路径: ${outputPath}`,
+          { duration: 10000 }
+        );
+      }
     } catch (e) {
       error("导出失败:", e);
       toast.error(t("subtitle.exportFailed"));

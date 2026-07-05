@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Check, X, Plus, Trash2, ChevronDown, Download, Copy } from "lucide-react";
+import { Check, X, Plus, Trash2, Download, Copy } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
@@ -15,6 +15,10 @@ interface GlossaryConfirmDialogProps {
   onGlossaryChange: (g: GlossaryEntry[]) => void;
   onConfirm: () => void;
   onCancel: () => void;
+  /// 自动翻译模式：翻译已在后台进行，确认按钮变为"确认"仅关闭弹窗
+  autoTranslating?: boolean;
+  /// 翻译已完成：确认按钮变为禁用的"字幕翻译已完成"
+  translateDone?: boolean;
 }
 
 export function GlossaryConfirmDialog({
@@ -22,6 +26,8 @@ export function GlossaryConfirmDialog({
   onGlossaryChange,
   onConfirm,
   onCancel,
+  autoTranslating = false,
+  translateDone = false,
 }: GlossaryConfirmDialogProps) {
   const { t } = useTranslation();
   const [localGlossary, setLocalGlossary] = useState<GlossaryEntry[]>(glossary);
@@ -115,22 +121,13 @@ export function GlossaryConfirmDialog({
                 onChange={(e) => handleEdit(index, "english", e.target.value)}
                 placeholder="English"
               />
-              {entry.alternatives.length > 0 || entry.chinese.includes("/") ? (
-                <TagInput
-                  className="w-[40%]"
-                  value={entry.chinese}
-                  options={entry.alternatives}
-                  onChange={(value) => handleEdit(index, "chinese", value)}
-                  placeholder="中文"
-                />
-              ) : (
-                <Input
-                  className="w-[40%]"
-                  value={entry.chinese}
-                  onChange={(e) => handleEdit(index, "chinese", e.target.value)}
-                  placeholder="中文"
-                />
-              )}
+              <TagInput
+                className="w-[40%]"
+                value={entry.chinese}
+                options={entry.alternatives}
+                onChange={(value) => handleEdit(index, "chinese", value)}
+                placeholder="中文"
+              />
               <Button
                 size="sm"
                 variant="ghost"
@@ -164,11 +161,20 @@ export function GlossaryConfirmDialog({
           <div className="flex gap-2">
             <Button variant="outline" onClick={onCancel}>
               <X className="h-4 w-4 mr-1" />
-              {t("translate.glossaryCancel", "取消翻译")}
+              {autoTranslating
+                ? t("translate.glossaryCloseDialog", "关闭弹窗")
+                : t("translate.glossaryCancel", "取消翻译")}
             </Button>
-            <Button onClick={handleConfirm}>
+            <Button
+              onClick={handleConfirm}
+              disabled={translateDone || (autoTranslating && !translateDone)}
+            >
               <Check className="h-4 w-4 mr-1" />
-              {t("translate.glossaryConfirm", "确认并翻译")}
+              {translateDone
+                ? t("translate.glossaryTranslateDone", "字幕翻译已完成")
+                : autoTranslating
+                  ? t("translate.glossaryTranslating", "字幕翻译中")
+                  : t("translate.glossaryConfirm", "确认并翻译")}
             </Button>
           </div>
         </div>
@@ -177,12 +183,14 @@ export function GlossaryConfirmDialog({
   );
 }
 
-/// 标签输入框：用于多译名词，支持多个标签 + 下拉备选选择
-/// - 输入框内显示多个标签（按 / 分隔）
-/// - 点击标签进入编辑模式
-/// - 标签右侧有 X 可删除
-/// - 点击输入框内标签外的区域可输入新标签
-/// - 下拉框显示所有备选名字，点击即可切换选中/取消
+/// 标签输入框：用于多译名词，支持单个/多个标签 + 候选下拉
+/// - 输入框内显示 tag（按 / 分隔）
+/// - 只有一个 tag 时也显示 tag
+/// - 点击 tag 进入编辑模式
+/// - tag 右侧有 X 可删除
+/// - 点击输入框空白区域可输入新 tag
+/// - 下拉框只显示候选译名（options）
+/// - 没有候选译名（options 为空）时不显示下拉框
 function TagInput({
   className,
   value,
@@ -204,7 +212,8 @@ function TagInput({
   const newInputRef = useRef<HTMLInputElement>(null);
 
   const tags = value.split("/").map((s) => s.trim()).filter(Boolean);
-  const allOptions = Array.from(new Set([...tags, ...options])).filter(Boolean);
+  // 候选词去重，且不再包含已选 tag
+  const candidateOptions = Array.from(new Set(options.filter((o) => !tags.includes(o.trim())))).filter(Boolean);
 
   // 点击外部关闭下拉
   useEffect(() => {
@@ -259,11 +268,9 @@ function TagInput({
     setNewTagValue("");
   };
 
-  // 下拉选项切换
-  const toggleOption = (opt: string) => {
-    if (tags.includes(opt)) {
-      updateTags(tags.filter((t) => t !== opt));
-    } else {
+  // 下拉选项切换（选中候选词）
+  const selectOption = (opt: string) => {
+    if (!tags.includes(opt)) {
       updateTags([...tags, opt]);
     }
   };
@@ -273,8 +280,10 @@ function TagInput({
       <div
         className="flex flex-wrap items-center gap-1 min-h-9 px-2 py-1 border rounded-md bg-background cursor-text focus-within:ring-1 focus-within:ring-ring"
         onClick={() => {
-          setOpen(true);
           newInputRef.current?.focus();
+          if (candidateOptions.length > 0) {
+            setOpen(true);
+          }
         }}
       >
         {tags.map((tag, i) =>
@@ -332,27 +341,23 @@ function TagInput({
           onClick={(e) => e.stopPropagation()}
         />
       </div>
-      {open && (
+      {open && candidateOptions.length > 0 && (
         <div className="absolute z-50 top-full left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded-md border bg-popover shadow-md">
-          {allOptions.map((opt, i) => {
-            const checked = tags.includes(opt);
-            return (
-              <button
-                key={i}
-                type="button"
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent text-left"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleOption(opt);
-                }}
-              >
-                <span className={`flex h-4 w-4 items-center justify-center rounded border ${checked ? "bg-primary border-primary" : "border-input"}`}>
-                  {checked && <Check className="h-3 w-3 text-primary-foreground" />}
-                </span>
-                {opt}
-              </button>
-            );
-          })}
+          {candidateOptions.map((opt, i) => (
+            <button
+              key={i}
+              type="button"
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent text-left"
+              onClick={(e) => {
+                e.stopPropagation();
+                selectOption(opt);
+                setOpen(false);
+              }}
+            >
+              <span className="flex h-4 w-4 items-center justify-center rounded border border-input" />
+              {opt}
+            </button>
+          ))}
         </div>
       )}
     </div>
