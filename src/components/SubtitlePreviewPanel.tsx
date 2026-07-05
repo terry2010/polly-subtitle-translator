@@ -451,7 +451,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           // 单条翻译完成，立即更新（含翻译失败标记）
           store.updateEntry(index, { translated, failed });
         },
-        skipCache
+        skipCache,
+        undefined,
+        undefined,
+        store.file?.file_hash || undefined,
       );
     } catch (e: any) {
       error("翻译单条失败:", e);

@@ -1578,10 +1578,10 @@ function useClearCache() {
     // 清空当前已加载字幕的译文（内部同时清后端翻译缓存）
     const subtitleState = useSubtitleStore.getState();
     if (subtitleState.file) {
-      subtitleState.clearTranslations();
+      await subtitleState.clearTranslations();
     } else {
       // 没有加载字幕时，直接清后端缓存
-      await api.clearTranslateCache().catch(() => {});
+      await api.clearTranslateCache();
     }
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 2000);

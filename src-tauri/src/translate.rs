@@ -16,7 +16,7 @@ fn has_cjk(s: &str) -> bool {
 
 /// 判断文本是否为音效/环境声标记，如 [clattering continues] / [碰撞声持续] / [soft music]
 /// 规则：整段 trimmed 文本被一对 [] 包裹，或主要内容是方括号内的一个短语。
-fn looks_like_sound_effect(s: &str) -> bool {
+pub(crate) fn looks_like_sound_effect(s: &str) -> bool {
     let s = s.trim();
     if s.is_empty() {
         return false;
@@ -1490,6 +1490,10 @@ impl OpenAiProvider {
             if let Ok(json) = serde_json::from_str::<Vec<serde_json::Value>>(&json_content) {
                 let mut translations: std::collections::HashMap<usize, String> =
                     std::collections::HashMap::new();
+                // 检测 AI 是否拆分了条目：如果返回的 n 超出 expected_count，
+                // 说明 AI 把含多行的条目拆成了多个翻译（如 "Jerry:\nUhh" → n=1 "Jerry" + n=2 "Uhh"），
+                // 导致后续所有翻译错位。此时整批对齐失败，触发降级重试（batch_size=1 时无法拆分）。
+                let mut out_of_range = false;
                 for item in json {
                     if let (Some(n), Some(t)) = (
                         item.get("n").and_then(|v| v.as_u64()).map(|n| n as usize),
@@ -1497,8 +1501,19 @@ impl OpenAiProvider {
                     ) {
                         if n > 0 && n <= expected_count {
                             translations.insert(n, t.to_string());
+                        } else if n > expected_count {
+                            out_of_range = true;
                         }
                     }
+                }
+                if out_of_range {
+                    tracing::warn!(
+                        "JSON 解析：AI 返回了超出范围的编号（n > {}），可能拆分了条目，返回对齐失败",
+                        expected_count
+                    );
+                    return Err(AppError::TranslateAlignFailed {
+                        missing: expected_count,
+                    });
                 }
                 if translations.len() == expected_count {
                     let result: Vec<String> = (1..=expected_count)
@@ -1527,6 +1542,7 @@ impl OpenAiProvider {
                 ).unwrap();
                 let mut translations: std::collections::HashMap<usize, String> =
                     std::collections::HashMap::new();
+                let mut out_of_range = false;
                 for cap in re_json.captures_iter(&json_content) {
                     if let (Ok(n), Some(t)) = (cap[1].parse::<usize>(), cap.get(2)) {
                         if n > 0 && n <= expected_count {
@@ -1537,8 +1553,19 @@ impl OpenAiProvider {
                                 .replace("\\n", "\n")
                                 .replace("\\t", "\t");
                             translations.insert(n, text.trim().to_string());
+                        } else if n > expected_count {
+                            out_of_range = true;
                         }
                     }
+                }
+                if out_of_range {
+                    tracing::warn!(
+                        "JSON 正则提取：AI 返回了超出范围的编号（n > {}），可能拆分了条目，返回对齐失败",
+                        expected_count
+                    );
+                    return Err(AppError::TranslateAlignFailed {
+                        missing: expected_count,
+                    });
                 }
                 if !translations.is_empty() {
                     tracing::warn!(
@@ -1561,6 +1588,7 @@ impl OpenAiProvider {
             trimmed
         };
         let mut translations: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
+        let mut out_of_range = false;
         for line in parse_content.lines() {
             let line = line.trim();
             if line.is_empty() {
@@ -1571,8 +1599,19 @@ impl OpenAiProvider {
                 let text = captures.get(2).map(|m| m.as_str().trim()).unwrap_or("");
                 if num > 0 && num <= expected_count {
                     translations.insert(num, text.to_string());
+                } else if num > expected_count {
+                    out_of_range = true;
                 }
             }
+        }
+        if out_of_range {
+            tracing::warn!(
+                "编号解析：AI 返回了超出范围的编号（n > {}），可能拆分了条目，返回对齐失败",
+                expected_count
+            );
+            return Err(AppError::TranslateAlignFailed {
+                missing: expected_count,
+            });
         }
 
         // 3. 按编号顺序组装结果
@@ -2164,6 +2203,8 @@ pub struct TranslateScheduler<'a> {
     concurrency: usize,
     /// 限流策略：Qps 模式下请求间强制间隔，Concurrency 模式下纯并发控制
     rate_limit: RateLimitPolicy,
+    /// 字幕内容 hash，用于缓存隔离（空字符串=兼容旧调用方）
+    file_hash: String,
 }
 
 impl<'a> TranslateScheduler<'a> {
@@ -2180,6 +2221,7 @@ impl<'a> TranslateScheduler<'a> {
             my_gen: 0,
             concurrency: 1,
             rate_limit: RateLimitPolicy::Concurrency(1),
+            file_hash: String::new(),
         }
     }
 
@@ -2198,7 +2240,14 @@ impl<'a> TranslateScheduler<'a> {
             my_gen,
             concurrency: 1,
             rate_limit: RateLimitPolicy::Concurrency(1),
+            file_hash: String::new(),
         }
+    }
+
+    /// 设置字幕内容 hash（用于缓存隔离）
+    pub fn with_file_hash(mut self, file_hash: String) -> Self {
+        self.file_hash = file_hash;
+        self
     }
 
     /// 设置并发数和限流策略
@@ -2241,6 +2290,7 @@ impl<'a> TranslateScheduler<'a> {
                 source_lang,
                 target_lang,
                 &self.provider_name,
+                &self.file_hash,
             );
             if let Some(cached) = self.db.get_translate_cache(&cache_key)? {
                 // 缓存命中后做质量校验，忽略坏缓存重新翻译：
@@ -2342,6 +2392,7 @@ impl<'a> TranslateScheduler<'a> {
                     source_lang,
                     target_lang,
                     &self.provider_name,
+                    &self.file_hash,
                 );
 
                 if let Some(cached) = self.db.get_translate_cache(&cache_key)? {
@@ -2415,6 +2466,7 @@ impl<'a> TranslateScheduler<'a> {
                         source_lang,
                         target_lang,
                         &self.provider_name,
+                        &self.file_hash,
                     );
                     let _ = self.db.set_translate_cache(
                         &cache_key,
@@ -2431,7 +2483,7 @@ impl<'a> TranslateScheduler<'a> {
                     original: entry.text.clone(),
                     translated: restored,
                     from_cache: false,
-                    failed: any_failed || combined.is_empty() || same_as_orig || no_cjk,
+                    failed: any_failed || combined.is_empty() || same_as_orig || no_cjk || sound_mismatch,
                 };
                 if let Some(ref cb) = on_entry_done {
                     cb(&te);
@@ -2532,15 +2584,20 @@ impl<'a> TranslateScheduler<'a> {
 
                 let batch = &batches[batch_idx];
 
-                // 确保返回长度与批次一致（降级重试已尽力保证，但做兜底）
-                if translations.len() != batch.len() {
+                // 检测批次返回数量是否匹配：数量不匹配时，JSON 解析虽然用 n 字段对齐，
+                // 但 n 字段本身可能被 AI 写错（如重复、跳号），导致译文与原文错位。
+                // 错位的译文可能通过 failed 检查（非空、有 CJK、非音效）被错误缓存，
+                // 污染后续翻译和导出再导入的统计。因此数量不匹配时整批不缓存。
+                let batch_count_mismatch = translations.len() != batch.len();
+                if batch_count_mismatch {
                     tracing::warn!(
-                        "翻译批次 {} 返回长度异常：期望 {}，实际 {}",
+                        "翻译批次 {} 返回长度异常：期望 {}，实际 {}，整批标记为不缓存",
                         batch_idx + 1,
                         batch.len(),
                         translations.len()
                     );
                 }
+                // 确保返回长度与批次一致（降级重试已尽力保证，但做兜底）
                 let mut final_translations: Vec<String> = translations;
                 while final_translations.len() < batch.len() {
                     final_translations.push(String::new());
@@ -2566,15 +2623,18 @@ impl<'a> TranslateScheduler<'a> {
                         || (target_lang.starts_with("zh")
                             && !has_cjk(&restored)
                             && !has_cjk(orig_text))
-                        || sound_mismatch;
+                        || sound_mismatch
+                        || batch_count_mismatch;
 
-                    if !failed {
+                    // 数量不匹配的批次整批不缓存（防止错位译文污染缓存）
+                    if !failed && !batch_count_mismatch {
                         // 缓存 key 用原始文本（与查询时一致），而非占位符保护后的文本
                         let cache_key = translate_cache_key(
                             orig_text,
                             source_lang,
                             target_lang,
                             &self.provider_name,
+                            &self.file_hash,
                         );
                         let _ = self.db.set_translate_cache(
                             &cache_key,

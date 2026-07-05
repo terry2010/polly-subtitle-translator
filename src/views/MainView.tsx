@@ -404,23 +404,25 @@ export default function MainView() {
     const cached = extractCacheRef.current.get(selectedSubtitleStream.index);
     if (cached) {
       subtitleStore.setFile(cached);
-      // 查询翻译缓存
-      const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
-      try {
-        const cachedTr = await api.getCachedTranslations(
-          cached.entries, sourceLang, targetLang, provider,
-          provider === "openai" ? (serviceId || undefined) : undefined,
-          provider === "openai" ? (model || undefined) : undefined,
-        );
-        if (cachedTr && cachedTr.length > 0) {
-          const entries = cached.entries.map((e: any) => {
-            const tr = cachedTr.find((c) => c.index === e.index);
-            return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
-          });
-          subtitleStore.setFile({ ...cached, entries });
+      // 查询翻译缓存（双语文件跳过，原因同 loadSubtitle）
+      if (!subtitleStore.bilingualDetect?.is_bilingual) {
+        const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
+        try {
+          const cachedTr = await api.getCachedTranslations(
+            cached.entries, sourceLang, targetLang, provider,
+            provider === "openai" ? (serviceId || undefined) : undefined,
+            provider === "openai" ? (model || undefined) : undefined,
+          );
+          if (cachedTr && cachedTr.length > 0) {
+            const entries = cached.entries.map((e: any) => {
+              const tr = cachedTr.find((c) => c.index === e.index);
+              return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
+            });
+            subtitleStore.setFile({ ...cached, entries });
+          }
+        } catch (e) {
+          warn("查询翻译缓存失败:", e);
         }
-      } catch (e) {
-        warn("查询翻译缓存失败:", e);
       }
       return;
     }
@@ -458,8 +460,9 @@ export default function MainView() {
       ]);
 
       // 提取完成后查询翻译缓存，自动填充已翻译的条目
+      // 双语文件跳过缓存查询（原因同 loadSubtitle）
       const subtitleState = useSubtitleStore.getState();
-      if (subtitleState.file) {
+      if (subtitleState.file && !subtitleState.bilingualDetect?.is_bilingual) {
         const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
         try {
           const cached = await api.getCachedTranslations(
@@ -477,7 +480,9 @@ export default function MainView() {
         } catch (e) {
           warn("查询翻译缓存失败:", e);
         }
-        // 缓存提取结果
+      }
+      // 缓存提取结果
+      {
         const finalState = useSubtitleStore.getState();
         if (finalState.file) {
           extractCacheRef.current.set(selectedSubtitleStream.index, finalState.file);
@@ -1072,16 +1077,16 @@ export default function MainView() {
       },
       undefined,
       glossary,
-      nameTagging
+      nameTagging,
     );
     if (result && result.translations.length > 0) {
-      // 确保所有结果都更新（包括可能遗漏的），同步 failed 标记
+      // 确保所有结果都更新（包括可能遗漏的），同步 failed 和 from_cache 标记
       const entries = subtitleStore.file.entries.map((e) => {
         const tr = result.translations.find((r) => r.index === e.index);
         if (!tr) return e;
-        // 已有译文且非失败的保留，否则用结果覆盖（含 failed）
+        // 已有译文且非失败的保留，否则用结果覆盖（含 failed 和 from_cache）
         if (e.translated && !e.failed) return e;
-        return { ...e, translated: tr.translated, failed: tr.failed };
+        return { ...e, translated: tr.translated, failed: tr.failed, from_cache: tr.from_cache };
       });
       subtitleStore.setFile({ ...subtitleStore.file, entries });
     }

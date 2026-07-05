@@ -3,6 +3,7 @@
 // 统一内部结构 SubtitleEntry，对应需求文档 §7 parse_subtitle 返回值
 
 use crate::error::AppError;
+use crate::translate::looks_like_sound_effect;
 use serde::{Deserialize, Serialize};
 
 /// 字幕格式
@@ -39,6 +40,11 @@ pub struct SubtitleFile {
     pub entries: Vec<SubtitleEntry>,
     pub raw_header: Option<String>, // ass 的 [Script Info] + [V4+ Styles]，srt/vtt 为 None
     pub source_path: Option<String>,
+    /// 字幕内容 hash（sha256），基于所有条目的 index+时间轴+文本拼接计算。
+    /// 用于翻译缓存隔离：不同字幕（即使含相同句子）不会命中彼此的缓存。
+    /// 不用文件路径（文件可能被移动/重命名/导出）。
+    #[serde(default)]
+    pub file_hash: String,
 }
 
 // === SECTION 1 END ===
@@ -391,9 +397,10 @@ pub fn split_bilingual(file: &mut SubtitleFile, _split_mode: SplitMode) {
         if let Some((a, b)) = split_by_style_tags(&normalized) {
             let clean_a = clean_split_text(&a);
             let clean_b = clean_split_text(&b);
-            // 两方都必须有实际文字内容（不能只是标点/空括号如 "[, , ]"）
-            let a_has_text = clean_a.chars().any(|c| c.is_alphanumeric());
-            let b_has_text = clean_b.chars().any(|c| c.is_alphanumeric());
+            // 两方都必须有实际文字内容（不能只是空白）
+            // 用非空白判断，避免 ♪♪、[Zapping] 等音效/符号内容被误判为无文字
+            let a_has_text = clean_a.chars().any(|c| !c.is_whitespace());
+            let b_has_text = clean_b.chars().any(|c| !c.is_whitespace());
             if a_has_text && b_has_text {
                 // 根据实际语言判断哪个是原文哪个是译文
                 let a_has_cjk = has_cjk_chars(&clean_a);
@@ -740,6 +747,7 @@ pub fn parse_srt(content: &str) -> Result<SubtitleFile, AppError> {
         entries,
         raw_header: None,
         source_path: None,
+        file_hash: String::new(),
     })
 }
 
@@ -893,6 +901,7 @@ pub fn parse_vtt(content: &str) -> Result<SubtitleFile, AppError> {
         entries,
         raw_header: None,
         source_path: None,
+        file_hash: String::new(),
     })
 }
 
@@ -1011,6 +1020,7 @@ pub fn parse_ass(content: &str) -> Result<SubtitleFile, AppError> {
         entries,
         raw_header: Some(header),
         source_path: None,
+        file_hash: String::new(),
     })
 }
 
@@ -1099,6 +1109,7 @@ fn parse_ass_fallback(content: &str) -> Result<SubtitleFile, AppError> {
         entries,
         raw_header: Some(header),
         source_path: None,
+        file_hash: String::new(),
     })
 }
 
@@ -1187,13 +1198,32 @@ pub fn detect_format(path: &str) -> Result<SubtitleFormat, AppError> {
     }
 }
 
+/// 计算字幕内容 hash（sha256，hex 编码）
+/// 基于所有条目的 index + start_ms + end_ms + text 拼接计算，
+/// 确保不同字幕（即使含相同句子）hash 不同，用于翻译缓存隔离。
+/// 不含 translated 字段（翻译前后 hash 不变），不含 source_path（文件可移动）。
+pub fn compute_subtitle_hash(entries: &[SubtitleEntry]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for e in entries {
+        hasher.update(e.index.to_le_bytes());
+        hasher.update(e.start_ms.to_le_bytes());
+        hasher.update(e.end_ms.to_le_bytes());
+        hasher.update(e.text.as_bytes());
+        hasher.update(b"\n");
+    }
+    hex::encode(hasher.finalize())
+}
+
 /// 统一解析入口：按格式解析字幕文件
 pub fn parse_subtitle(content: &str, format: &SubtitleFormat) -> Result<SubtitleFile, AppError> {
-    match format {
-        SubtitleFormat::Srt => parse_srt(content),
-        SubtitleFormat::Vtt => parse_vtt(content),
-        SubtitleFormat::Ass | SubtitleFormat::Ssa => parse_ass(content),
-    }
+    let mut file = match format {
+        SubtitleFormat::Srt => parse_srt(content)?,
+        SubtitleFormat::Vtt => parse_vtt(content)?,
+        SubtitleFormat::Ass | SubtitleFormat::Ssa => parse_ass(content)?,
+    };
+    file.file_hash = compute_subtitle_hash(&file.entries);
+    Ok(file)
 }
 
 /// 统一渲染入口：按格式渲染字幕文件
@@ -1384,10 +1414,12 @@ fn build_entry_text(entry: &SubtitleEntry, options: &ExportOptions) -> String {
             };
             // 翻译失败的条目只输出一行原文
             // 失败判定：entry.failed 标记、译文为空、译文与原文相同、
-            // 译文和原文都无 CJK（split_bilingual 无法区分语言→无法拆分）
+            // 译文和原文都无 CJK（split_bilingual 无法区分语言→无法拆分）、
+            // 音效标记类型不一致（AI 错位翻译，如原文非音效但译文是音效）
             // 这样重新导入时 split_bilingual 无法拆分（单行），translated 保持空 → 正确显示未翻译
             let both_no_cjk = !has_cjk_chars(&top) && !has_cjk_chars(&bottom);
-            if entry.failed || top.is_empty() || top == bottom || both_no_cjk {
+            let sound_mismatch = looks_like_sound_effect(&top) != looks_like_sound_effect(&bottom);
+            if entry.failed || top.is_empty() || top == bottom || both_no_cjk || sound_mismatch {
                 bottom.clone()
             } else if bottom.is_empty() {
                 top.clone()
@@ -1541,10 +1573,12 @@ fn render_ass_with_options(file: &SubtitleFile, options: &ExportOptions) -> Stri
                 let second_trim = second.trim();
                 // 翻译失败的条目：输出空的 Primary + Secondary 原文
                 // 失败判定：entry.failed 标记、译文为空、译文与原文相同、
-                // 译文和原文都无 CJK（split_bilingual 无法区分语言→无法拆分）
+                // 译文和原文都无 CJK（split_bilingual 无法区分语言→无法拆分）、
+                // 音效标记类型不一致（AI 错位翻译）
                 // 重新导入时 split_by_style_tags 识别 Primary 为空 → translated 留空 → 正确显示未翻译
                 let both_no_cjk = !has_cjk_chars(&first) && !has_cjk_chars(&second);
-                let is_failed = entry.failed || first_trim.is_empty() || first_trim == second_trim || both_no_cjk;
+                let sound_mismatch = looks_like_sound_effect(first_trim) != looks_like_sound_effect(second_trim);
+                let is_failed = entry.failed || first_trim.is_empty() || first_trim == second_trim || both_no_cjk || sound_mismatch;
                 let text = if first_trim.is_empty() && second_trim.is_empty() {
                     String::new()
                 } else if is_failed {
@@ -1931,6 +1965,7 @@ Dialogue: 0,0:00:06.92,0:00:08.38,Default,,0,0,0,,<font size=\"24\">因为失业
             }],
             raw_header: None,
             source_path: None,
+            file_hash: String::new(),
         };
         let opts = ExportOptions {
             format: SubtitleFormat::Ass,
@@ -2159,5 +2194,93 @@ Dialogue: 0,0:03:42.30,0:03:43.76,Primary,,0,0,0,,{\\rPrimary}里克的头：哦
         assert!(!e.text.contains("夏季"), "text 不应含中文：{}", e.text);
         assert!(!e.translated.contains("murdered"), "translated 不应含英文翻译：{}", e.translated);
         assert!(!e.translated.contains("rSecondary"), "translated 不应含残留标签：{}", e.translated);
+    }
+
+    /// 导出→重新导入的一致性测试：
+    /// 构造含各类失败条目（音效错位、♪♪、译文=原文、英文原样、failed=false 但音效错位）的字幕，
+    /// 分别导出为 SRT/ASS/VTT，再解析+拆分，验证三种格式识别出的"未翻译"条目数一致。
+    /// 特别覆盖：entry.failed=false 但译文/原文音效类型不一致的情况
+    /// （Path 1 旧 bug：failed 字段缺少 sound_mismatch，导致导出双行→重新导入后各格式未翻译数不一致）
+    #[test]
+    fn test_roundtrip_failed_entries_consistent_across_formats() {
+        // 构造测试条目：混合正常译文和各类失败情形
+        let make = |i: usize, text: &str, translated: &str, failed: bool| SubtitleEntry {
+            index: i,
+            start_ms: (i as i64) * 2000,
+            end_ms: (i as i64) * 2000 + 1800,
+            text: text.to_string(),
+            translated: translated.to_string(),
+            style: None,
+            failed,
+            from_cache: false,
+        };
+        let entries = vec![
+            make(0, "Hello world", "你好世界", false),            // 正常
+            make(1, "How are you?", "你好吗？", false),           // 正常
+            make(2, "♪♪", "♪♪", true),                            // 音乐符号（失败）
+            make(3, "See you all in a week!", "[吞咽声]", true),   // 音效错位（failed=true）
+            make(4, "[ Zapping ]", "[ Zapping ]", true),          // 音效原样（失败）
+            make(5, "UGG! Glugg UGG!", "UGG! Glugg UGG!", true),  // 译文=原文（失败）
+            make(6, "Guest house is here.", "客房在这里。", false), // 正常
+            // 关键：failed=false 但译文是音效、原文不是音效
+            // 旧 bug：build_entry_text 不检查 sound_mismatch → 输出双行 → SRT/VTT 重新导入后能拆分
+            //         但 ASS 也能拆分 → 各格式未翻译数不一致
+            // 修复后：build_entry_text 检查 sound_mismatch → 输出单行 → 三种格式一致
+            make(7, "you need every week.", "[碰撞声持续]", false),
+        ];
+        // 期望的"失败/未翻译"数：index 2,3,4,5,7 共 5 条
+        let expected_untranslated = 5;
+
+        let mk_opts = |fmt: SubtitleFormat| ExportOptions {
+            format: fmt,
+            mode: ExportMode::Bilingual,
+            monolingual_lang: None,
+            bilingual_translated_first: Some(true),
+            ass_style: None,
+            video_width: Some(1280),
+            video_height: Some(720),
+        };
+
+        // 判定"未翻译"：与前端 isUntranslated 逻辑一致（含音效错位检查）
+        let is_untranslated = |e: &SubtitleEntry| -> bool {
+            e.translated.trim().is_empty()
+                || e.translated.trim() == e.text.trim()
+                || (!has_cjk_chars(&e.translated) && !has_cjk_chars(&e.text))
+                || looks_like_sound_effect(&e.text) != looks_like_sound_effect(&e.translated)
+        };
+
+        let cases: [(SubtitleFormat, fn(&str) -> Result<SubtitleFile, AppError>); 3] = [
+            (SubtitleFormat::Srt, parse_srt),
+            (SubtitleFormat::Vtt, parse_vtt),
+            (SubtitleFormat::Ass, parse_ass),
+        ];
+        for (fmt, parse) in cases {
+            let file = SubtitleFile {
+                format: fmt.clone(),
+                entries: entries.clone(),
+                raw_header: None,
+                source_path: None,
+                file_hash: String::new(),
+            };
+            let exported = export_subtitle(&file, &mk_opts(fmt.clone()));
+            let mut reparsed = parse(&exported).unwrap();
+            assert_eq!(
+                reparsed.entries.len(),
+                entries.len(),
+                "格式 {:?} 重新解析条目数不一致",
+                fmt
+            );
+            // 拆分双语
+            split_bilingual(&mut reparsed, SplitMode::EvenFirst);
+            let untranslated = reparsed.entries.iter().filter(|e| is_untranslated(e)).count();
+            assert_eq!(
+                untranslated, expected_untranslated,
+                "格式 {:?} 未翻译数应为 {}，实际 {}（条目: {:?}）",
+                fmt,
+                expected_untranslated,
+                untranslated,
+                reparsed.entries.iter().map(|e| (e.text.clone(), e.translated.clone())).collect::<Vec<_>>()
+            );
+        }
     }
 }
