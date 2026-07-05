@@ -269,6 +269,8 @@ pub fn split_bilingual_subtitle(
     split_mode: subtitle::SplitMode,
 ) -> IpcResult<subtitle::SubtitleFile> {
     subtitle::split_bilingual(&mut file, split_mode);
+    // 拆分后 entry.text 变为单语原文，内容已改变，需重新计算 hash
+    file.file_hash = subtitle::compute_subtitle_hash(&file.entries);
     ipc_result(Ok(file))
 }
 
@@ -433,6 +435,8 @@ pub async fn get_supported_target_langs(
 /// skip_cache: true 时跳过缓存查询，强制重新请求 API（用于"重新翻译"）
 /// glossary: 译名表 [(EnglishName, ChineseTranslation)]，注入到 AI 翻译的 system prompt
 /// name_tagging: 是否要求 AI 在译文中用 <name=En>Zh</name> 标记人名（用于后处理一致性检查）
+/// file_hash 由后端从 entries 直接计算（compute_subtitle_hash），不依赖前端传参，
+/// 确保前端编辑条目后 hash 自动更新，避免陈旧 hash 污染缓存。
 #[tauri::command]
 pub async fn translate_subtitle(
     entries: Vec<subtitle::SubtitleEntry>,
@@ -608,6 +612,10 @@ pub async fn translate_subtitle(
         (policy, None) => policy,
     };
 
+    // 从 entries 直接计算字幕内容 hash，用于缓存隔离
+    // 不依赖前端传参，确保前端编辑条目后 hash 自动更新
+    let file_hash = subtitle::compute_subtitle_hash(&entries);
+
     let scheduler = translate::TranslateScheduler::with_cancel_token(
         &db,
         prov_instance,
@@ -615,6 +623,7 @@ pub async fn translate_subtitle(
         cancel_token.inner().clone(),
         my_gen,
     )
+    .with_file_hash(file_hash)
     .with_concurrency_and_rate_limit(
         db.get_config("translate_concurrency")
             .map_err(to_ipc_err)?
@@ -802,6 +811,7 @@ pub async fn extract_names(
 }
 
 /// get_cached_translations：查询已缓存的翻译结果（不调用 API）
+/// file_hash 由后端从 entries 直接计算，确保与 translate_subtitle 使用相同的 hash
 #[tauri::command]
 pub async fn get_cached_translations(
     entries: Vec<subtitle::SubtitleEntry>,
@@ -826,6 +836,9 @@ pub async fn get_cached_translations(
         prov.as_str().to_string()
     };
 
+    // 从 entries 直接计算 hash，与 translate_subtitle 一致
+    let file_hash = subtitle::compute_subtitle_hash(&entries);
+
     // 获取凭据（缓存查询不需要凭据，但需要 provider_name）
     let provider_name_log = provider_name.clone();
     let scheduler = translate::TranslateScheduler::new(
@@ -833,7 +846,8 @@ pub async fn get_cached_translations(
         std::sync::Arc::new(translate::BaiduProvider::new(String::new(), String::new()))
             as std::sync::Arc<dyn translate::TranslateProviderTrait + Send + Sync>,
         provider_name,
-    );
+    )
+    .with_file_hash(file_hash);
 
     let cached = scheduler
         .get_cached_entries(&entries, &source_lang, &target_lang)

@@ -156,7 +156,7 @@ export default function App() {
         // 翻译
         const subtitleState = useSubtitleStore.getState();
         if (subtitleState.file) {
-          const result = await startTranslate(subtitleState.file.entries);
+          const result = await startTranslate(subtitleState.file.entries, undefined, undefined, undefined, undefined, subtitleState.file.file_hash || undefined);
           if (result) {
             const entries = subtitleState.file.entries.map((e) => {
               const tr = result.translations.find((r) => r.index === e.index);
@@ -270,6 +270,58 @@ export default function App() {
   const updateDialogOpen = useUpdateStore((s) => s.dialogOpen);
   const updateInfo = useUpdateStore((s) => s.updateInfo);
   const closeUpdateDialog = useUpdateStore((s) => s.closeDialog);
+
+  // 开发模式下右键单击 toast 复制内容到剪贴板
+  // sonner 的 toast 渲染在固定容器 [data-sonner-toaster] 中，
+  // 用全局捕获 contextmenu 事件，命中 toast 元素时复制其文本
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (!useDevModeStore.getState().devMode) return;
+      const target = e.target as HTMLElement;
+      // 向上查找最近的 toast 元素（sonner 的 toast 有 [data-sonner-toast] 属性）
+      const toastEl = target.closest("[data-sonner-toast]") as HTMLElement | null;
+      if (!toastEl) return;
+      e.preventDefault();
+      const text = toastEl.innerText || toastEl.textContent || "";
+      if (!text) return;
+      // 优先用 navigator.clipboard API，失败时回退到 execCommand('copy')
+      // Tauri WebView2 中 navigator.clipboard 可能因安全策略不可用
+      const copyToClipboard = (str: string): Promise<boolean> => {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(str).then(() => true).catch(() => false);
+        }
+        return Promise.resolve(false);
+      };
+      const fallbackCopy = (str: string): boolean => {
+        try {
+          const textarea = document.createElement("textarea");
+          textarea.value = str;
+          textarea.style.position = "fixed";
+          textarea.style.opacity = "0";
+          textarea.style.left = "-9999px";
+          document.body.appendChild(textarea);
+          textarea.focus();
+          textarea.select();
+          const ok = document.execCommand("copy");
+          document.body.removeChild(textarea);
+          return ok;
+        } catch {
+          return false;
+        }
+      };
+      copyToClipboard(text).then((ok) => {
+        if (ok) {
+          toast.success("已复制 toast 内容", { duration: 1500 });
+        } else if (fallbackCopy(text)) {
+          toast.success("已复制 toast 内容", { duration: 1500 });
+        } else {
+          toast.error("复制失败", { duration: 1500 });
+        }
+      });
+    };
+    document.addEventListener("contextmenu", handler, true);
+    return () => document.removeEventListener("contextmenu", handler, true);
+  }, []);
 
   return (
     <>

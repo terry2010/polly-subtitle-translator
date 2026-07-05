@@ -99,6 +99,8 @@ export interface SubtitleFile {
   entries: SubtitleEntry[];
   raw_header: string | null;
   source_path: string | null;
+  /** 字幕内容 hash（sha256），用于翻译缓存隔离 */
+  file_hash?: string;
 }
 
 // === 双语字幕检测 ===

@@ -176,6 +176,12 @@ CREATE TABLE IF NOT EXISTS recent_files (
 CREATE INDEX IF NOT EXISTS idx_recent_files_opened_at
     ON recent_files(opened_at DESC);
 "#,
+}, Migration {
+    version: 2,
+    sql: r#"
+-- v2: translate_cache_key 算法变更（加入 file_hash），旧缓存无法命中，清空旧缓存
+DELETE FROM translate_cache;
+"#,
 }];
 
 // === SECTION 2 END ===
@@ -365,17 +371,69 @@ impl Database {
     /// 清除"假翻译"缓存条目：
     /// 1. 译文=原文（AI 未实际翻译，原样返回）
     /// 2. 目标语言是中文但译文无 CJK 字符（且原文也无 CJK）
-    ///    注意：用 `[一-鿿]` 精确匹配 CJK 范围，而非 `[^ -~]`（后者会把 ♪ 等非 ASCII 也算作"有 CJK"）
+    /// 3. 音效标记类型不一致（AI 错位翻译）
+    /// 用 Rust 逐条判断，避免 SQLite GLOB 对 Unicode 范围支持不完整。
     pub fn purge_fake_translate_cache(&self) -> Result<usize, AppError> {
-        self.with_conn(|conn| {
-            let count = conn.execute(
-                "DELETE FROM translate_cache WHERE \
-                 TRIM(translated_text) = TRIM(source_text) \
-                 OR (target_lang LIKE 'zh%' \
-                     AND translated_text NOT GLOB '*[一-鿿]*' \
-                     AND source_text NOT GLOB '*[一-鿿]*')",
-                [],
+        fn has_cjk_chars(s: &str) -> bool {
+            s.chars().any(|c| {
+                let code = c as u32;
+                (0x4E00..=0x9FFF).contains(&code)
+            })
+        }
+        fn looks_like_sound_effect(s: &str) -> bool {
+            let s = s.trim();
+            if s.is_empty() {
+                return false;
+            }
+            if s.starts_with('[') && s.ends_with(']') {
+                return true;
+            }
+            let re = regex::Regex::new(r"^\s*\[[^\]]+\]\s*(.*)$").unwrap();
+            if let Some(caps) = re.captures(s) {
+                let rest = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                if !rest.is_empty() && rest.starts_with('[') && rest.ends_with(']') {
+                    return true;
+                }
+            }
+            false
+        }
+        let rows_to_delete: Vec<String> = self.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT cache_key, source_text, translated_text, target_lang FROM translate_cache",
             )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
+            let mut keys = Vec::new();
+            for row in rows {
+                let (key, source, translated, target): (String, String, String, String) = row?;
+                let trimmed_source = source.trim();
+                let trimmed_translated = translated.trim();
+                let same = trimmed_translated == trimmed_source;
+                let no_cjk = target.starts_with("zh")
+                    && !has_cjk_chars(&translated)
+                    && !has_cjk_chars(&source);
+                let sound_mismatch = looks_like_sound_effect(&source) != looks_like_sound_effect(&translated);
+                if same || no_cjk || sound_mismatch {
+                    keys.push(key);
+                }
+            }
+            Ok(keys)
+        })?;
+        let count = rows_to_delete.len();
+        if count == 0 {
+            return Ok(0);
+        }
+        self.with_conn(|conn| {
+            let mut stmt = conn.prepare("DELETE FROM translate_cache WHERE cache_key = ?1")?;
+            for key in &rows_to_delete {
+                stmt.execute(rusqlite::params![key])?;
+            }
             Ok(count)
         })
     }
@@ -403,12 +461,14 @@ pub struct HistoryRecord {
     pub detail: Option<String>,
 }
 
-/// 计算翻译缓存 key：sha256(原文含标记 + 源语言 + 目标语言 + provider)
+/// 计算翻译缓存 key：sha256(原文含标记 + 源语言 + 目标语言 + provider + file_hash)
+/// file_hash 基于字幕内容，确保不同字幕文件的相同句子不会命中同一缓存。
 pub fn translate_cache_key(
     source_text: &str,
     source_lang: &str,
     target_lang: &str,
     provider: &str,
+    file_hash: &str,
 ) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
@@ -419,6 +479,8 @@ pub fn translate_cache_key(
     hasher.update(target_lang.as_bytes());
     hasher.update(b"|");
     hasher.update(provider.as_bytes());
+    hasher.update(b"|");
+    hasher.update(file_hash.as_bytes());
     hex::encode(hasher.finalize())
 }
 
@@ -428,22 +490,30 @@ mod tests {
 
     #[test]
     fn test_cache_key_deterministic() {
-        let key1 = translate_cache_key("hello", "en", "zh", "baidu");
-        let key2 = translate_cache_key("hello", "en", "zh", "baidu");
+        let key1 = translate_cache_key("hello", "en", "zh", "baidu", "hash1");
+        let key2 = translate_cache_key("hello", "en", "zh", "baidu", "hash1");
         assert_eq!(key1, key2);
     }
 
     #[test]
     fn test_cache_key_differs_by_provider() {
-        let key1 = translate_cache_key("hello", "en", "zh", "baidu");
-        let key2 = translate_cache_key("hello", "en", "zh", "google");
+        let key1 = translate_cache_key("hello", "en", "zh", "baidu", "hash1");
+        let key2 = translate_cache_key("hello", "en", "zh", "google", "hash1");
         assert_ne!(key1, key2);
     }
 
     #[test]
     fn test_cache_key_differs_by_text() {
-        let key1 = translate_cache_key("hello", "en", "zh", "baidu");
-        let key2 = translate_cache_key("world", "en", "zh", "baidu");
+        let key1 = translate_cache_key("hello", "en", "zh", "baidu", "hash1");
+        let key2 = translate_cache_key("world", "en", "zh", "baidu", "hash1");
+        assert_ne!(key1, key2);
+    }
+
+    #[test]
+    fn test_cache_key_differs_by_file_hash() {
+        // 相同句子、相同 provider，但不同字幕文件 → 不同 cache key
+        let key1 = translate_cache_key("hello", "en", "zh", "baidu", "fileA_hash");
+        let key2 = translate_cache_key("hello", "en", "zh", "baidu", "fileB_hash");
         assert_ne!(key1, key2);
     }
 
@@ -454,7 +524,9 @@ mod tests {
     /// 创建内存测试数据库并执行迁移
     fn test_db() -> Database {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        for migration in MIGRATIONS {
+            conn.execute_batch(migration.sql).unwrap();
+        }
         Database { conn: Mutex::new(conn) }
     }
 
@@ -571,7 +643,7 @@ mod tests {
     #[test]
     fn test_translate_cache_set_get() {
         let db = test_db();
-        let key = translate_cache_key("hello", "en", "zh", "baidu");
+        let key = translate_cache_key("hello", "en", "zh", "baidu", "hash1");
         // 初始无缓存
         assert_eq!(db.get_translate_cache(&key).unwrap(), None);
         // 写入缓存
@@ -608,11 +680,11 @@ mod tests {
         let db = test_db();
         // 再次执行 migrate 不应报错
         db.migrate().unwrap();
-        // schema_migrations 应只有一条 v1
+        // schema_migrations 应有 v1 和 v2 两条
         let count: i64 = db.with_conn(|conn| {
             Ok(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))?)
         }).unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
     }
 
     // === SECTION 9 END ===

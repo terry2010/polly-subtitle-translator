@@ -133,24 +133,32 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
         warn("双语检测失败:", e);
       }
       // 查询翻译缓存，自动填充已翻译的条目
-      try {
-        const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
-        const cached = await api.getCachedTranslations(
-          file.entries, sourceLang, targetLang, provider,
-          provider === "openai" ? (serviceId || undefined) : undefined,
-          provider === "openai" ? (model || undefined) : undefined,
-        );
-        if (cached && cached.length > 0) {
-          const currentState = get();
-          if (!currentState.file) return;
-          const entries = currentState.file.entries.map((e) => {
-            const tr = cached.find((c) => c.index === e.index);
-            return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
-          });
-          set({ file: { ...currentState.file, entries } });
+      // 双语文件跳过缓存查询：双语文件中失败条目只输出原文（1行），
+      // 其文本与原始单语条目的cache key相同，会被错误填入旧缓存译文，
+      // 导致"未翻译"数不一致（SRT/VTT有缓存命中而ASS因样式标签无命中）。
+      // 双语文件的翻译状态已编码在格式中（1行=失败，2行=成功），无需缓存补充。
+      const isBilingual = get().bilingualDetect?.is_bilingual;
+      if (!isBilingual) {
+        try {
+          const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
+          const cached = await api.getCachedTranslations(
+            file.entries, sourceLang, targetLang, provider,
+            provider === "openai" ? (serviceId || undefined) : undefined,
+            provider === "openai" ? (model || undefined) : undefined,
+            file.file_hash || undefined,
+          );
+          if (cached && cached.length > 0) {
+            const currentState = get();
+            if (!currentState.file) return;
+            const entries = currentState.file.entries.map((e) => {
+              const tr = cached.find((c) => c.index === e.index);
+              return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
+            });
+            set({ file: { ...currentState.file, entries } });
+          }
+        } catch (e) {
+          warn("查询翻译缓存失败:", e);
         }
-      } catch (e) {
-        warn("查询翻译缓存失败:", e);
       }
     } catch (e: any) {
       const msg = formatIpcError(e);
@@ -440,14 +448,19 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
   setReplaceQuery: (q) => set({ replaceQuery: q }),
   setFindTarget: (target) => set({ findTarget: target, findMatchCount: 0, findCurrentMatch: 0, findMatchEntryIndex: null }),
 
-  clearTranslations: () => {
+  clearTranslations: async () => {
     const state = get();
     if (!state.file) return;
     const undoPatch = pushUndo(state);
-    const entries = state.file.entries.map((e) => ({ ...e, translated: "" }));
+    // 清空译文的同时重置 from_cache 和 failed 标记，
+    // 否则清除缓存前从缓存加载的条目会残留 from_cache=true，
+    // 导致导出统计误报"缓存=N条"。
+    const entries = state.file.entries.map((e) => ({
+      ...e, translated: "", from_cache: false, failed: false,
+    }));
     set({ ...undoPatch, file: { ...state.file, entries } });
     // 同时清除后端翻译缓存，避免重新翻译时读取旧的错位缓存
-    api.clearTranslateCache().catch(() => {});
+    await api.clearTranslateCache();
   },
 
   splitBilingual: async () => {
