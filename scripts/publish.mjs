@@ -519,6 +519,14 @@ async function main() {
     }
   }
 
+  // 私钥密码：优先环境变量/参数，其次密码文件
+  if (!PRIVATE_KEY_PASSWORD) {
+    PRIVATE_KEY_PASSWORD = tryReadPasswordFile();
+    if (PRIVATE_KEY_PASSWORD) {
+      console.log(`  ✓ 从密码文件读取私钥密码: ${PRIVATE_KEY_PASSWORD_FILE}`);
+    }
+  }
+
   // 1. 更新版本号
   updateVersion(version);
 
