@@ -81,6 +81,11 @@ async fn run_state_machine(
     let reset = std::env::var("E2E_RESET").map(|v| v == "1" || v == "true").unwrap_or(false);
     if reset {
         TestState::clear(&fixture.name, name_precision);
+        // 同时清除翻译缓存，避免上一轮运行的陈旧缓存导致缓存恢复不一致
+        match db.clear_translate_cache() {
+            Ok(n) => eprintln!("  [状态] 已清除翻译缓存 ({} 条)", n),
+            Err(e) => eprintln!("  [状态] 清除翻译缓存失败: {:?}", e),
+        }
         eprintln!("  [状态] 已清除状态，从头开始");
     }
 
