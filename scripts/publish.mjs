@@ -43,7 +43,19 @@ const notesArg = args.find(a => !a.startsWith("--") && a !== versionArg);
 // === 配置 ===
 let GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const PRIVATE_KEY_PATH = process.env.TAURI_SIGNING_PRIVATE_KEY_PATH || join(homedir(), ".tauri", "ai-subtrans.key");
-let PRIVATE_KEY_PASSWORD = process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || passwordArg;
+const PRIVATE_KEY_PASSWORD_FILE = join(homedir(), ".tauri", "ai-subtrans.key.password");
+// 密码优先级：环境变量 > --password 参数 > 密码文件 > 交互式输入
+let PRIVATE_KEY_PASSWORD = process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || passwordArg || null;
+
+// 尝试从密码文件读取
+function tryReadPasswordFile() {
+  try {
+    if (existsSync(PRIVATE_KEY_PASSWORD_FILE)) {
+      return readFileSync(PRIVATE_KEY_PASSWORD_FILE, "utf-8").trim();
+    }
+  } catch {}
+  return null;
+}
 
 // === 交互式输入 ===
 function ask(question, { hidden = false } = {}) {
@@ -462,12 +474,17 @@ async function main() {
       }
     }
 
-    // 输入私钥密码
+    // 私钥密码：优先环境变量/参数，其次密码文件，最后交互输入
     if (!PRIVATE_KEY_PASSWORD) {
-      PRIVATE_KEY_PASSWORD = await ask("请输入私钥密码: ", { hidden: true });
-      if (!PRIVATE_KEY_PASSWORD) {
-        console.error("❌ 私钥密码不能为空");
-        process.exit(1);
+      PRIVATE_KEY_PASSWORD = tryReadPasswordFile();
+      if (PRIVATE_KEY_PASSWORD) {
+        console.log(`  ✓ 从密码文件读取: ${PRIVATE_KEY_PASSWORD_FILE}`);
+      } else {
+        PRIVATE_KEY_PASSWORD = await ask("请输入私钥密码: ", { hidden: true });
+        if (!PRIVATE_KEY_PASSWORD) {
+          console.error("❌ 私钥密码不能为空");
+          process.exit(1);
+        }
       }
     }
 
