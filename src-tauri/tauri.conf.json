@@ -57,7 +57,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2MjU4NDM1QzA2OUE0QjIKUldTeXBHbkFOWVFsVm5TalJwQStuR1I1YmJpTlRjd0xXaFB5WHhwelBORHluSmZuSVNqN3haRVgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI3RUFBMUI4NjA1QjREODcKUldTSFRWdGd1S0hxdHltcFdJZlhSVjRyOUdhWXFMZE0xU1c0M1g1Mm5odDhHQzIvWlNhdlZ1akQK",
       "endpoints": [
         "https://terry2010.github.io/polly-subtitle-translator/latest.json"
       ]
