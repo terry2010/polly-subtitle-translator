@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
-      version-split: ${{ steps.meta.outputs.version-split }}
+      tag: ${{ steps.meta.outputs.tag }}
       notes: ${{ steps.meta.outputs.notes }}
     steps:
       - uses: actions/checkout@v4
@@ -51,10 +51,11 @@ jobs:
           # 生成时间戳 YYYYMMDD.HHMMSS（UTC）
           TIMESTAMP=$(date -u +"%Y%m%d.%H%M%S")
           VERSION="${BASE_VERSION}-nightly.${TIMESTAMP}"
+          TAG="nightly-${BASE_VERSION}-${TIMESTAMP}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "version-split=${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
           echo "生成 nightly 版本号: ${VERSION}"
-          echo "tag: nightly-${TIMESTAMP}"
+          echo "tag: ${TAG}"
 
           # 更新内容
           NOTES="${{ inputs.notes }}"
@@ -107,8 +108,8 @@ jobs:
       - name: Upload artifacts to prerelease
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: nightly-${{ needs.prepare.outputs.version-split }}
-          name: nightly-${{ needs.prepare.outputs.version-split }}
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ needs.prepare.outputs.tag }}
           body: ${{ needs.prepare.outputs.notes }}
           prerelease: true
           files: |
