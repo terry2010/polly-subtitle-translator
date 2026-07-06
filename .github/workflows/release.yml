@@ -78,7 +78,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -87,9 +87,6 @@ jobs:
           workspaces: src-tauri
 
       - run: npm ci
-      # npm optional dependencies bug 修复：tailwindcss/oxide native binding 找不到
-      # 删 node_modules 重新安装以正确解析 optional dependencies
-      - run: rm -rf node_modules package-lock.json && npm install
 
       - name: Set version
         run: node scripts/publish.mjs --set-version "${{ needs.prepare.outputs.version }}"
@@ -124,7 +121,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Update latest.json
         env:
