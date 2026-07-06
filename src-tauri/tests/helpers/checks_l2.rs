@@ -86,6 +86,8 @@ pub fn check_cjk(translated: &SubtitleFile) -> CheckResult {
                 // 排除音效标记 [xxx] 和音乐符号 ♪♪ 等（非文字内容不需要 CJK）
                 && !looks_like_sound_effect(&e.translated)
                 && !is_music_or_symbol_only(&e.translated)
+                // 排除非英语原文（如拼写字母 G-O-R、祖鲁语歌词等，保持原样是正确行为）
+                && !is_non_english_source(&e.text)
             }
         })
         .map(|e| e.index)
@@ -222,6 +224,19 @@ fn has_cjk_chars(s: &str) -> bool {
         let code = c as u32;
         (0x4E00..=0x9FFF).contains(&code) || (0x3400..=0x4DBF).contains(&code)
     })
+}
+
+/// 检查原文是否为非英语内容（如拼写字母 G-O-R、祖鲁语歌词等）
+/// 与 translate.rs 的 has_english_word(text, 3) 判定一致：
+/// 如果原文不含至少 3 个英语单词，视为非英语内容，保持原样是正确行为
+fn is_non_english_source(s: &str) -> bool {
+    let word_count = s.split_whitespace()
+        .filter(|w| {
+            let cleaned: String = w.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+            cleaned.len() >= 2
+        })
+        .count();
+    word_count < 3
 }
 
 /// 检查是否像音效标记（[xxx] 或 (xxx)）
