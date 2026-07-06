@@ -1,0 +1,9 @@
+// E2E 测试辅助模块入口
+pub mod config;
+pub mod fixture;
+pub mod checks_l1;
+pub mod checks_l2;
+pub mod report;
+pub mod translate_runner;
+pub mod judge;
+pub mod state;

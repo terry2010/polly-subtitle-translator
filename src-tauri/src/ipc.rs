@@ -508,7 +508,7 @@ pub async fn translate_subtitle(
         } else { None }
     } else { None };
 
-    // 从 keyring 读取密钥：AI 服务用 openai_{service_id} 作为 keyring provider key
+    // 从数据库读取密钥：AI 服务用 openai_{service_id} 作为凭据 provider key
     let keyring_provider = if prov == TranslateProvider::OpenAi {
         match &service_id {
             Some(sid) => format!("openai_{}", sid),
@@ -517,17 +517,17 @@ pub async fn translate_subtitle(
     } else {
         provider.clone()
     };
-    let secret = match config::CredentialStore::load(&keyring_provider, "secret", "翻译字幕") {
+    let secret = match config::CredentialStore::load(&db, &keyring_provider, "secret", "翻译字幕") {
         Ok(s) => {
-            tracing::info!("translate_subtitle secret from keyring: 已获取");
+            tracing::info!("translate_subtitle secret from db: 已获取");
             Some(s)
         }
         Err(AppError::StorageCredentialNotFound { .. }) => {
-            tracing::info!("translate_subtitle keyring: 凭据未配置");
+            tracing::info!("translate_subtitle db: 凭据未配置");
             None
         }
         Err(e) => {
-            tracing::warn!("translate_subtitle keyring 读取失败: {}", e);
+            tracing::warn!("translate_subtitle db 读取失败: {}", e);
             None
         }
     };
@@ -762,7 +762,7 @@ pub async fn extract_names(
         Some(sid) => format!("openai_{}", sid),
         None => "openai".to_string(),
     };
-    let api_key = match config::CredentialStore::load(&keyring_provider, "secret", "人名预扫描") {
+    let api_key = match config::CredentialStore::load(&db, &keyring_provider, "secret", "人名预扫描") {
         Ok(s) => Some(s),
         Err(_) => None,
     };
@@ -885,7 +885,7 @@ pub async fn test_translate_connection(
         (None, None, None)
     };
 
-    // 密钥 fallback：前端传 None/空（掩码状态）时从 keyring 加载
+    // 密钥 fallback：前端传 None/空（掩码状态）时从数据库加载
     let secret_key = if secret_key.is_none() || secret_key.as_deref() == Some("") {
         let keyring_provider = if prov == TranslateProvider::OpenAi {
             match &service_id {
@@ -895,7 +895,7 @@ pub async fn test_translate_connection(
         } else {
             provider.clone()
         };
-        config::CredentialStore::load(&keyring_provider, "secret", "测试翻译连接")
+        config::CredentialStore::load(&db, &keyring_provider, "secret", "测试翻译连接")
             .ok()
             .filter(|s| !s.is_empty())
     } else {
@@ -1008,21 +1008,27 @@ pub async fn list_openai_models(
     Ok(models)
 }
 
-/// save_credential：保存凭据到 keyring
+/// save_credential：保存凭据到数据库
 #[tauri::command]
 pub fn save_credential(
     provider: String,
     key: String,
     value: String,
+    db: State<'_, Database>,
 ) -> IpcResult<()> {
-    ipc_result(config::CredentialStore::save(&provider, &key, &value))
+    ipc_result(config::CredentialStore::save(&db, &provider, &key, &value))
 }
 
-/// get_credential：从 keyring 读取凭据
+/// get_credential：从数据库读取凭据
 #[tauri::command]
-pub fn get_credential(provider: String, key: String, reason: Option<String>) -> IpcResult<Option<String>> {
+pub fn get_credential(
+    provider: String,
+    key: String,
+    reason: Option<String>,
+    db: State<'_, Database>,
+) -> IpcResult<Option<String>> {
     let reason = reason.unwrap_or_else(|| "前端查询凭据".to_string());
-    let result = match config::CredentialStore::load(&provider, &key, &reason) {
+    let result = match config::CredentialStore::load(&db, &provider, &key, &reason) {
         Ok(v) => Some(v),
         Err(AppError::StorageCredentialNotFound { .. }) => None,
         Err(e) => return ipc_result(Err(e)),
@@ -1030,10 +1036,14 @@ pub fn get_credential(provider: String, key: String, reason: Option<String>) -> 
     ipc_result(Ok(result))
 }
 
-/// delete_credential：从 keyring 删除凭据
+/// delete_credential：从数据库删除凭据
 #[tauri::command]
-pub fn delete_credential(provider: String, key: String) -> IpcResult<()> {
-    ipc_result(config::CredentialStore::delete(&provider, &key))
+pub fn delete_credential(
+    provider: String,
+    key: String,
+    db: State<'_, Database>,
+) -> IpcResult<()> {
+    ipc_result(config::CredentialStore::delete(&db, &provider, &key))
 }
 
 /// merge_subtitle：合并字幕到视频
@@ -2099,10 +2109,10 @@ pub fn set_proxy(
     let _ = db.set_config("proxy_host", &host);
     let _ = db.set_config("proxy_port", &port);
     let _ = db.set_config("proxy_user", &username.clone().unwrap_or_default());
-    // 密码走 keyring，非敏感的 host/port/user 走 config 表
+    // 密码走 credentials 表，非敏感的 host/port/user 走 config 表
     if let Some(pw) = password {
         if !pw.is_empty() && pw != "••••••••" {
-            let _ = config::CredentialStore::save("proxy", "pass", &pw);
+            let _ = config::CredentialStore::save(&db, "proxy", "pass", &pw);
         }
     }
     tracing::info!("代理配置已保存: mode={}, host={}, port={}", mode, host, port);
@@ -2116,7 +2126,7 @@ pub fn get_proxy(db: State<'_, Database>) -> IpcResult<serde_json::Value> {
     let host = db.get_config("proxy_host").ok().flatten().unwrap_or_default();
     let port = db.get_config("proxy_port").ok().flatten().unwrap_or_default();
     let user = db.get_config("proxy_user").ok().flatten().unwrap_or_default();
-    let has_password = config::CredentialStore::load("proxy", "pass", "读取代理配置").is_ok();
+    let has_password = config::CredentialStore::load(&db, "proxy", "pass", "读取代理配置").is_ok();
     ipc_result(Ok(serde_json::json!({
         "mode": mode,
         "host": host,

@@ -77,7 +77,7 @@ impl ProxyConfig {
             host: get("proxy_host"),
             port: get("proxy_port").parse().unwrap_or(0),
             username: if user.is_empty() { None } else { Some(user) },
-            password: crate::config::CredentialStore::load("proxy", "pass", "构建翻译/搜索代理客户端").ok(),
+            password: db.get_credential("proxy:pass").ok().flatten(),
         }
     }
 
@@ -565,7 +565,7 @@ const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
 ];
 
 /// ISO 639-1 语言码 → 英文全称（用于 prompt 占位符 {src} / {tgt}）
-fn lang_full_name(code: &str) -> &'static str {
+pub fn lang_full_name(code: &str) -> &'static str {
     match code.to_lowercase().as_str() {
         "zh" | "zh-cn" | "zh-hans" | "zhs" => "Chinese",
         "zh-tw" | "zh-hant" | "zht" => "Traditional Chinese",
@@ -1670,7 +1670,12 @@ impl OpenAiProvider {
             "stream": true,
         });
         // Qwen3 系列关闭 thinking 模式，避免 reasoning 内容干扰 JSON 解析并节省时间
-        if self.model_type == ModelType::Qwen3 {
+        // 但 "nothink" 版本本身已禁用 thinking，不支持 chat_template_kwargs 参数，
+        // 强行添加会导致 LM Studio 流式响应返回空内容。
+        // Qwen3 系列关闭 thinking 模式，避免 reasoning 内容干扰 JSON 解析并节省时间
+        // 但 "nothink" 版本本身已禁用 thinking，不支持 chat_template_kwargs 参数，
+        // 强行添加会导致 LM Studio 流式响应返回空内容。
+        if self.model_type == ModelType::Qwen3 && !self.model.to_lowercase().contains("nothink") {
             request_body["chat_template_kwargs"] = serde_json::json!({
                 "enable_thinking": false
             });
@@ -2001,7 +2006,7 @@ impl TranslateProviderTrait for OpenAiProvider {
         if !self.is_local_url() {
             request_body["response_format"] = serde_json::json!({ "type": "json_object" });
         }
-        if self.model_type == ModelType::Qwen3 {
+        if self.model_type == ModelType::Qwen3 && !self.model.to_lowercase().contains("nothink") {
             request_body["chat_template_kwargs"] = serde_json::json!({
                 "enable_thinking": false
             });
@@ -2421,6 +2426,10 @@ impl<'a> TranslateScheduler<'a> {
                         entry.text
                     );
                 }
+            } else {
+                if entry.text.contains("Waaaa") || entry.text.contains("What's your name") {
+                    eprintln!("[DEBUG CACHE] #{} cache MISS", entry.index);
+                }
             }
 
             // 占位符保护
@@ -2460,7 +2469,14 @@ impl<'a> TranslateScheduler<'a> {
                 let orig_is_sound = looks_like_sound_effect(&entry.text);
                 let restored_is_sound = looks_like_sound_effect(&restored);
                 let sound_mismatch = orig_is_sound != restored_is_sound;
-                if !restored.is_empty() && !any_failed && !same_as_orig && !no_cjk && !sound_mismatch {
+                // 长度比值异常：短原文被翻译成长译文（批次错位）
+                let orig_len = entry.text.chars().count().max(1);
+                let trans_len = restored.chars().count();
+                let length_ratio_abnormal = trans_len > 0 && {
+                    let ratio = trans_len as f64 / orig_len as f64;
+                    ratio > 5.0 && trans_len > 10
+                };
+                if !restored.is_empty() && !any_failed && !same_as_orig && !no_cjk && !sound_mismatch && !length_ratio_abnormal {
                     let cache_key = translate_cache_key(
                         &entry.text,
                         source_lang,
@@ -2483,7 +2499,7 @@ impl<'a> TranslateScheduler<'a> {
                     original: entry.text.clone(),
                     translated: restored,
                     from_cache: false,
-                    failed: any_failed || combined.is_empty() || same_as_orig || no_cjk || sound_mismatch,
+                    failed: any_failed || combined.is_empty() || same_as_orig || no_cjk || sound_mismatch || length_ratio_abnormal,
                 };
                 if let Some(ref cb) = on_entry_done {
                     cb(&te);
@@ -2618,13 +2634,23 @@ impl<'a> TranslateScheduler<'a> {
                     let restored_is_sound = looks_like_sound_effect(&restored);
                     let sound_mismatch = orig_is_sound != restored_is_sound;
 
+                    // 4. 长度比值异常：短原文被翻译成长译文（如 "♪♪" → "Titus：哦，该死！\n♪♪"），
+                    // 通常是批次错位翻译，不应缓存。
+                    let orig_len = orig_text.chars().count().max(1);
+                    let trans_len = restored.chars().count();
+                    let length_ratio_abnormal = trans_len > 0 && {
+                        let ratio = trans_len as f64 / orig_len as f64;
+                        ratio > 5.0 && trans_len > 10
+                    };
+
                     let failed = restored.is_empty()
                         || restored.trim() == orig_text.trim()
                         || (target_lang.starts_with("zh")
                             && !has_cjk(&restored)
                             && !has_cjk(orig_text))
                         || sound_mismatch
-                        || batch_count_mismatch;
+                        || batch_count_mismatch
+                        || length_ratio_abnormal;
 
                     // 数量不匹配的批次整批不缓存（防止错位译文污染缓存）
                     if !failed && !batch_count_mismatch {
@@ -5072,7 +5098,7 @@ fn is_likely_proper_noun(english: &str) -> bool {
     true
 }
 
-fn parse_name_extraction_response(content: &str) -> Vec<ExtractedName> {
+pub fn parse_name_extraction_response(content: &str) -> Vec<ExtractedName> {
     use std::collections::HashSet;
     let mut names = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
