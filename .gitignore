@@ -28,6 +28,5 @@ node_modules
 /src-tauri/tests/output/
 
 # 但保留 fixture（例外）
-!/src-tauri/tests/fixtures/*.srt
 !/src-tauri/tests/fixtures/*.ass
 !/src-tauri/tests/fixtures/*.vtt

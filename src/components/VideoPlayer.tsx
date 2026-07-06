@@ -636,7 +636,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     try {
       await translateStore.startTranslate([entry], (index, translated, failed) => {
         subtitleStore.updateEntry(index, { translated, failed });
-      });
+      }, undefined, undefined, undefined, subtitleStore.file?.file_hash || undefined);
     } catch (e) {
       error("翻译本条字幕失败:", e);
     }

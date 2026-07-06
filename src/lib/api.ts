@@ -125,8 +125,8 @@ export const api = {
     callIpc<SubtitleFile>("split_bilingual_subtitle", { file, splitMode }),
 
   // === 翻译命令 ===
-  translateSubtitle: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string, serviceId?: string, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean) =>
-    callIpc<TranslateResult>("translate_subtitle", { entries, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null, serviceId: serviceId ?? null, skipCache: skipCache ?? null, glossary: glossary ?? null, nameTagging: nameTagging ?? null }),
+  translateSubtitle: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string, serviceId?: string, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean, fileHash?: string) =>
+    callIpc<TranslateResult>("translate_subtitle", { entries, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null, serviceId: serviceId ?? null, skipCache: skipCache ?? null, glossary: glossary ?? null, nameTagging: nameTagging ?? null, fileHash: fileHash ?? null }),
 
   // 人名预扫描提取（仅 AI 翻译支持）
   extractNames: (texts: string[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string, serviceId?: string) =>

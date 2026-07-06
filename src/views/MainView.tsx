@@ -1078,6 +1078,7 @@ export default function MainView() {
       undefined,
       glossary,
       nameTagging,
+      subtitleStore.file?.file_hash || undefined,
     );
     if (result && result.translations.length > 0) {
       // 确保所有结果都更新（包括可能遗漏的），同步 failed 和 from_cache 标记

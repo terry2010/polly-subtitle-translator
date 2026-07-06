@@ -180,6 +180,46 @@ async fn run_state_machine(
             detail: format!("27b judge: {} pass, {} fail, {} shift (共 {} 条判定, 问题批次: {:?})", total_pass, total_fail, total_shift, total_judged, judge_fail_batches),
             source_hint: Some("27b judge 翻译质量问题".to_string()),
         });
+
+        // L3 持久化往返验证（仅 Full 模式，翻译完成后才有缓存可恢复）
+        if cfg.tier == Tier::Full {
+            eprintln!("\n  === L3 持久化往返验证 ===");
+
+            // L3.1 双语字幕往返（SRT/ASS/VTT 各一次）
+            for cr in helpers::checks_l3::check_bilingual_roundtrip_all(&subtitle, &translated_file, &fixture.target_lang) {
+                let status = cr.status.as_str();
+                eprintln!("  [L3] {} [{}]: {}", status, cr.name, cr.detail);
+                checks.push(CheckReport::from_check_result(
+                    &format!("{}{}", prefix, cr.name), "L3", &cr,
+                ));
+            }
+
+            // L3.2 缓存恢复验证
+            // provider_name 和 file_hash 必须与翻译时一致，否则缓存 key 不匹配
+            let file_hash = subtitle.file_hash.clone();
+            let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
+            let cr = helpers::checks_l3::check_cache_recovery(
+                &subtitle, &translated_file, db,
+                &fixture.source_lang, &fixture.target_lang,
+                &provider_name, &file_hash,
+            );
+            eprintln!("  [L3] {} {}: {}", cr.status.as_str(), cr.name, cr.detail);
+            checks.push(CheckReport::from_check_result(
+                &format!("{}{}", prefix, cr.name), "L3", &cr,
+            ));
+
+            // L3.3 多次打开关闭验证（3 次）
+            for cr in helpers::checks_l3::check_repeated_open(
+                &subtitle, &translated_file, db,
+                &fixture.source_lang, &fixture.target_lang,
+                &provider_name, &file_hash,
+            ) {
+                eprintln!("  [L3] {} {}: {}", cr.status.as_str(), cr.name, cr.detail);
+                checks.push(CheckReport::from_check_result(
+                    &format!("{}{}", prefix, cr.name), "L3", &cr,
+                ));
+            }
+        }
     }
 
     eprintln!("\n  [最终状态] {}", state.summary());

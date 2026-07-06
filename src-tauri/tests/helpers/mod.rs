@@ -3,6 +3,7 @@ pub mod config;
 pub mod fixture;
 pub mod checks_l1;
 pub mod checks_l2;
+pub mod checks_l3;
 pub mod report;
 pub mod translate_runner;
 pub mod judge;
