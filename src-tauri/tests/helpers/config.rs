@@ -60,6 +60,8 @@ pub struct TestConfig {
     pub tier: Tier,
     pub use_cache: bool,
     pub fixture_name: Option<String>,
+    /// 自定义字幕文件路径（E2E_FIXTURE_FILE），优先于 fixture_name
+    pub fixture_file: Option<String>,
     pub model_9b: String,
     pub model_27b: String,
     pub api_base: String,
@@ -75,6 +77,7 @@ impl Default for TestConfig {
             tier: Tier::L2,
             use_cache: false,
             fixture_name: None,
+            fixture_file: None,
             model_9b: "qwen3.5-9b-uncensored-nothink".to_string(),
             model_27b: "qwen/qwen3.6-27b".to_string(),
             api_base: "http://localhost:1234/v1".to_string(),
@@ -103,6 +106,9 @@ pub fn parse_test_config() -> TestConfig {
     }
     if let Ok(v) = env::var("E2E_FIXTURE") {
         cfg.fixture_name = Some(v);
+    }
+    if let Ok(v) = env::var("E2E_FIXTURE_FILE") {
+        cfg.fixture_file = Some(v);
     }
     if let Ok(v) = env::var("E2E_MODEL_9B") {
         cfg.model_9b = v;

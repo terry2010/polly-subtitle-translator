@@ -217,8 +217,10 @@ pub fn check_bilingual_roundtrip_all(
 
 // === SECTION 3 END ===
 
-/// L3.2 缓存恢复验证
+/// L3.2 缓存恢复验证（全量）
 /// 流程：翻译结果 → 清空内存中的 translated → 从缓存查询 → 验证失败数和译文一致
+/// 注意：每批次的缓存恢复已在 check_batch_l3 中完成，此函数用于全量验证
+#[allow(dead_code)]
 pub fn check_cache_recovery(
     original: &SubtitleFile,
     translated: &SubtitleFile,
@@ -399,3 +401,259 @@ pub fn check_repeated_open(
 }
 
 // === SECTION 5 END ===
+
+/// L3 批次级检查：对单个批次的翻译结果做缓存恢复 + SRT 双语往返验证
+/// 返回 Vec<CheckResult>，调用方根据是否有 fail 决定是否标记 BugFound
+pub fn check_batch_l3(
+    original: &SubtitleFile,
+    translated: &SubtitleFile,
+    db: &zimufan_lib::db::Database,
+    source_lang: &str,
+    target_lang: &str,
+    provider_name: &str,
+    file_hash: &str,
+    batch_start: usize,
+    batch_end: usize,
+) -> Vec<CheckResult> {
+    let mut results = Vec::new();
+
+    // L3.1 批次缓存恢复验证
+    results.push(check_batch_cache_recovery(
+        original, translated, db,
+        source_lang, target_lang, provider_name, file_hash,
+        batch_start, batch_end,
+    ));
+
+    // L3.2 批次 SRT 双语往返验证
+    results.push(check_batch_bilingual_srt(
+        original, translated, target_lang,
+        batch_start, batch_end,
+    ));
+
+    results
+}
+
+// === SECTION 6 END ===
+
+/// 批次缓存恢复验证：清空这个批次的译文 → 从缓存恢复 → 验证一致
+fn check_batch_cache_recovery(
+    original: &SubtitleFile,
+    translated: &SubtitleFile,
+    db: &zimufan_lib::db::Database,
+    source_lang: &str,
+    target_lang: &str,
+    provider_name: &str,
+    file_hash: &str,
+    batch_start: usize,
+    batch_end: usize,
+) -> CheckResult {
+    let check_name = "batch_cache_recovery";
+
+    // 构建未翻译版本（只清空这个批次的译文）
+    let mut untranslated = original.clone();
+    for entry in untranslated.entries.iter_mut().take(batch_end).skip(batch_start) {
+        entry.translated = String::new();
+        entry.failed = false;
+        entry.from_cache = false;
+    }
+
+    // 从缓存查询
+    let scheduler = zimufan_lib::translate::TranslateScheduler::new(
+        db,
+        std::sync::Arc::new(zimufan_lib::translate::BaiduProvider::new(
+            String::new(),
+            String::new(),
+        )) as std::sync::Arc<dyn zimufan_lib::translate::TranslateProviderTrait + Send + Sync>,
+        provider_name.to_string(),
+    )
+    .with_file_hash(file_hash.to_string());
+
+    let cached = match scheduler.get_cached_entries(&untranslated.entries, source_lang, target_lang) {
+        Ok(c) => c,
+        Err(e) => {
+            return CheckResult::fail(
+                check_name,
+                &format!("批次缓存查询失败: {:?}", e),
+                "translate.rs get_cached_entries",
+            );
+        }
+    };
+
+    // 将缓存结果填回
+    let mut recovered = untranslated.clone();
+    for entry in recovered.entries.iter_mut() {
+        if let Some(c) = cached.iter().find(|c| c.index == entry.index) {
+            entry.translated = c.translated.clone();
+            entry.from_cache = true;
+            entry.failed = c.failed;
+        }
+    }
+
+    // 只检查这个批次的条目
+    let batch_orig: Vec<&SubtitleEntry> = translated.entries.iter()
+        .filter(|e| e.index >= batch_start && e.index < batch_end)
+        .collect();
+    let batch_rec: Vec<&SubtitleEntry> = recovered.entries.iter()
+        .filter(|e| e.index >= batch_start && e.index < batch_end)
+        .collect();
+
+    let cached_count = batch_rec.iter().filter(|e| e.from_cache).count();
+    if cached_count == 0 {
+        return CheckResult::fail(
+            check_name,
+            "批次缓存恢复 0 条，翻译结果未写入缓存或 file_hash 不一致",
+            "translate.rs set_translate_cache / get_cached_entries",
+        );
+    }
+
+    // 验证译文内容一致
+    let mut mismatch_indices = Vec::new();
+    for (orig, rec) in batch_orig.iter().zip(batch_rec.iter()) {
+        if orig.translated.trim() != rec.translated.trim() {
+            mismatch_indices.push(orig.index);
+        }
+    }
+
+    if !mismatch_indices.is_empty() {
+        return CheckResult::fail(
+            check_name,
+            &format!("批次缓存恢复译文不一致: {} 条 (缓存命中 {} 条), 差异条目: {:?}",
+                mismatch_indices.len(), cached_count,
+                &mismatch_indices[..mismatch_indices.len().min(10)]),
+            "translate.rs get_cached_entries 缓存质量校验",
+        );
+    }
+
+    CheckResult::pass(
+        check_name,
+        &format!("批次缓存恢复一致: {} 条命中", cached_count),
+    )
+}
+
+// === SECTION 7 END ===
+
+/// 批次 SRT 双语往返验证：导出双语 SRT → 重新加载 → 拆分 → 验证一致
+fn check_batch_bilingual_srt(
+    original: &SubtitleFile,
+    translated: &SubtitleFile,
+    target_lang: &str,
+    batch_start: usize,
+    batch_end: usize,
+) -> CheckResult {
+    let check_name = "batch_bilingual_srt";
+
+    // 导出双语 SRT
+    let options = ExportOptions {
+        format: SubtitleFormat::Srt,
+        mode: ExportMode::Bilingual,
+        monolingual_lang: None,
+        bilingual_translated_first: Some(true),
+        ass_style: None,
+        video_width: None,
+        video_height: None,
+    };
+    let content = subtitle::export_subtitle(translated, &options);
+
+    // 重新加载
+    let mut reloaded = match subtitle::parse_subtitle(&content, &SubtitleFormat::Srt) {
+        Ok(f) => f,
+        Err(e) => {
+            return CheckResult::fail(
+                check_name,
+                &format!("批次双语 SRT 重新解析失败: {:?}", e),
+                "subtitle.rs parse_subtitle",
+            );
+        }
+    };
+
+    // 检测双语
+    let detect = detect_bilingual(&reloaded);
+    if !detect.is_bilingual {
+        return CheckResult::fail(
+            check_name,
+            &format!("批次双语 SRT 检测失败: matched={}, total={}",
+                detect.matched_count, detect.total_count),
+            "subtitle.rs detect_bilingual",
+        );
+    }
+
+    // 拆分双语
+    split_bilingual(&mut reloaded, zimufan_lib::subtitle::SplitMode::EvenFirst);
+
+    // 验证条目数一致
+    if reloaded.entries.len() != original.entries.len() {
+        return CheckResult::fail(
+            check_name,
+            &format!("批次双语 SRT 条目数不一致: 原始={}, 重新加载={}",
+                original.entries.len(), reloaded.entries.len()),
+            "subtitle.rs split_bilingual",
+        );
+    }
+
+    // 只检查这个批次的条目
+    let batch_orig: Vec<&SubtitleEntry> = translated.entries.iter()
+        .filter(|e| e.index >= batch_start && e.index < batch_end)
+        .collect();
+    let batch_rel: Vec<&SubtitleEntry> = reloaded.entries.iter()
+        .filter(|e| e.index >= batch_start && e.index < batch_end)
+        .collect();
+
+    // 验证问题数一致
+    let (orig_failed, orig_missing, _, _) = count_status(translated, target_lang);
+    let (rel_failed, rel_missing, _, _) = count_status(&reloaded, target_lang);
+
+    // 只统计这个批次的问题数
+    let orig_batch_problematic = batch_orig.iter().filter(|e| {
+        e.failed || is_untranslated(e, target_lang)
+    }).count();
+    let rel_batch_problematic = batch_rel.iter().filter(|e| {
+        e.failed || is_untranslated(e, target_lang)
+    }).count();
+
+    if rel_batch_problematic != orig_batch_problematic {
+        let mut diff_indices = Vec::new();
+        for (o, r) in batch_orig.iter().zip(batch_rel.iter()) {
+            let o_bad = o.failed || is_untranslated(o, target_lang);
+            let r_bad = r.failed || is_untranslated(r, target_lang);
+            if o_bad != r_bad {
+                diff_indices.push(o.index);
+            }
+        }
+        return CheckResult::fail(
+            check_name,
+            &format!("批次双语 SRT 问题数不一致: 翻译时={}, 重新加载={}, 差异条目: {:?}",
+                orig_batch_problematic, rel_batch_problematic,
+                &diff_indices[..diff_indices.len().min(10)]),
+            "subtitle.rs export_subtitle / split_bilingual",
+        );
+    }
+
+    // 验证译文内容一致
+    let mut content_mismatch = 0;
+    let mut mismatch_indices = Vec::new();
+    for (o, r) in batch_orig.iter().zip(batch_rel.iter()) {
+        if !o.translated.is_empty() && !r.translated.is_empty() {
+            let o_norm = strip_and_collapse(&o.translated);
+            let r_norm = strip_and_collapse(&r.translated);
+            if o_norm != r_norm {
+                content_mismatch += 1;
+                mismatch_indices.push(o.index);
+            }
+        }
+    }
+    if content_mismatch > 0 {
+        return CheckResult::fail(
+            check_name,
+            &format!("批次双语 SRT 译文内容不一致: {} 条, 差异条目: {:?}",
+                content_mismatch, &mismatch_indices[..mismatch_indices.len().min(10)]),
+            "subtitle.rs export_subtitle / split_bilingual",
+        );
+    }
+
+    CheckResult::pass(
+        check_name,
+        &format!("批次双语 SRT 往返一致: {} 条", batch_orig.len()),
+    )
+}
+
+// === SECTION 8 END ===

@@ -114,16 +114,25 @@ async fn run_state_machine(
     // 阶段 1..N：逐批翻译+验证
     let total_batches = state.batches.len();
     let mut judge_fail_batches = Vec::new();
+    let mut code_bug_batch: Option<usize> = None;
 
     for stage in 1..=total_batches {
         state.current_stage = stage;
-        let passed = translate_runner::stage_translate_batch(
+        let result = translate_runner::stage_translate_batch(
             &mut state, &subtitle, cfg, db,
         ).await;
 
-        if !passed {
-            judge_fail_batches.push(stage);
-            eprintln!("\n  ⚠️ 批次 {} 27b 验证发现问题（翻译质量），继续下一批", stage);
+        match result {
+            translate_runner::BatchResult::Passed => {}
+            translate_runner::BatchResult::QualityIssue => {
+                judge_fail_batches.push(stage);
+                eprintln!("\n  ⚠️ 批次 {} 27b 翻译质量问题（模型限制），继续下一批", stage);
+            }
+            translate_runner::BatchResult::CodeBug => {
+                code_bug_batch = Some(stage);
+                eprintln!("\n  🛑 批次 {} L3 发现代码 bug，停止测试", stage);
+                break;
+            }
         }
     }
 
@@ -181,11 +190,13 @@ async fn run_state_machine(
             source_hint: Some("27b judge 翻译质量问题".to_string()),
         });
 
-        // L3 持久化往返验证（仅 Full 模式，翻译完成后才有缓存可恢复）
+        // L3 最终汇总验证（仅 Full 模式）
+        // 每批次的 L3 检查已在 stage_translate_batch 中完成
+        // 这里只做全量双语字幕往返（SRT/ASS/VTT）和多次打开关闭验证
         if cfg.tier == Tier::Full {
-            eprintln!("\n  === L3 持久化往返验证 ===");
+            eprintln!("\n  === L3 最终汇总验证 ===");
 
-            // L3.1 双语字幕往返（SRT/ASS/VTT 各一次）
+            // L3.1 全量双语字幕往返（SRT/ASS/VTT 各一次）
             for cr in helpers::checks_l3::check_bilingual_roundtrip_all(&subtitle, &translated_file, &fixture.target_lang) {
                 let status = cr.status.as_str();
                 eprintln!("  [L3] {} [{}]: {}", status, cr.name, cr.detail);
@@ -194,21 +205,9 @@ async fn run_state_machine(
                 ));
             }
 
-            // L3.2 缓存恢复验证
-            // provider_name 和 file_hash 必须与翻译时一致，否则缓存 key 不匹配
+            // L3.2 全量多次打开关闭验证（3 次）
             let file_hash = subtitle.file_hash.clone();
             let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
-            let cr = helpers::checks_l3::check_cache_recovery(
-                &subtitle, &translated_file, db,
-                &fixture.source_lang, &fixture.target_lang,
-                &provider_name, &file_hash,
-            );
-            eprintln!("  [L3] {} {}: {}", cr.status.as_str(), cr.name, cr.detail);
-            checks.push(CheckReport::from_check_result(
-                &format!("{}{}", prefix, cr.name), "L3", &cr,
-            ));
-
-            // L3.3 多次打开关闭验证（3 次）
             for cr in helpers::checks_l3::check_repeated_open(
                 &subtitle, &translated_file, db,
                 &fixture.source_lang, &fixture.target_lang,
@@ -223,6 +222,18 @@ async fn run_state_machine(
     }
 
     eprintln!("\n  [最终状态] {}", state.summary());
+
+    // 如果 L3 发现代码 bug，加入明确报告
+    if let Some(bug_batch) = code_bug_batch {
+        let bug_prefix = if name_precision { "[NP] " } else { "" };
+        checks.push(CheckReport {
+            name: format!("{}code_bug_stopped", bug_prefix),
+            tier: "L3".to_string(),
+            status: "fail".to_string(),
+            detail: format!("批次 {} L3 持久化验证发现代码 bug，测试已停止。修复代码后用 E2E_RESET=1 重跑", bug_batch),
+            source_hint: Some("translate.rs 缓存质量校验 / subtitle.rs 双语导出".to_string()),
+        });
+    }
 
     let fail_count = checks.iter().filter(|c| c.status == "fail").count();
     let status = if fail_count > 0 { "failed" } else { "passed" };

@@ -14,7 +14,6 @@ vi.mock("../../lib/api", () => ({
     playerShow: vi.fn(() => Promise.resolve()),
     devLog: vi.fn(),
     exportSubtitle: vi.fn(() => Promise.resolve()),
-    devLog: vi.fn(() => Promise.resolve()),
   },
   formatIpcError: vi.fn((e: unknown) => String(e)),
 }));

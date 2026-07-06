@@ -26,8 +26,15 @@ impl Fixture {
     }
 
     /// 加载 fixture 文件路径
+    /// 如果 file 是绝对路径或相对路径（自定义 fixture），直接使用；
+    /// 否则拼接 fixtures 目录（预定义 fixture）
     pub fn path(&self) -> PathBuf {
-        Self::fixtures_dir().join(&self.file)
+        let p = Path::new(&self.file);
+        if p.is_absolute() || self.file.contains('/') || self.file.contains('\\') {
+            p.to_path_buf()
+        } else {
+            Self::fixtures_dir().join(&self.file)
+        }
     }
 
     /// 解析 fixture 为 SubtitleFile
@@ -80,8 +87,32 @@ pub fn all_fixtures() -> Vec<Fixture> {
     ]
 }
 
-/// 按 name 过滤 fixture
+/// 按 name 过滤 fixture，或从文件路径创建自定义 fixture
 pub fn select_fixtures(cfg: &super::config::TestConfig) -> Vec<Fixture> {
+    // E2E_FIXTURE_FILE 优先：从文件路径创建自定义 fixture
+    if let Some(path) = &cfg.fixture_file {
+        let p = std::path::Path::new(path);
+        let file_name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("custom").to_string();
+        let format = if path.ends_with(".ass") || path.ends_with(".ssa") {
+            SubtitleFormat::Ass
+        } else if path.ends_with(".vtt") {
+            SubtitleFormat::Vtt
+        } else {
+            SubtitleFormat::Srt
+        };
+        return vec![Fixture {
+            name: file_name.clone(),
+            file: path.to_string(),  // 直接用绝对/相对路径
+            format,
+            source_lang: "en".to_string(),
+            target_lang: "zh".to_string(),
+            has_names: true,
+            has_sound_effects: false,
+            tags: vec!["custom".into()],
+        }];
+    }
+
+    // E2E_FIXTURE：按预定义名称过滤
     let all = all_fixtures();
     match &cfg.fixture_name {
         Some(name) => all.into_iter().filter(|f| &f.name == name).collect(),

@@ -22,7 +22,6 @@ vi.mock("../../lib/api", () => ({
     editSubtitleStreams: mockEditSubtitleStreams,
     checkMergeSpace: mockCheckMergeSpace,
     extractSubtitle: mockExtractSubtitle,
-    devLog: vi.fn(() => Promise.resolve()),
   },
 }));
 
