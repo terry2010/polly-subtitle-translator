@@ -35,7 +35,9 @@ interface ExportDialogProps {
 
 /// 判断文本是否为音效/环境声标记，如 [clattering continues] / [碰撞声持续]
 function looksLikeSoundEffect(s: string): boolean {
-  const t = s.trim();
+  // 先去掉 ASS 定位/样式标签（如 {\an8}），与 translate.rs 的实现一致
+  const stripped = s.replace(/\{[^}]*\}/g, "");
+  const t = stripped.trim();
   if (!t) return false;
   if (t.startsWith("[") && t.endsWith("]")) return true;
   const m = t.match(/^\s*\[[^\]]+\]\s*(.*)$/);

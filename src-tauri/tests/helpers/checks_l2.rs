@@ -19,7 +19,10 @@ pub fn run_l2_checks(original: &SubtitleFile, translated: &SubtitleFile, target_
 /// L2.1 空译文检测
 pub fn check_empty_translations(translated: &SubtitleFile) -> CheckResult {
     let empty_indices: Vec<usize> = translated.entries.iter()
-        .filter(|e| e.translated.trim().is_empty())
+        .filter(|e| {
+            // 跳过已标记为 failed 的条目（系统已知翻译失败，用户会重新翻译）
+            !e.failed && e.translated.trim().is_empty()
+        })
         .map(|e| e.index)
         .collect();
 
@@ -74,12 +77,16 @@ pub fn check_fake_translations(original: &SubtitleFile, translated: &SubtitleFil
 pub fn check_cjk(translated: &SubtitleFile) -> CheckResult {
     let no_cjk: Vec<usize> = translated.entries.iter()
         .filter(|e| {
-            let t = e.translated.trim();
-            !t.is_empty()
-            && !has_cjk_chars(&e.translated)
-            // 排除音效标记 [xxx] 和音乐符号 ♪♪ 等（非文字内容不需要 CJK）
-            && !looks_like_sound_effect(&e.translated)
-            && !is_music_or_symbol_only(&e.translated)
+            // 跳过已标记为 failed 的条目（系统已知翻译失败，用户会重新翻译）
+            !e.failed
+            && {
+                let t = e.translated.trim();
+                !t.is_empty()
+                && !has_cjk_chars(&e.translated)
+                // 排除音效标记 [xxx] 和音乐符号 ♪♪ 等（非文字内容不需要 CJK）
+                && !looks_like_sound_effect(&e.translated)
+                && !is_music_or_symbol_only(&e.translated)
+            }
         })
         .map(|e| e.index)
         .collect();

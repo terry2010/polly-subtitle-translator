@@ -17,7 +17,11 @@ fn has_cjk(s: &str) -> bool {
 /// 判断文本是否为音效/环境声标记，如 [clattering continues] / [碰撞声持续] / [soft music]
 /// 规则：整段 trimmed 文本被一对 [] 包裹，或主要内容是方括号内的一个短语。
 pub(crate) fn looks_like_sound_effect(s: &str) -> bool {
-    let s = s.trim();
+    // 先去掉 ASS 定位/样式标签（如 {\an8}、{\b1} 等），与 build_entry_text 的 strip_inline_ass_and_html_tags 一致
+    // 否则含 {\an8} 前缀的音效标记（如 {\an8}[phone buzzing]）会被误判为非音效标记，
+    // 导致翻译时 is_untranslated 与导出往返后 is_untranslated 不一致
+    let stripped = strip_ass_tags(s);
+    let s = stripped.trim();
     if s.is_empty() {
         return false;
     }
@@ -34,6 +38,21 @@ pub(crate) fn looks_like_sound_effect(s: &str) -> bool {
         }
     }
     false
+}
+
+/// 去掉 ASS 覆盖标签（{...} 包裹的部分，如 {\an8}、{\b1}、{\pos(x,y)} 等）
+fn strip_ass_tags(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_brace = false;
+    for c in s.chars() {
+        match c {
+            '{' => in_brace = true,
+            '}' => in_brace = false,
+            _ if !in_brace => result.push(c),
+            _ => {}
+        }
+    }
+    result
 }
 
 /// 判断是否为纯音乐符号/特殊符号（如 ♪♪、♬♬ 等，无文字内容）
@@ -2349,12 +2368,16 @@ impl<'a> TranslateScheduler<'a> {
                 // 与 translate_entries_full 的 is_non_english 判定一致
                 let is_non_english = !has_english_word(&entry.text, 3);
                 if looks_like_sound_effect(&entry.text) != looks_like_sound_effect(&cached) {
-                    tracing::warn!(
-                        "缓存音效标记不一致，忽略缓存重新翻译: index={}, text=[{}], cached=[{}]",
-                        entry.index,
-                        entry.text,
-                        cached
-                    );
+                    // 音效标记不一致（如含 {\an8} 定位标签的混合条目被译成纯音效标记）：
+                    // 翻译时应跳过重新翻译，但恢复时（get_cached_entries）仍返回缓存，
+                    // 保证译文一致。标记 failed=true，前端视为未翻译，用户可重新翻译。
+                    results.push(TranslateEntry {
+                        index: entry.index,
+                        original: entry.text.clone(),
+                        translated: cached,
+                        from_cache: true,
+                        failed: true,
+                    });
                     continue;
                 }
                 if cached.trim() == entry.text.trim() && !is_music_or_sfx && !is_non_english {
@@ -2585,6 +2608,23 @@ impl<'a> TranslateScheduler<'a> {
                         target_lang,
                         &self.provider_name,
                     );
+                } else if !restored.is_empty() && (same_as_orig || sound_mismatch) {
+                    // 译文=原文或音效标记不一致的 failed 条目写入缓存，保证恢复时译文一致
+                    let cache_key = translate_cache_key(
+                        &entry.text,
+                        source_lang,
+                        target_lang,
+                        &self.provider_name,
+                        &self.file_hash,
+                    );
+                    let _ = self.db.set_translate_cache(
+                        &cache_key,
+                        &entry.text,
+                        &restored,
+                        source_lang,
+                        target_lang,
+                        &self.provider_name,
+                    );
                 }
 
                 let te = TranslateEntry {
@@ -2757,8 +2797,11 @@ impl<'a> TranslateScheduler<'a> {
                         || length_ratio_abnormal;
 
                     // 数量不匹配的批次整批不缓存（防止错位译文污染缓存）
-                    // 例外：译文=原文的 failed 条目（如祖鲁语歌词等非英语内容，AI 保持原样）
-                    // 也写入缓存，保证 get_cached_entries 恢复时译文一致（避免缓存恢复译文不一致）
+                    // 例外：以下 failed 条目也写入缓存，保证 get_cached_entries 恢复时译文一致：
+                    //   1. 译文=原文（如祖鲁语歌词等非英语内容，AI 保持原样）
+                    //   2. 音效标记不一致（sound_mismatch，如含 {\an8} 定位标签的混合条目被译成纯音效标记）
+                    // 翻译时 translate_entries_full 的 bad_cache 检查会跳过这些坏缓存重新翻译，
+                    // 但恢复时 get_cached_entries 返回它们（标记 failed），前端视为未翻译，用户可重新翻译。
                     let same_as_orig = restored.trim() == orig_text.trim();
                     if !failed && !batch_count_mismatch {
                         // 缓存 key 用原始文本（与查询时一致），而非占位符保护后的文本
@@ -2777,8 +2820,10 @@ impl<'a> TranslateScheduler<'a> {
                             target_lang,
                             &self.provider_name,
                         );
-                    } else if failed && same_as_orig && !batch_count_mismatch && !restored.is_empty() {
-                        // 译文=原文的 failed 条目写入缓存，保证恢复时译文一致
+                    } else if failed && !batch_count_mismatch && !restored.is_empty()
+                        && (same_as_orig || sound_mismatch)
+                    {
+                        // 译文=原文或音效标记不一致的 failed 条目写入缓存，保证恢复时译文一致
                         let cache_key = translate_cache_key(
                             orig_text,
                             source_lang,

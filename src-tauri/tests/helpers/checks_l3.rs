@@ -19,7 +19,11 @@ fn has_cjk(s: &str) -> bool {
 
 /// 音效标记检测（与前端 looksLikeSoundEffect 一致）
 fn looks_like_sound_effect(s: &str) -> bool {
-    let s = s.trim();
+    // 先去掉 ASS 定位/样式标签（如 {\an8}），与 translate.rs 的实现一致
+    // 否则含 {\an8} 前缀的音效标记（如 {\an8}[phone buzzing]）会被误判为非音效标记，
+    // 导致翻译时 is_untranslated 与导出往返后 is_untranslated 不一致
+    let stripped = strip_ass_tags(s);
+    let s = stripped.trim();
     if s.is_empty() {
         return false;
     }
@@ -35,6 +39,21 @@ fn looks_like_sound_effect(s: &str) -> bool {
         }
     }
     false
+}
+
+/// 去掉 ASS 覆盖标签（{...} 包裹的部分，如 {\an8}、{\b1}、{\pos(x,y)} 等）
+fn strip_ass_tags(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_brace = false;
+    for c in s.chars() {
+        match c {
+            '{' => in_brace = true,
+            '}' => in_brace = false,
+            _ if !in_brace => result.push(c),
+            _ => {}
+        }
+    }
+    result
 }
 
 /// "未翻译"判定（与前端 isUntranslated 一致）
@@ -76,7 +95,10 @@ fn check_bilingual_roundtrip_single(
 
     // 翻译时的状态（与前端工具栏一致）
     let (orig_failed, orig_missing, orig_translated, orig_total) = count_status(translated, target_lang);
-    let orig_problematic = orig_failed + orig_missing; // 总问题条目数
+    // 总问题条目数 = failed ∪ missing（不能直接相加，因为 failed 和 missing 可能重叠）
+    let orig_problematic = translated.entries.iter()
+        .filter(|e| e.failed || is_untranslated(e, target_lang))
+        .count();
 
     // 1. 导出双语字幕
     let parse_format = format.clone();
@@ -131,7 +153,9 @@ fn check_bilingual_roundtrip_single(
     // 注意：重新加载后 failed 标志丢失（字幕格式不存储 failed），
     // 原来的 failed 条目变为 missing（translated 为空），所以：
     //   reloaded_failed = 0, reloaded_missing = orig_failed + orig_missing
-    // 总问题条目数 (failed + missing) 应一致
+    // 总问题条目数 (failed ∪ missing) 应一致
+    // 注意：不能直接用 failed + missing，因为 failed 和 missing 可能重叠
+    // （如 failed=true 且 translated 为空的条目会被两者都计数）
     let (rel_failed, rel_missing, rel_translated, rel_total) = count_status(&reloaded, target_lang);
     let rel_problematic = rel_failed + rel_missing;
 
@@ -335,7 +359,10 @@ pub fn check_repeated_open(
     file_hash: &str,
 ) -> Vec<CheckResult> {
     let (orig_failed, orig_missing, _, _) = count_status(translated, target_lang);
-    let orig_problematic = orig_failed + orig_missing;
+    // 总问题条目数 = failed ∪ missing（不能直接相加，因为 failed 和 missing 可能重叠）
+    let orig_problematic = translated.entries.iter()
+        .filter(|e| e.failed || is_untranslated(e, target_lang))
+        .count();
     let mut results = Vec::new();
 
     for round in 1..=3 {
@@ -378,14 +405,26 @@ pub fn check_repeated_open(
         }
 
         let (rec_failed, rec_missing, _, _) = count_status(&recovered, target_lang);
-        let rec_problematic = rec_failed + rec_missing;
+        let rec_problematic = recovered.entries.iter()
+            .filter(|e| e.failed || is_untranslated(e, target_lang))
+            .count();
         let cached_count = recovered.entries.iter().filter(|e| e.from_cache).count();
 
         if rec_problematic != orig_problematic {
+            // 找出差异条目
+            let mut diff_indices = Vec::new();
+            for (orig, rec) in translated.entries.iter().zip(&recovered.entries) {
+                let orig_bad = orig.failed || is_untranslated(orig, target_lang);
+                let rec_bad = rec.failed || is_untranslated(rec, target_lang);
+                if orig_bad != rec_bad {
+                    diff_indices.push(orig.index);
+                }
+            }
             results.push(CheckResult::fail(
                 &format!("repeated_open_{}", round),
-                &format!("第 {} 次打开问题数不一致: 翻译时={}, 恢复后={} (缓存命中 {} 条)",
-                    round, orig_problematic, rec_problematic, cached_count),
+                &format!("第 {} 次打开问题数不一致: 翻译时={}, 恢复后={} (缓存命中 {} 条), 差异条目: {:?}",
+                    round, orig_problematic, rec_problematic, cached_count,
+                    &diff_indices[..diff_indices.len().min(20)]),
                 "translate.rs get_cached_entries",
             ));
         } else {
@@ -507,11 +546,27 @@ fn check_batch_cache_recovery(
     }
 
     // 验证译文内容一致
+    // 注意：缓存按 source_text 哈希存储，同一文件内若有重复原文（如 "[Kaleb] Go on."），
+    // 后写入的译文会覆盖先写入的。因此对重复原文条目，只要缓存译文匹配其中任一条即可。
+    use std::collections::HashMap;
+    let mut text_to_translations: HashMap<&str, Vec<&str>> = HashMap::new();
+    for e in &translated.entries {
+        text_to_translations.entry(e.text.trim()).or_default().push(e.translated.trim());
+    }
     let mut mismatch_indices = Vec::new();
     for (orig, rec) in batch_orig.iter().zip(batch_rec.iter()) {
-        if orig.translated.trim() != rec.translated.trim() {
-            mismatch_indices.push(orig.index);
+        let orig_tr = orig.translated.trim();
+        let rec_tr = rec.translated.trim();
+        if orig_tr == rec_tr {
+            continue;
         }
+        // 重复原文条目：缓存可能返回另一条目的译文，检查是否匹配任一条
+        if let Some(translations) = text_to_translations.get(orig.text.trim()) {
+            if translations.len() > 1 && translations.iter().any(|t| *t == rec_tr) {
+                continue;
+            }
+        }
+        mismatch_indices.push(orig.index);
     }
 
     if !mismatch_indices.is_empty() {
