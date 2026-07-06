@@ -141,9 +141,10 @@ async function githubAPI(method, path, body, contentType = "application/json") {
 // === 创建 Release + 上传 assets ===
 async function createRelease(version, notes, artifacts, owner, repo, prerelease = false) {
   console.log("\n>>> 创建 GitHub Release ...");
-  // nightly 版本用 nightly- 前缀的 tag，正式版用 v 前缀
+  // nightly tag 格式：nightly-基础版本号-时间戳（如 nightly-1.0.1-20260706.081028）
+  // 正式版 tag 格式：v版本号（如 v1.0.1）
   const tag = prerelease && version.includes("-nightly.")
-    ? `nightly-${version.split("-nightly.")[1]}`
+    ? `nightly-${version.replace("-nightly.", "-")}`
     : `v${version}`;
 
   // 创建 Release
@@ -178,9 +179,10 @@ async function createRelease(version, notes, artifacts, owner, repo, prerelease 
 async function publishLatestJson(version, notes, artifacts, owner, repo, manifestFile = "latest.json") {
   console.log(`\n>>> 更新 ${manifestFile} ...`);
 
-  // nightly 用 nightly- 前缀 tag，正式版用 v 前缀
+  // nightly tag 格式：nightly-基础版本号-时间戳（如 nightly-1.0.1-20260706.081028）
+  // 正式版 tag 格式：v版本号（如 v1.0.1）
   const tag = version.includes("-nightly.")
-    ? `nightly-${version.split("-nightly.")[1]}`
+    ? `nightly-${version.replace("-nightly.", "-")}`
     : `v${version}`;
   const downloadUrl = `https://github.com/${owner}/${repo}/releases/download/${tag}/${artifacts.exeName}`;
   // 国内加速：用 gh-proxy 前缀
@@ -239,9 +241,10 @@ function detectPlatform(assetName) {
 }
 
 async function updateLatestFromRelease(version, notes, manifestFile = "latest.json") {
-  // nightly 用 nightly- 前缀 tag，正式版用 v 前缀
+  // nightly tag 格式：nightly-基础版本号-时间戳（如 nightly-1.0.1-20260706.081028）
+  // 正式版 tag 格式：v版本号（如 v1.0.1）
   const tag = version.includes("-nightly.")
-    ? `nightly-${version.split("-nightly.")[1]}`
+    ? `nightly-${version.replace("-nightly.", "-")}`
     : `v${version}`;
   console.log(`\n>>> 从 Release assets 合并生成 ${manifestFile} (${tag}) ...`);
 
