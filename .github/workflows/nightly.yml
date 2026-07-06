@@ -94,8 +94,9 @@ jobs:
           workspaces: src-tauri
 
       - run: npm ci
-      # npm optional dependencies bug 修复：tailwindcss/oxide native binding
-      - run: npm i @tailwindcss/oxide --force || true
+      # npm optional dependencies bug 修复：tailwindcss/oxide native binding 找不到
+      # 删 node_modules 重新安装以正确解析 optional dependencies
+      - run: rm -rf node_modules package-lock.json && npm install
 
       # nightly 不改 tauri.conf.json version（Tauri 不支持 prerelease 版本号）
       # 用代码中的基础版本号构建，完整 nightly 版本号只用于 Release tag 和 nightly.json
