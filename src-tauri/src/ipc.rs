@@ -2358,11 +2358,105 @@ pub struct UpdateInfo {
     pub pub_date: String,
 }
 
+/// 根据配置的更新通道构建 Updater
+/// stable → latest.json，nightly → nightly.json
+fn build_updater_by_channel(
+    app: &tauri::AppHandle,
+    db: &Database,
+) -> Result<tauri_plugin_updater::Updater, IpcError> {
+    use tauri_plugin_updater::UpdaterExt;
+    let channel = db
+        .get_config("update_channel")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "stable".to_string());
+
+    // 开发者测试用：从 config 读取版本号覆盖（模拟旧版本测试更新流程）
+    let test_version_override = db
+        .get_config("test_version_override")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
+
+    if let Some(ref test_ver) = test_version_override {
+        tracing::info!("测试版本覆盖: {} (真实版本将被替换)", test_ver);
+    }
+
+    if channel == "nightly" {
+        tracing::info!("更新通道: nightly，使用 nightly.json");
+        let endpoint = "https://terry2010.github.io/polly-subtitle-translator/nightly.json";
+        let test_ver = test_version_override.clone();
+        let builder = app
+            .updater_builder()
+            .endpoints(vec![url::Url::parse(endpoint).map_err(|e| {
+                IpcError::new("update.check_failed", Severity::Recoverable)
+                    .with_args(serde_json::json!({ "detail": e.to_string() }))
+            })?])
+            .map_err(|e| {
+                IpcError::new("update.check_failed", Severity::Recoverable)
+                    .with_args(serde_json::json!({ "detail": e.to_string() }))
+            })?
+            .version_comparator(move |current, remote| {
+                // 如果有测试版本覆盖，用它代替真实版本
+                let current_str = test_ver.clone().unwrap_or_else(|| current.to_string());
+                let remote_str = remote.version.to_string();
+                let has_update = remote_str != current_str;
+                tracing::info!(
+                    "nightly 版本比较: current={} remote={} -> {}",
+                    current_str,
+                    remote_str,
+                    has_update
+                );
+                has_update
+            });
+        builder.build().map_err(|e| {
+            IpcError::new("update.check_failed", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": e.to_string() }))
+        })
+    } else {
+        // stable 通道：用 tauri.conf.json 配置的默认 endpoint（latest.json）
+        if let Some(ref test_ver) = test_version_override {
+            // 有测试版本覆盖：用自定义比较器
+            let test_ver = test_ver.clone();
+            let builder = app
+                .updater_builder()
+                .version_comparator(move |_current, remote| {
+                    let current_str = test_ver.clone();
+                    let remote_str = remote.version.to_string();
+                    let has_update = semver::Version::parse(&remote_str)
+                        .ok()
+                        .zip(semver::Version::parse(&current_str).ok())
+                        .map(|(remote_v, current_v)| remote_v > current_v)
+                        .unwrap_or(false);
+                    tracing::info!(
+                        "stable 版本比较(测试): current={} remote={} -> {}",
+                        current_str,
+                        remote_str,
+                        has_update
+                    );
+                    has_update
+                });
+            builder.build().map_err(|e| {
+                IpcError::new("update.check_failed", Severity::Recoverable)
+                    .with_args(serde_json::json!({ "detail": e.to_string() }))
+            })
+        } else {
+            // 正常 stable：用默认比较器
+            app.updater().map_err(|e| {
+                IpcError::new("update.check_failed", Severity::Recoverable)
+                    .with_args(serde_json::json!({ "detail": e.to_string() }))
+            })
+        }
+    }
+}
+
 /// check_for_update：检查是否有新版本
 #[tauri::command]
-pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, IpcError> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| IpcError::new("update.check_failed", Severity::Recoverable).with_args(serde_json::json!({ "detail": e.to_string() })))?;
+pub async fn check_for_update(
+    app: tauri::AppHandle,
+    db: State<'_, Database>,
+) -> Result<UpdateInfo, IpcError> {
+    let updater = build_updater_by_channel(&app, &db)?;
     match updater.check().await {
         Ok(Some(update)) => {
             tracing::info!("发现新版本: {}", update.version);
@@ -2393,9 +2487,11 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, IpcEr
 /// download_and_install_update：下载并安装更新
 /// 通过 emit "update_download_progress" 事件推送进度
 #[tauri::command]
-pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), IpcError> {
-    use tauri_plugin_updater::UpdaterExt;
-    let updater = app.updater().map_err(|e| IpcError::new("update.check_failed", Severity::Recoverable).with_args(serde_json::json!({ "detail": e.to_string() })))?;
+pub async fn download_and_install_update(
+    app: tauri::AppHandle,
+    db: State<'_, Database>,
+) -> Result<(), IpcError> {
+    let updater = build_updater_by_channel(&app, &db)?;
     let update = updater.check().await
         .map_err(|e| IpcError::new("update.check_failed", Severity::Recoverable).with_args(serde_json::json!({ "detail": e.to_string() })))?
         .ok_or_else(|| IpcError::new("update.no_update", Severity::Recoverable))?;

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "AI-SubTrans",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "identifier": "com.zimufan.ai-subtrans",
   "build": {
     "frontendDist": "../dist",
@@ -57,9 +57,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU2MjU4NDM1QzA2OUE0QjIKUldTeXBHbkFOWVFsVm5TalJwQStuR1I1YmJpTlRjd0xXaFB5WHhwelBORHluSmZuSVNqN3haRVgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI3RUFBMUI4NjA1QjREODcKUldTSFRWdGd1S0hxdHltcFdJZlhSVjRyOUdhWXFMZE0xU1c0M1g1Mm5odDhHQzIvWlNhdlZ1akQK",
       "endpoints": [
-        "https://zimufan.github.io/ai-subtrans/latest.json"
+        "https://terry2010.github.io/polly-subtitle-translator/latest.json"
       ]
     }
   }
