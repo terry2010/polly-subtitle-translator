@@ -2400,9 +2400,14 @@ function AboutSettings() {
   const devMode = useDevModeStore((s) => s.devMode);
   const toggleDevMode = useDevModeStore((s) => s.toggle);
   const [clickCount, setClickCount] = useState(0);
+  const [appVersion, setAppVersion] = useState("1.0.1");
   const checkManually = useUpdateStore((s) => s.checkManually);
   const updateChecking = useUpdateStore((s) => s.checking);
   const [updateResult, setUpdateResult] = useState<"latest" | "failed" | null>(null);
+
+  useEffect(() => {
+    import("@tauri-apps/api/app").then(({ getVersion }) => getVersion().then(setAppVersion).catch(() => {}));
+  }, []);
 
   const handleCheckUpdate = useCallback(async () => {
     setUpdateResult(null);
@@ -2446,7 +2451,7 @@ function AboutSettings() {
             className="text-sm text-muted-foreground select-none"
             onClick={handleVersionClick}
           >
-            v1.0.0 (zimufan)
+            v{appVersion} (zimufan)
           </p>
           <p className="text-sm text-muted-foreground">{t("settings.aboutTagline")}</p>
           <div className="border-t pt-3 text-xs text-muted-foreground space-y-1">
