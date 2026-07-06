@@ -1,6 +1,6 @@
 [package]
 name = "zimufan"
-version = "1.0.0"
+version = "1.0.1"
 description = "AI Subtitle Translation & Editor"
 authors = ["terry"]
 edition = "2021"
@@ -52,6 +52,7 @@ zip = "2"
 scraper = "0.22"
 hmac = "0.12"
 sha1 = "0.10"
+url = "2"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"

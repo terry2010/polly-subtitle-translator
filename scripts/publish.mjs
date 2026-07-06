@@ -30,7 +30,11 @@ const args = process.argv.slice(2);
 const buildOnly = args.includes("--build-only");
 const setVersionOnly = args.includes("--set-version");
 const updateLatestOnly = args.includes("--update-latest");
-const versionArg = args.find(a => !a.startsWith("--") && /^\d+\.\d+\.\d+$/.test(a));
+const isNightly = args.includes("--nightly");
+const isPrerelease = args.includes("--prerelease");
+const manifestArg = args.find(a => a.startsWith("--manifest="))?.split("=")[1] || "latest.json";
+// 支持正式版(1.0.1)和nightly版本(1.0.1-nightly.20260706.143025)
+const versionArg = args.find(a => !a.startsWith("--") && /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(a));
 const notesArg = args.find(a => !a.startsWith("--") && a !== versionArg);
 
 // === 配置 ===
@@ -135,9 +139,12 @@ async function githubAPI(method, path, body, contentType = "application/json") {
 }
 
 // === 创建 Release + 上传 assets ===
-async function createRelease(version, notes, artifacts, owner, repo) {
+async function createRelease(version, notes, artifacts, owner, repo, prerelease = false) {
   console.log("\n>>> 创建 GitHub Release ...");
-  const tag = `v${version}`;
+  // nightly 版本用 nightly- 前缀的 tag，正式版用 v 前缀
+  const tag = prerelease && version.includes("-nightly.")
+    ? `nightly-${version.split("-nightly.")[1]}`
+    : `v${version}`;
 
   // 创建 Release
   const releaseRes = await githubAPI("POST", `/repos/${owner}/${repo}/releases`, {
@@ -145,10 +152,10 @@ async function createRelease(version, notes, artifacts, owner, repo) {
     name: tag,
     body: notes,
     draft: false,
-    prerelease: false,
+    prerelease,
   });
   const release = await releaseRes.json();
-  console.log(`  ✓ Release ${tag}: ${release.html_url}`);
+  console.log(`  ✓ Release ${tag}${prerelease ? " (prerelease)" : ""}: ${release.html_url}`);
 
   // 上传 .exe
   console.log("  >>> 上传安装包 ...");
@@ -167,11 +174,15 @@ async function createRelease(version, notes, artifacts, owner, repo) {
   return release;
 }
 
-// === 生成并推送 latest.json ===
-async function publishLatestJson(version, notes, artifacts, owner, repo) {
-  console.log("\n>>> 更新 latest.json ...");
+// === 生成并推送清单文件（latest.json 或 nightly.json）===
+async function publishLatestJson(version, notes, artifacts, owner, repo, manifestFile = "latest.json") {
+  console.log(`\n>>> 更新 ${manifestFile} ...`);
 
-  const downloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/${artifacts.exeName}`;
+  // nightly 用 nightly- 前缀 tag，正式版用 v 前缀
+  const tag = version.includes("-nightly.")
+    ? `nightly-${version.split("-nightly.")[1]}`
+    : `v${version}`;
+  const downloadUrl = `https://github.com/${owner}/${repo}/releases/download/${tag}/${artifacts.exeName}`;
   // 国内加速：用 gh-proxy 前缀
   const acceleratedUrl = `https://gh-proxy.com/${downloadUrl}`;
 
@@ -188,29 +199,29 @@ async function publishLatestJson(version, notes, artifacts, owner, repo) {
   };
 
   const jsonContent = JSON.stringify(latestJson, null, 2);
-  console.log("  latest.json:");
+  console.log(`  ${manifestFile}:`);
   console.log("  " + jsonContent.replace(/\n/g, "\n  "));
 
-  // 获取 gh-pages 分支上现有的 latest.json（获取 sha 用于更新）
+  // 获取 gh-pages 分支上现有的清单文件（获取 sha 用于更新）
   let sha = null;
   try {
-    const res = await githubAPI("GET", `/repos/${owner}/${repo}/contents/latest.json?ref=gh-pages`);
+    const res = await githubAPI("GET", `/repos/${owner}/${repo}/contents/${manifestFile}?ref=gh-pages`);
     const data = await res.json();
     sha = data.sha;
-    console.log(`  ✓ 现有 latest.json sha: ${sha}`);
+    console.log(`  ✓ 现有 ${manifestFile} sha: ${sha}`);
   } catch {
-    console.log("  (gh-pages 分支上无现有 latest.json，将创建新文件)");
+    console.log(`  (gh-pages 分支上无现有 ${manifestFile}，将创建新文件)`);
   }
 
-  // 更新/创建 latest.json
+  // 更新/创建清单文件
   const content = Buffer.from(jsonContent).toString("base64");
-  await githubAPI("PUT", `/repos/${owner}/${repo}/contents/latest.json`, {
-    message: `chore: update latest.json for v${version}`,
+  await githubAPI("PUT", `/repos/${owner}/${repo}/contents/${manifestFile}`, {
+    message: `chore: update ${manifestFile} for ${tag}`,
     content,
     sha,
     branch: "gh-pages",
   });
-  console.log("  ✓ latest.json 已推送到 gh-pages 分支");
+  console.log(`  ✓ ${manifestFile} 已推送到 gh-pages 分支`);
 }
 
 // === 从 Release assets 合并生成多平台 latest.json（CI 用） ===
@@ -227,14 +238,18 @@ function detectPlatform(assetName) {
   return null;
 }
 
-async function updateLatestFromRelease(version, notes) {
-  console.log(`\n>>> 从 Release assets 合并生成 latest.json (v${version}) ...`);
+async function updateLatestFromRelease(version, notes, manifestFile = "latest.json") {
+  // nightly 用 nightly- 前缀 tag，正式版用 v 前缀
+  const tag = version.includes("-nightly.")
+    ? `nightly-${version.split("-nightly.")[1]}`
+    : `v${version}`;
+  console.log(`\n>>> 从 Release assets 合并生成 ${manifestFile} (${tag}) ...`);
 
   const { owner, repo } = getRepoInfo();
   console.log(`  仓库: ${owner}/${repo}`);
 
   // 1. 获取 Release 信息和 assets 列表
-  const releaseRes = await githubAPI("GET", `/repos/${owner}/${repo}/releases/tags/v${version}`);
+  const releaseRes = await githubAPI("GET", `/repos/${owner}/${repo}/releases/tags/${tag}`);
   const release = await releaseRes.json();
   console.log(`  ✓ Release: ${release.html_url}`);
   console.log(`  ✓ Assets: ${release.assets.length} 个`);
@@ -262,7 +277,7 @@ async function updateLatestFromRelease(version, notes) {
     }
 
     // 构建 URL（加 gh-proxy 加速前缀）
-    const downloadUrl = `https://github.com/${owner}/${repo}/releases/download/v${version}/${baseName}`;
+    const downloadUrl = `https://github.com/${owner}/${repo}/releases/download/${tag}/${baseName}`;
     const acceleratedUrl = `https://gh-proxy.com/${downloadUrl}`;
 
     platforms[platform] = {
@@ -276,7 +291,7 @@ async function updateLatestFromRelease(version, notes) {
     throw new Error("未从 Release assets 中找到任何平台的签名文件");
   }
 
-  // 3. 生成 latest.json
+  // 3. 生成清单文件
   const latestJson = {
     version,
     notes: notes.replace(/\\n/g, "\n"),
@@ -285,29 +300,29 @@ async function updateLatestFromRelease(version, notes) {
   };
 
   const jsonContent = JSON.stringify(latestJson, null, 2);
-  console.log("\n  latest.json:");
+  console.log(`\n  ${manifestFile}:`);
   console.log("  " + jsonContent.replace(/\n/g, "\n  "));
 
-  // 4. 推送到 gh-pages（复用现有逻辑）
+  // 4. 推送到 gh-pages
   let sha = null;
   try {
-    const res = await githubAPI("GET", `/repos/${owner}/${repo}/contents/latest.json?ref=gh-pages`);
+    const res = await githubAPI("GET", `/repos/${owner}/${repo}/contents/${manifestFile}?ref=gh-pages`);
     const data = await res.json();
     sha = data.sha;
-    console.log(`  ✓ 现有 latest.json sha: ${sha}`);
+    console.log(`  ✓ 现有 ${manifestFile} sha: ${sha}`);
   } catch {
-    console.log("  (gh-pages 分支上无现有 latest.json，将创建新文件)");
+    console.log(`  (gh-pages 分支上无现有 ${manifestFile}，将创建新文件)`);
   }
 
   const content = Buffer.from(jsonContent).toString("base64");
-  await githubAPI("PUT", `/repos/${owner}/${repo}/contents/latest.json`, {
-    message: `chore: update latest.json for v${version}`,
+  await githubAPI("PUT", `/repos/${owner}/${repo}/contents/${manifestFile}`, {
+    message: `chore: update ${manifestFile} for ${tag}`,
     content,
     sha,
     branch: "gh-pages",
   });
-  console.log("  ✓ latest.json 已推送到 gh-pages 分支");
-  console.log(`\n  验证: https://${owner}.github.io/${repo}/latest.json`);
+  console.log(`  ✓ ${manifestFile} 已推送到 gh-pages 分支`);
+  console.log(`\n  验证: https://${owner}.github.io/${repo}/${manifestFile}`);
 }
 
 // === 主流程 ===
@@ -326,18 +341,19 @@ async function main() {
     return;
   }
 
-  // ── 模式 2：--update-latest（CI 构建后合并 latest.json）──
+  // ── 模式 2：--update-latest（CI 构建后合并清单文件）──
   if (updateLatestOnly) {
     if (!version) {
-      console.error('用法: node scripts/publish.mjs --update-latest <版本号> "更新内容"');
+      console.error('用法: node scripts/publish.mjs --update-latest [--nightly] [--manifest=nightly.json] <版本号> "更新内容"');
       process.exit(1);
     }
     if (!GITHUB_TOKEN) {
       throw new Error("请设置环境变量 GITHUB_TOKEN");
     }
-    await updateLatestFromRelease(version, notes);
+    const manifest = isNightly ? "nightly.json" : manifestArg;
+    await updateLatestFromRelease(version, notes, manifest);
     console.log(`\n========================================`);
-    console.log(`  ✅ latest.json 更新完成！`);
+    console.log(`  ✅ ${manifest} 更新完成！`);
     console.log(`========================================`);
     return;
   }
@@ -383,11 +399,12 @@ async function main() {
   const { owner, repo } = getRepoInfo();
   console.log(`\n>>> 仓库: ${owner}/${repo}`);
 
-  // 5. 创建 Release + 上传
-  await createRelease(version, notes, artifacts, owner, repo);
+  // 5. 创建 Release + 上传（nightly 标记为 prerelease）
+  await createRelease(version, notes, artifacts, owner, repo, isNightly || isPrerelease);
 
-  // 6. 更新 latest.json
-  await publishLatestJson(version, notes, artifacts, owner, repo);
+  // 6. 更新清单文件（nightly 用 nightly.json）
+  const manifest = isNightly ? "nightly.json" : manifestArg;
+  await publishLatestJson(version, notes, artifacts, owner, repo, manifest);
 
   console.log(`\n========================================`);
   console.log(`  ✅ 发布完成！`);

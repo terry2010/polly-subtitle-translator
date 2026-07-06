@@ -1864,6 +1864,8 @@ function DeveloperSettings() {
   const devMode = useDevModeStore((s) => s.devMode);
   const namePrecisionEnabled = useDevModeStore((s) => s.namePrecisionEnabled);
   const toggleNamePrecision = useDevModeStore((s) => s.toggleNamePrecision);
+  const updateChannel = useDevModeStore((s) => s.updateChannel);
+  const setUpdateChannel = useDevModeStore((s) => s.setUpdateChannel);
   const [crashDir, setCrashDir] = useState<string>("");
   const [crashCount, setCrashCount] = useState<number>(0);
   const [promptFailDir, setPromptFailDir] = useState<string>("");
@@ -2271,6 +2273,41 @@ function DeveloperSettings() {
             <Terminal className="h-4 w-4 mr-1" />
             {t("settings.openDevtools", "打开 DevTools")}
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* 更新通道 */}
+      <Card>
+        <CardContent className="pt-6 space-y-3">
+          <div className="flex items-center gap-2">
+            <RefreshCw className="h-5 w-5 text-muted-foreground" />
+            <h3 className="text-base font-medium">{t("settings.updateChannel", "更新通道")}</h3>
+          </div>
+          <p className="text-sm text-muted-foreground">
+            {t("settings.updateChannelDesc", "选择更新检查的通道。稳定版只收到正式发布，每日构建收到最新开发构建。")}
+          </p>
+          <div className="flex items-center gap-3">
+            <Select
+              value={updateChannel}
+              onValueChange={(v) => setUpdateChannel(v as "stable" | "nightly")}
+            >
+              <SelectTrigger className="w-40">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="stable">{t("settings.updateChannelStable", "稳定版")}</SelectItem>
+                <SelectItem value="nightly">{t("settings.updateChannelNightly", "每日构建")}</SelectItem>
+              </SelectContent>
+            </Select>
+            {updateChannel === "nightly" && (
+              <span className="text-xs text-orange-600">
+                {t("settings.updateChannelNightlyWarn", "可能不稳定，仅供测试")}
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t("settings.updateChannelNote", "切换后下次检查更新时生效（手动检查或重启后自动检查）。")}
+          </p>
         </CardContent>
       </Card>
     </div>
