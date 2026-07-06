@@ -1,11 +1,11 @@
 {
-  "version": "1.0.1-nightly.20260706.091617",
-  "notes": "首个 nightly 构建",
-  "pub_date": "2026-07-06T09:21:18.804Z",
+  "version": "1.0.1-nightly.20260706-104348",
+  "notes": "修复版本号 semver 格式",
+  "pub_date": "2026-07-06T10:49:30.942Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdDZHdHBWekw5TDd6TlhsODRUWS8rcUdLb0RiVkpEMGMzMmM4TkgyZWNncUZUTXF5OWZFb25jWmhxc215cncyd3RGcHJ0THVkU3BBVjdQMXVydHFXZmc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzI5NjU5CWZpbGU6QUktU3ViVHJhbnNfMS4wLjFfeDY0LXNldHVwLmV4ZQpyVkc1S0o3YUdNTzhMSUFBK3VYWHhVOWpSZGdOaFo3OUZxUHJuS0NhZ1lSVnR2cW1Kc0R5UkFlaisyYkdPcmgxYW5NZG9HWWZhZXpoSXVsWXM3ZDdCdz09Cg==",
-      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/nightly-1.0.1-20260706.091617/AI-SubTrans_1.0.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdHkzWVJFOStNeGlnVWkyRW81OEZzQ2RXYkRiSEcwYlRjTmViNi9ubHdiYVFHYVI3M0NDWVZSY3pZUjREQUZzM3RZaXNKeTd0a1g4a1h5WkZ1bGYybEF3PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzM0OTUxCWZpbGU6QUktU3ViVHJhbnNfMS4wLjFfeDY0LXNldHVwLmV4ZQpTcFp6RWEwV0pBdWFxQ1ltQVVpNE5uNGNPK1VhTDY1OFV5MzVtL1BpczJFSFNRbEFlelBnSzF5OFZQMFpCZk4vQmlOd0w1aC94cGYyWksyRnhCd2pBZz09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/nightly-1.0.1-20260706-104348/AI-SubTrans_1.0.1_x64-setup.exe"
     }
   }
 }
