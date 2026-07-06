@@ -36,6 +36,19 @@ pub(crate) fn looks_like_sound_effect(s: &str) -> bool {
     false
 }
 
+/// 判断是否为纯音乐符号/特殊符号（如 ♪♪、♬♬ 等，无文字内容）
+pub(crate) fn is_music_or_symbol_only(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+    s.chars().all(|c| {
+        c.is_whitespace()
+            || "♪♬♫♩♭♮♯".contains(c)
+            || matches!(c, '[' | ']' | '(' | ')' | '.' | '-' | '_' | '*')
+    })
+}
+
 /// 剥离 markdown 代码块包裹（```json ... ``` 或 ``` ... ```）
 /// 如果内容被代码块包裹，返回代码块内部内容；否则原样返回
 fn strip_markdown_code_fence(s: &str) -> String {
@@ -2391,6 +2404,24 @@ impl<'a> TranslateScheduler<'a> {
                 continue;
             }
 
+            // 跳过纯音乐符号/特殊符号（如 ♪♪、♬♬ 等），直接保持原样
+            // 9b 模型会把 ♪♪ 翻译成 "哦。" 等无关内容，导致错位
+            if is_music_or_symbol_only(&entry.text) {
+                tracing::info!("字幕 #{} 为纯音乐符号，跳过翻译: {:?}", entry.index, entry.text);
+                let te = TranslateEntry {
+                    index: entry.index,
+                    original: entry.text.clone(),
+                    translated: entry.text.clone(),
+                    from_cache: false,
+                    failed: false,
+                };
+                if let Some(ref cb) = on_entry_done {
+                    cb(&te);
+                }
+                results.push(te);
+                continue;
+            }
+
             if !skip_cache {
                 let cache_key = translate_cache_key(
                     &entry.text,
@@ -2816,11 +2847,41 @@ async fn translate_batch_with_fallback(
             .await
             {
                 Ok(translations) if translations.len() == chunk_indices.len() => {
-                    // 完全对齐：填入结果，但检查空译文，空译文留到下一级降级重试
+                    // 完全对齐：填入结果，但检查空译文和错位译文
+                    // 错位检测：9b 模型在批次翻译时可能拆分/合并条目，
+                    // 导致翻译内容错位到相邻条目。检测到异常的条目不填入 results，
+                    // 而是放入 still_pending 进入下一级降级重试（更小批次/单条）。
+                    let mut shift_detected = false;
                     for (&idx, t) in chunk_indices.iter().zip(translations.iter()) {
-                        if !t.is_empty() {
-                            results[idx] = t.clone();
+                        if t.is_empty() {
+                            continue;
                         }
+                        let orig_text = &texts[idx];
+                        let orig_len = orig_text.chars().count().max(1);
+                        let trans_len = t.chars().count();
+                        // 跳过音效标记和音乐符号（长度比值无意义）
+                        let is_sound = looks_like_sound_effect(orig_text);
+                        let is_music = is_music_or_symbol_only(orig_text);
+                        if !is_sound && !is_music && trans_len > 0 {
+                            let ratio = trans_len as f64 / orig_len as f64;
+                            // 长度比值 < 0.2：译文严重偏短（如两行原文只翻译了第一行）
+                            // 长度比值 > 5.0 且 trans_len > 10：译文严重偏长（如把相邻条目合并了）
+                            if ratio < 0.2 || (ratio > 5.0 && trans_len > 10) {
+                                tracing::warn!(
+                                    "批次错位检测：idx={} 原文{}字符→译文{}字符 ratio={:.2}，标记为待重试",
+                                    idx, orig_len, trans_len, ratio
+                                );
+                                shift_detected = true;
+                                continue; // 不填入 results，进入 still_pending
+                            }
+                        }
+                        results[idx] = t.clone();
+                    }
+                    if shift_detected && batch_size > 1 {
+                        tracing::warn!(
+                            "批次大小 {} 检测到错位，将异常条目降级到更小批次重试",
+                            batch_size
+                        );
                     }
                     for &idx in chunk_indices {
                         if results[idx].is_empty() {
