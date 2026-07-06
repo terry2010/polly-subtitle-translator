@@ -1,24 +1,10 @@
 // 配置与凭据管理
-// 配置存储在 SQLite config 表（键值对），凭据存储在系统密钥环（keyring）
-// 凭据查询有内存缓存，避免启动时批量查询 keyring 导致 macOS Keychain 弹窗/日志刷屏
+// 配置和凭据均存储在 SQLite 中（config 表 + credentials 表）
+// 凭据原存储在系统 keyring，现已迁移到数据库 credentials 表
 
 use crate::db::Database;
 use crate::error::AppError;
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-
-/// 凭据存储的 keyring 服务名
-const KEYRING_SERVICE: &str = "com.zimufan.ai-subtrans";
-
-/// 凭据内存缓存：避免重复查询 keyring（macOS 上每次查询可能触发 Keychain 访问日志）
-/// key = "provider:key"，value = Option<String>（None 表示已查询但未找到，避免重复查询）
-static CREDENTIAL_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
-
-fn credential_cache() -> &'static Mutex<HashMap<String, Option<String>>> {
-    CREDENTIAL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
-}
 
 /// 通用配置读写
 pub struct ConfigManager<'a> {
@@ -64,119 +50,43 @@ impl<'a> ConfigManager<'a> {
     }
 }
 
-/// 凭据存储（系统密钥环）
+/// 凭据存储（数据库 credentials 表）
 pub struct CredentialStore;
 
 impl CredentialStore {
-    /// 保存凭据到密钥环
-    pub fn save(provider: &str, key: &str, value: &str) -> Result<(), AppError> {
+    /// 保存凭据到数据库
+    pub fn save(db: &Database, provider: &str, key: &str, value: &str) -> Result<(), AppError> {
         let entry_name = format!("{}:{}", provider, key);
-        let entry = Entry::new(KEYRING_SERVICE, &entry_name).map_err(|e| {
-            tracing::error!("密钥环不可用: {}", e);
-            AppError::StorageKeyringUnavailable
-        })?;
-        entry.set_password(value).map_err(|e| {
-            tracing::error!("密钥环写入失败: {}", e);
-            AppError::StorageKeyringUnavailable
-        })?;
-        // 更新内存缓存
-        if let Ok(mut cache) = credential_cache().lock() {
-            cache.insert(entry_name.clone(), Some(value.to_string()));
-        }
+        db.set_credential(&entry_name, value)?;
         tracing::info!("凭据已保存: {}", entry_name);
         Ok(())
     }
 
-    /// 从密钥环读取凭据（带内存缓存，避免重复查询 keyring）
+    /// 从数据库读取凭据
     /// reason: 查询原因，用于日志记录（如 "翻译字幕"、"启动检查配置状态"）
-    pub fn load(provider: &str, key: &str, reason: &str) -> Result<String, AppError> {
+    pub fn load(db: &Database, provider: &str, key: &str, reason: &str) -> Result<String, AppError> {
         let entry_name = format!("{}:{}", provider, key);
-        // 先查内存缓存
-        if let Ok(cache) = credential_cache().lock() {
-            if let Some(cached) = cache.get(&entry_name) {
-                tracing::debug!(
-                    "钥匙链查询[缓存命中] entry={} reason={}",
-                    entry_name, reason
-                );
-                return match cached {
-                    Some(v) => Ok(v.clone()),
-                    None => Err(AppError::StorageCredentialNotFound {
-                        provider: provider.to_string(),
-                    }),
-                };
-            }
-        }
-        // 缓存未命中，查询 keyring
-        tracing::info!(
-            "钥匙链查询[访问系统Keychain] entry={} reason={}",
-            entry_name, reason
-        );
-        let entry = Entry::new(KEYRING_SERVICE, &entry_name).map_err(|e| {
-            tracing::error!("密钥环不可用: {}", e);
-            AppError::StorageKeyringUnavailable
-        })?;
-        let result = entry.get_password().map_err(|e| match e {
-            keyring::Error::NoEntry => AppError::StorageCredentialNotFound {
+        tracing::debug!("凭据查询 entry={} reason={}", entry_name, reason);
+        match db.get_credential(&entry_name)? {
+            Some(v) => Ok(v),
+            None => Err(AppError::StorageCredentialNotFound {
                 provider: provider.to_string(),
-            },
-            _ => AppError::StorageKeyringUnavailable,
-        });
-        // 更新缓存（成功和 NoEntry 都缓存，其他错误不缓存）
-        if let Ok(mut cache) = credential_cache().lock() {
-            match &result {
-                Ok(v) => {
-                    cache.insert(entry_name.clone(), Some(v.clone()));
-                }
-                Err(AppError::StorageCredentialNotFound { .. }) => {
-                    cache.insert(entry_name.clone(), None);
-                }
-                _ => {} // keyring 不可用等错误不缓存
-            }
+            }),
         }
-        result
     }
 
-    /// 删除密钥环中的凭据
-    pub fn delete(provider: &str, key: &str) -> Result<(), AppError> {
+    /// 删除数据库中的凭据
+    pub fn delete(db: &Database, provider: &str, key: &str) -> Result<(), AppError> {
         let entry_name = format!("{}:{}", provider, key);
-        let entry = Entry::new(KEYRING_SERVICE, &entry_name).map_err(|e| {
-            tracing::error!("密钥环不可用: {}", e);
-            AppError::StorageKeyringUnavailable
-        })?;
-        match entry.delete_credential() {
-            Ok(()) => {
-                // 更新内存缓存
-                if let Ok(mut cache) = credential_cache().lock() {
-                    cache.insert(entry_name.clone(), None);
-                }
-                tracing::info!("凭据已删除: {}", entry_name);
-                Ok(())
-            }
-            Err(keyring::Error::NoEntry) => {
-                // keyring 中不存在，同步缓存
-                if let Ok(mut cache) = credential_cache().lock() {
-                    cache.insert(entry_name.clone(), None);
-                }
-                Ok(())
-            }
-            Err(e) => {
-                tracing::error!("密钥环删除失败: {}", e);
-                Err(AppError::StorageKeyringUnavailable)
-            }
-        }
-    }
-
-    /// 清除内存缓存（供凭据变更后强制重新查询时使用）
-    pub fn clear_cache() {
-        if let Ok(mut cache) = credential_cache().lock() {
-            cache.clear();
-        }
+        db.delete_credential(&entry_name)?;
+        tracing::info!("凭据已删除: {}", entry_name);
+        Ok(())
     }
 }
 
 // === SECTION 1 END ===
 
-/// 翻译 API 提供商配置（存储在 api_provider 表 + keyring）
+/// 翻译 API 提供商配置（存储在 api_provider 表 + credentials 表）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiProviderConfig {
     pub id: String,
@@ -268,8 +178,18 @@ mod tests {
     }
 
     #[test]
-    fn test_credential_cache_clear() {
-        // clear_cache 不应 panic，清除后缓存为空
-        CredentialStore::clear_cache();
+    fn test_credential_store_db_roundtrip() {
+        use crate::db::Database;
+        let db = Database::open(std::path::Path::new(":memory:")).unwrap();
+        db.migrate().unwrap();
+        // 初始无凭据
+        assert!(CredentialStore::load(&db, "test", "secret", "测试").is_err());
+        // 保存
+        CredentialStore::save(&db, "test", "secret", "abc123").unwrap();
+        // 读取
+        assert_eq!(CredentialStore::load(&db, "test", "secret", "测试").unwrap(), "abc123");
+        // 删除
+        CredentialStore::delete(&db, "test", "secret").unwrap();
+        assert!(CredentialStore::load(&db, "test", "secret", "测试").is_err());
     }
 }

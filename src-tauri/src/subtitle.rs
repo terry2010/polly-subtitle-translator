@@ -1123,6 +1123,17 @@ pub fn render_ass(file: &SubtitleFile) -> String {
         if !output.ends_with('\n') {
             output.push('\n');
         }
+    } else {
+        // 没有 header（如 SRT 转 ASS），生成最小 ASS header
+        output.push_str("[Script Info]\n");
+        output.push_str("ScriptType: v4.00+\n");
+        output.push_str("PlayResX: 1920\n");
+        output.push_str("PlayResY: 1080\n");
+        output.push_str("\n");
+        output.push_str("[V4+ Styles]\n");
+        output.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
+        output.push_str("Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\n");
+        output.push_str("\n");
     }
 
     // 输出 [Events] 区域
@@ -1135,6 +1146,8 @@ pub fn render_ass(file: &SubtitleFile) -> String {
         } else {
             &entry.translated
         };
+        // ASS 文本中换行符必须用 \N 标记，否则换行会被 parse 当成新行
+        let text = text.replace('\n', "\\N").replace('\r', "");
         let style = entry.style.as_deref().unwrap_or("Default");
         output.push_str(&format!(
             "Dialogue: 0,{},{},{},,0,0,0,,{}\n",

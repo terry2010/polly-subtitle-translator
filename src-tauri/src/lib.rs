@@ -752,7 +752,7 @@ pub fn run() {
                 }
                 #[cfg(not(windows))]
                 {
-                    None
+                    None::<(i32, i32, i32, i32)>
                 }
             };
 

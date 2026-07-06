@@ -182,6 +182,17 @@ CREATE INDEX IF NOT EXISTS idx_recent_files_opened_at
 -- v2: translate_cache_key 算法变更（加入 file_hash），旧缓存无法命中，清空旧缓存
 DELETE FROM translate_cache;
 "#,
+}, Migration {
+    version: 3,
+    sql: r#"
+-- v3: 凭据存储从系统 keyring 迁移到数据库
+-- key = "provider:key"（与原 keyring entry_name 一致），value = 凭据明文
+CREATE TABLE IF NOT EXISTS credentials (
+    entry_name TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"#,
 }];
 
 // === SECTION 2 END ===
@@ -365,6 +376,45 @@ impl Database {
         self.with_conn(|conn| {
             let count = conn.execute("DELETE FROM translate_cache", [])?;
             Ok(count)
+        })
+    }
+
+    /// 读取凭据（从 credentials 表）
+    /// entry_name 格式 "provider:key"，与原 keyring entry_name 一致
+    pub fn get_credential(&self, entry_name: &str) -> Result<Option<String>, AppError> {
+        self.with_conn(|conn| {
+            let result = conn
+                .query_row(
+                    "SELECT value FROM credentials WHERE entry_name = ?1",
+                    rusqlite::params![entry_name],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok();
+            Ok(result)
+        })
+    }
+
+    /// 保存凭据（UPSERT 到 credentials 表）
+    pub fn set_credential(&self, entry_name: &str, value: &str) -> Result<(), AppError> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO credentials (entry_name, value, updated_at)
+                 VALUES (?1, ?2, datetime('now'))
+                 ON CONFLICT(entry_name) DO UPDATE SET value = ?2, updated_at = datetime('now')",
+                rusqlite::params![entry_name, value],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// 删除凭据
+    pub fn delete_credential(&self, entry_name: &str) -> Result<(), AppError> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "DELETE FROM credentials WHERE entry_name = ?1",
+                rusqlite::params![entry_name],
+            )?;
+            Ok(())
         })
     }
 
@@ -680,11 +730,11 @@ mod tests {
         let db = test_db();
         // 再次执行 migrate 不应报错
         db.migrate().unwrap();
-        // schema_migrations 应有 v1 和 v2 两条
+        // schema_migrations 应有 v1、v2、v3 三条
         let count: i64 = db.with_conn(|conn| {
             Ok(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))?)
         }).unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
     }
 
     // === SECTION 9 END ===
