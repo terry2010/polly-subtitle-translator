@@ -49,6 +49,7 @@ export default defineConfig({
         "**/*.srt", "**/*.ass", "**/*.ssa", "**/*.vtt",
         "**/*.mkv", "**/*.mp4", "**/*.avi", "**/*.mov",
         "**/*.txt", "**/*.log",
+        "**/*.md",
       ],
     },
   },
