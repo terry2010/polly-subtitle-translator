@@ -449,6 +449,7 @@ pub async fn translate_subtitle(
     skip_cache: Option<bool>,
     glossary: Option<Vec<(String, String)>>,
     name_tagging: Option<bool>,
+    file_hash: Option<String>,
     db: State<'_, Database>,
     cancel_token: State<'_, CancelToken>,
     app: tauri::AppHandle,
@@ -612,9 +613,14 @@ pub async fn translate_subtitle(
         (policy, None) => policy,
     };
 
-    // 从 entries 直接计算字幕内容 hash，用于缓存隔离
-    // 不依赖前端传参，确保前端编辑条目后 hash 自动更新
-    let file_hash = subtitle::compute_subtitle_hash(&entries);
+    // 字幕内容 hash，用于缓存隔离
+    // 优先用前端传来的 file_hash（整个字幕文件的 hash），
+    // 这样右键翻译单条时缓存 key 与全量翻译一致，关闭再打开能恢复。
+    // 前端没传时（如 API 直接调用）才从当前 entries 计算。
+    let file_hash = match &file_hash {
+        Some(h) if !h.is_empty() => h.clone(),
+        _ => subtitle::compute_subtitle_hash(&entries),
+    };
 
     let scheduler = translate::TranslateScheduler::with_cancel_token(
         &db,

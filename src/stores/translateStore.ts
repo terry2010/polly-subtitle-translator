@@ -57,7 +57,7 @@ interface TranslateState {
   setExtractingNames: (v: boolean) => void;
   extractNames: (entries: SubtitleEntry[]) => Promise<GlossaryEntry[] | null>;
   resetExtractNamesProgress: () => void;
-  startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean) => Promise<TranslateResult | null>;
+  startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean, fileHash?: string) => Promise<TranslateResult | null>;
   cancelTranslate: () => Promise<void>;
   reset: () => void;
 }
@@ -152,7 +152,7 @@ export const useTranslateStore = create<TranslateState>()(
         }
       },
 
-      startTranslate: async (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean) => {
+      startTranslate: async (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean, fileHash?: string) => {
         // 如果正在翻译，不允许启动新的翻译任务
         if (get().translating) {
           warn("翻译正在进行中，跳过新任务");
@@ -212,7 +212,7 @@ export const useTranslateStore = create<TranslateState>()(
         }
 
         try {
-          const result = await api.translateSubtitle(entries, sourceLang, targetLang, provider, model || undefined, modelType || undefined, serviceId || undefined, skipCache, glossary, nameTagging);
+          const result = await api.translateSubtitle(entries, sourceLang, targetLang, provider, model || undefined, modelType || undefined, serviceId || undefined, skipCache, glossary, nameTagging, fileHash);
           const endTime = performance.now();
           const totalMs = endTime - startTime;
           set({ translating: false, progress: entries.length, result });

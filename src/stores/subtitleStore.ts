@@ -145,7 +145,6 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
             file.entries, sourceLang, targetLang, provider,
             provider === "openai" ? (serviceId || undefined) : undefined,
             provider === "openai" ? (model || undefined) : undefined,
-            file.file_hash || undefined,
           );
           if (cached && cached.length > 0) {
             const currentState = get();

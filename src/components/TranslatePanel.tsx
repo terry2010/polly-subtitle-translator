@@ -166,7 +166,7 @@ export function TranslatePanel() {
   const handleTranslate = useCallback(async () => {
     const store = useSubtitleStore.getState();
     if (!store.file) return;
-    const result = await translateStore.startTranslate(store.file.entries);
+    const result = await translateStore.startTranslate(store.file.entries, undefined, undefined, undefined, undefined, store.file?.file_hash || undefined);
     if (result && result.translations.length > 0) {
       // 将翻译结果回填到字幕
       // 用 getState() 获取最新状态，避免闭包捕获旧值

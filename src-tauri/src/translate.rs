@@ -49,6 +49,23 @@ pub(crate) fn is_music_or_symbol_only(s: &str) -> bool {
     })
 }
 
+/// 检查文本是否包含至少 min_len 个连续英文字母组成的单词
+/// 用于区分英语内容和非英语内容（如拼写字母 "G-O-R..."、祖鲁语歌词等）
+pub(crate) fn has_english_word(s: &str, min_len: usize) -> bool {
+    let mut max_run = 0usize;
+    for c in s.chars() {
+        if c.is_ascii_alphabetic() {
+            max_run += 1;
+        } else {
+            if max_run >= min_len {
+                return true;
+            }
+            max_run = 0;
+        }
+    }
+    max_run >= min_len
+}
+
 /// 剥离 markdown 代码块包裹（```json ... ``` 或 ``` ... ```）
 /// 如果内容被代码块包裹，返回代码块内部内容；否则原样返回
 fn strip_markdown_code_fence(s: &str) -> String {
@@ -693,6 +710,15 @@ impl PlaceholderProtector {
                 let placeholder = self.add_placeholder(tag);
                 result.push(placeholder);
                 remaining = &remaining[2..];
+                continue;
+            }
+
+            // 检测真正的换行符（SRT 中的 \n 0x0A）
+            // 替换成占位符而非保留原样，避免 9b 模型把多行条目拆成多条翻译导致错位
+            if remaining.starts_with('\n') {
+                let placeholder = self.add_placeholder("\n");
+                result.push(placeholder);
+                remaining = &remaining[1..];
                 continue;
             }
 
@@ -2313,8 +2339,10 @@ impl<'a> TranslateScheduler<'a> {
             if let Some(cached) = self.db.get_translate_cache(&cache_key)? {
                 // 缓存命中后做质量校验，忽略坏缓存重新翻译：
                 // 1. 音效标记不一致（如英文短句被缓存成了中文音效标记）
-                // 2. 译文=原文（AI 未实际翻译，原样返回）
-                // 3. 目标语言是中文但译文无 CJK（且原文也无 CJK）
+                // 2. 译文=原文（AI 未实际翻译，原样返回）——但音乐符号/音效标记保持原样是正确行为
+                // 3. 目标语言是中文但译文无 CJK（且原文也无 CJK）——但音乐符号/音效标记不需要 CJK
+                let is_music_or_sfx = is_music_or_symbol_only(&entry.text)
+                    || looks_like_sound_effect(&entry.text);
                 if looks_like_sound_effect(&entry.text) != looks_like_sound_effect(&cached) {
                     tracing::warn!(
                         "缓存音效标记不一致，忽略缓存重新翻译: index={}, text=[{}], cached=[{}]",
@@ -2324,7 +2352,7 @@ impl<'a> TranslateScheduler<'a> {
                     );
                     continue;
                 }
-                if cached.trim() == entry.text.trim() {
+                if cached.trim() == entry.text.trim() && !is_music_or_sfx {
                     tracing::warn!(
                         "缓存译文=原文，忽略缓存重新翻译: index={}, text=[{}]",
                         entry.index,
@@ -2335,6 +2363,7 @@ impl<'a> TranslateScheduler<'a> {
                 if target_lang.starts_with("zh")
                     && !has_cjk(&cached)
                     && !has_cjk(&entry.text)
+                    && !is_music_or_sfx
                 {
                     tracing::warn!(
                         "缓存译文无 CJK，忽略缓存重新翻译: index={}, text=[{}], cached=[{}]",
@@ -2433,9 +2462,12 @@ impl<'a> TranslateScheduler<'a> {
 
                 if let Some(cached) = self.db.get_translate_cache(&cache_key)? {
                     // 缓存质量校验（与 get_cached_entries 一致）
-                    let bad_cache = looks_like_sound_effect(&entry.text) != looks_like_sound_effect(&cached)
-                        || cached.trim() == entry.text.trim()
-                        || (target_lang.starts_with("zh") && !has_cjk(&cached) && !has_cjk(&entry.text));
+                    // 音乐符号/音效标记保持原样是正确行为，不算坏缓存
+                    let is_music_or_sfx = is_music_or_symbol_only(&entry.text)
+                        || looks_like_sound_effect(&entry.text);
+                    let bad_cache = (looks_like_sound_effect(&entry.text) != looks_like_sound_effect(&cached))
+                        || (!is_music_or_sfx && cached.trim() == entry.text.trim())
+                        || (target_lang.starts_with("zh") && !has_cjk(&cached) && !has_cjk(&entry.text) && !is_music_or_sfx);
                     if !bad_cache {
                         let te = TranslateEntry {
                             index: entry.index,
@@ -2674,11 +2706,22 @@ impl<'a> TranslateScheduler<'a> {
                         ratio > 5.0 && trans_len > 10
                     };
 
+                    // 非英语内容检测：原文本身不含英语字母（如拼写字母 "G-O-R..."、
+                    // 祖鲁语歌词 "Nants ingonyama bagithi baba!" 等），9b 保持原样是正确行为，
+                    // 不应标记为 failed。检测条件：原文无连续 3 个以上英文字母组成的单词。
+                    let is_non_english = !has_english_word(orig_text, 3);
+
+                    // 音乐符号/音效标记保持原样是正确行为，不算翻译失败
+                    let is_music_or_sfx = is_music_or_symbol_only(orig_text)
+                        || looks_like_sound_effect(orig_text);
+
                     let failed = restored.is_empty()
-                        || restored.trim() == orig_text.trim()
+                        || (!is_non_english && !is_music_or_sfx && restored.trim() == orig_text.trim())
                         || (target_lang.starts_with("zh")
                             && !has_cjk(&restored)
-                            && !has_cjk(orig_text))
+                            && !has_cjk(orig_text)
+                            && !is_non_english
+                            && !is_music_or_sfx)
                         || sound_mismatch
                         || batch_count_mismatch
                         || length_ratio_abnormal;
@@ -2864,9 +2907,29 @@ async fn translate_batch_with_fallback(
                         let is_music = is_music_or_symbol_only(orig_text);
                         if !is_sound && !is_music && trans_len > 0 {
                             let ratio = trans_len as f64 / orig_len as f64;
-                            // 长度比值 < 0.2：译文严重偏短（如两行原文只翻译了第一行）
-                            // 长度比值 > 5.0 且 trans_len > 10：译文严重偏长（如把相邻条目合并了）
-                            if ratio < 0.2 || (ratio > 5.0 && trans_len > 10) {
+                            // 错位检测阈值根据原文长度动态调整：
+                            // - 长原文（≥30字符）：ratio < 0.25 表示严重偏短（如两行只翻译了第一行）
+                            //   0.25 能捕获 "I had the craziest night\n..." (55字符) → "这棵树的汁液绝对值得。" (11字符) ratio=0.20
+                            // - 短原文（<30字符）：中英翻译压缩比可达 0.1（如 "Congratulations!" → "恭喜！"），
+                            //   用固定字符数差值检测更可靠：译文比原文少 20 字符以上才判为错位
+                            // - 长度比值 > 5.0 且 trans_len > 10：译文严重偏长（如把相邻条目合并了）
+                            // - 多行原文（含\n）但译文不含换行：可能只翻译了第一行，降级重试
+                            let short_ratio_threshold = if orig_len >= 30 { 0.25 } else { 0.0 };
+                            let short_char_diff = if orig_len < 30 {
+                                (orig_len as i64 - trans_len as i64) > 20
+                            } else {
+                                false
+                            };
+                            let multiline_split = orig_text.contains('\n')
+                                && !t.contains('\n')
+                                && orig_len >= 20
+                                && trans_len > 0
+                                && ratio < 0.5;
+                            if ratio < short_ratio_threshold
+                                || short_char_diff
+                                || multiline_split
+                                || (ratio > 5.0 && trans_len > 10)
+                            {
                                 tracing::warn!(
                                     "批次错位检测：idx={} 原文{}字符→译文{}字符 ratio={:.2}，标记为待重试",
                                     idx, orig_len, trans_len, ratio
