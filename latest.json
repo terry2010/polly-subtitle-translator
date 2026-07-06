@@ -1,10 +1,10 @@
 {
   "version": "1.0.1",
-  "notes": "修复更新流程：nightly 版本号格式、版本比较逻辑、关于页动态版本号显示",
-  "pub_date": "2026-07-06T14:28:52.240Z",
+  "notes": "Release v1.0.1",
+  "pub_date": "2026-07-06T14:36:19.142Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdDh2MzVYM3VkT2p0RVp4Q3NxVTJ0dDd6c2MvNWdHOU9leFZlZFM0Q2hrVkFMcklRNGFvcmxCRXZOU1R5Q1ZGNm5FcS82QmE4SUNXdHU1Q1VsOHFSV1EwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzQ4MTI2CWZpbGU6QUktU3ViVHJhbnNfMS4wLjFfeDY0LXNldHVwLmV4ZQovSjhYeC90bHlvNit4WU5Jb09iKzcwdUwwdzJ2a0RINHF6bDllM2paMmpNUGFtbDBKNVJ3RFZIanc5U04zV2tIaUhWS3IwZlJUMjEvK1IvUTd3eDVCUT09Cg==",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdHoyMU1QQ1MwSmtiQnoveGplVUd2WWVDVXY1MjhTVnZBcHlLSGloUWw3TkJSem52VnNraitJbHJWbEsvTXhTcitnVGpCM3A5TlF0am8ralRDYXFhVVFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzQ4NTE3CWZpbGU6QUktU3ViVHJhbnNfMS4wLjFfeDY0LXNldHVwLmV4ZQpjUnpSbEpXVTFsOWdzM0hlTk53amJrOUJpdW5xUTBUNnpERDFOMktLbUxrZ3Nnc1gyOHNjdkloTFBpRUZFSmIrZ1FGS0NiL2MwamNkdWhTMnVmdWNBdz09Cg==",
       "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/v1.0.1/AI-SubTrans_1.0.1_x64-setup.exe"
     }
   }
