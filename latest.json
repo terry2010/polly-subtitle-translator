@@ -1,6 +1,11 @@
 {
-  "version": "1.0.0",
-  "notes": "AI-SubTrans initial release",
-  "pub_date": "2026-07-06T00:00:00Z",
-  "platforms": {}
+  "version": "1.0.1",
+  "notes": "新增 Nightly 每日构建通道 + 修复字幕样式问题",
+  "pub_date": "2026-07-06T08:34:20.446Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdDFWNUlabFZaMFhIQ3JWN2JMM1ltU21MVExQSVRSeURQeE1RSElNaUJGWHBrMStUYURhWmJaeXBnR0JEdTE3T0F2c0JyeW5LcDcxc1B0MUlBb3VpM2dVPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzI2NTk2CWZpbGU6QUktU3ViVHJhbnNfMS4wLjFfeDY0LXNldHVwLmV4ZQpkZnVXUjhRV3BPUGIraFNFWUhzUVd1a1lFaHZUNXNjQ1V0UW1vazdSQXNlUlpTdnBBZDdsVk94MHk3RU9DbjRrQmlvckgzK3pJU2wybm5MNUV2bTlCUT09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/v1.0.1/AI-SubTrans_1.0.1_x64-setup.exe"
+    }
+  }
 }
