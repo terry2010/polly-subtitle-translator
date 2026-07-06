@@ -1,11 +1,11 @@
 {
-  "version": "1.0.1",
-  "notes": "Release v1.0.1",
-  "pub_date": "2026-07-06T14:36:19.142Z",
+  "version": "1.0.2",
+  "notes": "修复更新流程：nightly 版本号格式、版本比较逻辑、关于页动态版本号显示、交互式发布脚本",
+  "pub_date": "2026-07-06T14:46:55.841Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdHoyMU1QQ1MwSmtiQnoveGplVUd2WWVDVXY1MjhTVnZBcHlLSGloUWw3TkJSem52VnNraitJbHJWbEsvTXhTcitnVGpCM3A5TlF0am8ralRDYXFhVVFrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzQ4NTE3CWZpbGU6QUktU3ViVHJhbnNfMS4wLjFfeDY0LXNldHVwLmV4ZQpjUnpSbEpXVTFsOWdzM0hlTk53amJrOUJpdW5xUTBUNnpERDFOMktLbUxrZ3Nnc1gyOHNjdkloTFBpRUZFSmIrZ1FGS0NiL2MwamNkdWhTMnVmdWNBdz09Cg==",
-      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/v1.0.1/AI-SubTrans_1.0.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdCtoOXhMdUdVT1oxWUd1bEJMdlZoMXptamlZMkhGbmgwRXViQ3Bmd3JXc0xvUkp3QWdwb2xPMUR6cEp0dEVDVFdDdW9Lem9vd3ZtZk5zQkExSzNKOUE4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzQ5MjA5CWZpbGU6QUktU3ViVHJhbnNfMS4wLjJfeDY0LXNldHVwLmV4ZQo0UjQ0clNsaUZxTkJxS0MyM1RWbmhJa3dyV1hjcXkvYjI1SFQwbTVIV05CM2FrcWxNN0dtKzZwdnN6MWoyL1JwTFp3L3N0cU1JdDhzWjlidlZKYm5CZz09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/v1.0.2/AI-SubTrans_1.0.2_x64-setup.exe"
     }
   }
 }
