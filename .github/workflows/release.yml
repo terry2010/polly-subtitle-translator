@@ -87,6 +87,8 @@ jobs:
           workspaces: src-tauri
 
       - run: npm ci
+      # npm optional dependencies bug 修复：tailwindcss/oxide native binding
+      - run: npm i @tailwindcss/oxide --force || true
 
       - name: Set version
         run: node scripts/publish.mjs --set-version "${{ needs.prepare.outputs.version }}"

@@ -2365,6 +2365,9 @@ fn build_updater_by_channel(
         tracing::info!("更新通道: nightly，使用 nightly.json");
         // nightly 通道：覆盖 endpoint 指向 nightly.json
         let endpoint = "https://terry2010.github.io/polly-subtitle-translator/nightly.json";
+        // 自定义版本比较器：nightly 版本号格式为 1.0.1-nightly.20260706.143025
+        // 客户端版本是基础版本号（如 1.0.1），nightly.json 的 version 含时间戳
+        // 只要远程版本号和当前版本不同就认为有更新（因为 nightly 每次构建版本号都不同）
         let builder = app
             .updater_builder()
             .endpoints(vec![url::Url::parse(endpoint).map_err(|e| {
@@ -2374,7 +2377,20 @@ fn build_updater_by_channel(
             .map_err(|e| {
                 IpcError::new("update.check_failed", Severity::Recoverable)
                     .with_args(serde_json::json!({ "detail": e.to_string() }))
-            })?;
+            })?
+            .version_comparator(|current, remote| {
+                // nightly 通道：远程版本和当前版本不同就有更新
+                // 当前版本是基础版本号(如 1.0.1)，远程是 1.0.1-nightly.时间戳
+                let remote_str = remote.version.to_string();
+                let current_str = current.to_string();
+                tracing::info!(
+                    "nightly 版本比较: current={} remote={} -> {}",
+                    current_str,
+                    remote_str,
+                    remote_str != current_str
+                );
+                remote_str != current_str
+            });
         builder.build().map_err(|e| {
             IpcError::new("update.check_failed", Severity::Recoverable)
                 .with_args(serde_json::json!({ "detail": e.to_string() }))
