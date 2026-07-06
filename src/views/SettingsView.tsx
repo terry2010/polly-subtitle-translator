@@ -1866,6 +1866,18 @@ function DeveloperSettings() {
   const toggleNamePrecision = useDevModeStore((s) => s.toggleNamePrecision);
   const updateChannel = useDevModeStore((s) => s.updateChannel);
   const setUpdateChannel = useDevModeStore((s) => s.setUpdateChannel);
+  const checkManually = useUpdateStore((s) => s.checkManually);
+  const updateChecking = useUpdateStore((s) => s.checking);
+  const [channelCheckResult, setChannelCheckResult] = useState<"latest" | "failed" | null>(null);
+
+  const handleChannelCheckUpdate = useCallback(async () => {
+    setChannelCheckResult(null);
+    const result = await checkManually();
+    if (result === "latest") setChannelCheckResult("latest");
+    else if (result === "failed") setChannelCheckResult("failed");
+    // available 时弹窗会自动打开，不需要在这里处理
+    setTimeout(() => setChannelCheckResult(null), 3000);
+  }, [checkManually]);
   const [crashDir, setCrashDir] = useState<string>("");
   const [crashCount, setCrashCount] = useState<number>(0);
   const [promptFailDir, setPromptFailDir] = useState<string>("");
@@ -2304,7 +2316,27 @@ function DeveloperSettings() {
                 {t("settings.updateChannelNightlyWarn", "可能不稳定，仅供测试")}
               </span>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleChannelCheckUpdate}
+              disabled={updateChecking}
+              className="ml-auto"
+            >
+              {updateChecking ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+              {t("settings.checkUpdate", "检查更新")}
+            </Button>
           </div>
+          {channelCheckResult === "latest" && (
+            <p className="text-xs text-green-600">
+              {t("settings.updateLatest", "当前已是最新版本")}
+            </p>
+          )}
+          {channelCheckResult === "failed" && (
+            <p className="text-xs text-red-600">
+              {t("settings.updateCheckFailed", "检查更新失败，请稍后重试")}
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             {t("settings.updateChannelNote", "切换后下次检查更新时生效（手动检查或重启后自动检查）。")}
           </p>
