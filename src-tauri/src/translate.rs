@@ -2339,10 +2339,15 @@ impl<'a> TranslateScheduler<'a> {
             if let Some(cached) = self.db.get_translate_cache(&cache_key)? {
                 // 缓存命中后做质量校验，忽略坏缓存重新翻译：
                 // 1. 音效标记不一致（如英文短句被缓存成了中文音效标记）
-                // 2. 译文=原文（AI 未实际翻译，原样返回）——但音乐符号/音效标记保持原样是正确行为
-                // 3. 目标语言是中文但译文无 CJK（且原文也无 CJK）——但音乐符号/音效标记不需要 CJK
+                // 2. 译文=原文（AI 未实际翻译，原样返回）——但音乐符号/音效标记/非英语内容保持原样是正确行为
+                // 3. 目标语言是中文但译文无 CJK（且原文也无 CJK）——但音乐符号/音效标记/非英语内容不需要 CJK
+                // 注意：质量校验逻辑必须与 translate_entries_full 的 failed 判定 + 缓存写入逻辑对称，
+                // 否则翻译时写入缓存的条目，恢复时会被错误忽略（缓存恢复译文不一致）。
                 let is_music_or_sfx = is_music_or_symbol_only(&entry.text)
                     || looks_like_sound_effect(&entry.text);
+                // 非英语内容（如拼写字母 "G-O-R..."、祖鲁语歌词等）保持原样是正确行为，
+                // 与 translate_entries_full 的 is_non_english 判定一致
+                let is_non_english = !has_english_word(&entry.text, 3);
                 if looks_like_sound_effect(&entry.text) != looks_like_sound_effect(&cached) {
                     tracing::warn!(
                         "缓存音效标记不一致，忽略缓存重新翻译: index={}, text=[{}], cached=[{}]",
@@ -2352,18 +2357,24 @@ impl<'a> TranslateScheduler<'a> {
                     );
                     continue;
                 }
-                if cached.trim() == entry.text.trim() && !is_music_or_sfx {
-                    tracing::warn!(
-                        "缓存译文=原文，忽略缓存重新翻译: index={}, text=[{}]",
-                        entry.index,
-                        entry.text
-                    );
+                if cached.trim() == entry.text.trim() && !is_music_or_sfx && !is_non_english {
+                    // 英语内容译文=原文（AI 未实际翻译）：翻译时应跳过重新翻译，
+                    // 但恢复时（get_cached_entries）仍返回缓存，保证译文一致。
+                    // 标记 failed=true，与翻译时 failed 判定一致，前端会视为未翻译。
+                    results.push(TranslateEntry {
+                        index: entry.index,
+                        original: entry.text.clone(),
+                        translated: cached,
+                        from_cache: true,
+                        failed: true,
+                    });
                     continue;
                 }
                 if target_lang.starts_with("zh")
                     && !has_cjk(&cached)
                     && !has_cjk(&entry.text)
                     && !is_music_or_sfx
+                    && !is_non_english
                 {
                     tracing::warn!(
                         "缓存译文无 CJK，忽略缓存重新翻译: index={}, text=[{}], cached=[{}]",
@@ -2437,6 +2448,24 @@ impl<'a> TranslateScheduler<'a> {
             // 9b 模型会把 ♪♪ 翻译成 "哦。" 等无关内容，导致错位
             if is_music_or_symbol_only(&entry.text) {
                 tracing::info!("字幕 #{} 为纯音乐符号，跳过翻译: {:?}", entry.index, entry.text);
+                // 写入缓存，保证 get_cached_entries 能恢复（避免缓存恢复译文不一致）
+                if !skip_cache {
+                    let cache_key = translate_cache_key(
+                        &entry.text,
+                        source_lang,
+                        target_lang,
+                        &self.provider_name,
+                        &self.file_hash,
+                    );
+                    let _ = self.db.set_translate_cache(
+                        &cache_key,
+                        &entry.text,
+                        &entry.text,
+                        source_lang,
+                        target_lang,
+                        &self.provider_name,
+                    );
+                }
                 let te = TranslateEntry {
                     index: entry.index,
                     original: entry.text.clone(),
@@ -2462,12 +2491,13 @@ impl<'a> TranslateScheduler<'a> {
 
                 if let Some(cached) = self.db.get_translate_cache(&cache_key)? {
                     // 缓存质量校验（与 get_cached_entries 一致）
-                    // 音乐符号/音效标记保持原样是正确行为，不算坏缓存
+                    // 音乐符号/音效标记/非英语内容保持原样是正确行为，不算坏缓存
                     let is_music_or_sfx = is_music_or_symbol_only(&entry.text)
                         || looks_like_sound_effect(&entry.text);
+                    let is_non_english = !has_english_word(&entry.text, 3);
                     let bad_cache = (looks_like_sound_effect(&entry.text) != looks_like_sound_effect(&cached))
-                        || (!is_music_or_sfx && cached.trim() == entry.text.trim())
-                        || (target_lang.starts_with("zh") && !has_cjk(&cached) && !has_cjk(&entry.text) && !is_music_or_sfx);
+                        || (!is_music_or_sfx && !is_non_english && cached.trim() == entry.text.trim())
+                        || (target_lang.starts_with("zh") && !has_cjk(&cached) && !has_cjk(&entry.text) && !is_music_or_sfx && !is_non_english);
                     if !bad_cache {
                         let te = TranslateEntry {
                             index: entry.index,
@@ -2727,8 +2757,28 @@ impl<'a> TranslateScheduler<'a> {
                         || length_ratio_abnormal;
 
                     // 数量不匹配的批次整批不缓存（防止错位译文污染缓存）
+                    // 例外：译文=原文的 failed 条目（如祖鲁语歌词等非英语内容，AI 保持原样）
+                    // 也写入缓存，保证 get_cached_entries 恢复时译文一致（避免缓存恢复译文不一致）
+                    let same_as_orig = restored.trim() == orig_text.trim();
                     if !failed && !batch_count_mismatch {
                         // 缓存 key 用原始文本（与查询时一致），而非占位符保护后的文本
+                        let cache_key = translate_cache_key(
+                            orig_text,
+                            source_lang,
+                            target_lang,
+                            &self.provider_name,
+                            &self.file_hash,
+                        );
+                        let _ = self.db.set_translate_cache(
+                            &cache_key,
+                            orig_text,
+                            &restored,
+                            source_lang,
+                            target_lang,
+                            &self.provider_name,
+                        );
+                    } else if failed && same_as_orig && !batch_count_mismatch && !restored.is_empty() {
+                        // 译文=原文的 failed 条目写入缓存，保证恢复时译文一致
                         let cache_key = translate_cache_key(
                             orig_text,
                             source_lang,

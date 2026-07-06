@@ -8,6 +8,17 @@ use zimufan_lib::db::Database;
 use std::path::Path;
 use std::sync::Arc;
 
+/// 批次验证结果
+/// Passed = 全部通过
+/// QualityIssue = 27b 翻译质量问题（模型能力限制，可继续下一批）
+/// CodeBug = L3 持久化/缓存代码 bug（必须停止测试，修复代码后重跑）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchResult {
+    Passed,
+    QualityIssue,
+    CodeBug,
+}
+
 /// 翻译结果
 pub struct TranslationOutput {
     pub file: SubtitleFile,
@@ -409,7 +420,7 @@ pub async fn stage_translate_batch(
     file: &SubtitleFile,
     cfg: &super::config::TestConfig,
     db: &Database,
-) -> bool {
+) -> BatchResult {
     let batch_idx = state.current_stage - 1;
 
     // 先拷贝需要的值，避免借用冲突
@@ -420,7 +431,7 @@ pub async fn stage_translate_batch(
 
     if batch_status == BatchStatus::Passed {
         eprintln!("  [阶段{}] 批次 {} 已通过，跳过", state.current_stage, batch_num);
-        return true;
+        return BatchResult::Passed;
     }
 
     eprintln!("\n  === 阶段 {}：批次 {} ({}-{}) 状态={:?} ===",
@@ -531,7 +542,9 @@ pub async fn stage_translate_batch(
     }).collect();
 
     // 打印失败条目详情
+    let mut judge_has_bug = false;
     if fail_count > 0 || shift_count > 0 {
+        judge_has_bug = true;
         eprintln!("  [27b验证] ⚠️ 发现问题条目:");
         for r in &judge_records {
             if r.verdict != "pass" {
@@ -546,49 +559,69 @@ pub async fn stage_translate_batch(
                 }
             }
         }
-        // 更新批次状态
-        {
-            let batch_state = &mut state.batches[batch_idx];
-            batch_state.judge_results = judge_records;
-            batch_state.judge_pass = pass_count;
-            batch_state.judge_fail = fail_count;
-            batch_state.judge_shift = shift_count;
-            batch_state.status = BatchStatus::BugFound;
-        }
-        state.save().expect("保存状态失败");
-        eprintln!("  [状态] 批次 {} 标记为 BugFound，修复后重跑继续", batch_num);
-        return false;
     }
 
     // 0 结果时判为失败（27b 验证未生效）
     let total_judged = pass_count + fail_count + shift_count;
     if total_judged == 0 {
+        judge_has_bug = true;
         eprintln!("  [27b验证] ⚠️ 27b 返回 0 条判定结果，验证未生效");
-        {
-            let batch_state = &mut state.batches[batch_idx];
-            batch_state.judge_results = judge_records;
-            batch_state.judge_pass = pass_count;
-            batch_state.judge_fail = fail_count;
-            batch_state.judge_shift = shift_count;
-            batch_state.status = BatchStatus::BugFound;
-        }
-        state.save().expect("保存状态失败");
-        eprintln!("  [状态] 批次 {} 标记为 BugFound（27b 验证未生效），重跑会重试", batch_num);
-        return false;
     }
 
-    // 更新批次状态
+    // L3 持久化往返验证（每批次都检查）
+    eprintln!("  [L3验证] 开始持久化往返验证批次 {}...", batch_num);
+    let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
+    let l3_results = super::checks_l3::check_batch_l3(
+        file,
+        &translated_file,
+        db,
+        &state.source_lang,
+        &state.target_lang,
+        &provider_name,
+        &file.file_hash,
+        batch_start,
+        batch_end,
+    );
+
+    let mut l3_has_bug = false;
+    for cr in &l3_results {
+        let status = cr.status.as_str();
+        eprintln!("  [L3] {} [{}]: {}", status, cr.name, cr.detail);
+        if cr.status == super::checks_l1::CheckStatus::Fail {
+            l3_has_bug = true;
+        }
+    }
+
+    // 保存 L3 验证记录到批次状态
     {
         let batch_state = &mut state.batches[batch_idx];
         batch_state.judge_results = judge_records;
         batch_state.judge_pass = pass_count;
         batch_state.judge_fail = fail_count;
         batch_state.judge_shift = shift_count;
-        batch_state.status = BatchStatus::Passed;
+        batch_state.status = if judge_has_bug || l3_has_bug {
+            BatchStatus::BugFound
+        } else {
+            BatchStatus::Passed
+        };
     }
     state.save().expect("保存状态失败");
-    eprintln!("  [27b验证] ✅ 批次 {} 通过", batch_num);
-    true
+
+    // L3 代码 bug：停止整个测试，开发者修复代码后重跑
+    if l3_has_bug {
+        eprintln!("  [状态] 批次 {} 标记为 BugFound（L3 持久化代码 bug）", batch_num);
+        eprintln!("  [停止] L3 发现代码 bug，停止测试。修复代码后用 E2E_RESET=1 重跑");
+        return BatchResult::CodeBug;
+    }
+
+    // 27b 翻译质量问题：标记 BugFound 但继续下一批（模型能力限制，非代码 bug）
+    if judge_has_bug {
+        eprintln!("  [状态] 批次 {} 标记为 BugFound（27b 翻译质量问题），继续下一批", batch_num);
+        return BatchResult::QualityIssue;
+    }
+
+    eprintln!("  [27b+L3验证] ✅ 批次 {} 全部通过", batch_num);
+    BatchResult::Passed
 }
 
 // === SECTION 6 END ===
