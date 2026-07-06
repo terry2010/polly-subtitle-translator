@@ -2399,12 +2399,16 @@ impl<'a> TranslateScheduler<'a> {
                     && !is_music_or_sfx
                     && !is_non_english
                 {
-                    tracing::warn!(
-                        "缓存译文无 CJK，忽略缓存重新翻译: index={}, text=[{}], cached=[{}]",
-                        entry.index,
-                        entry.text,
-                        cached
-                    );
+                    // 译文无 CJK（AI 未实际翻译成中文）：翻译时应跳过重新翻译，
+                    // 但恢复时（get_cached_entries）仍返回缓存，保证译文一致。
+                    // 标记 failed=true，与翻译时 failed 判定一致，前端会视为未翻译。
+                    results.push(TranslateEntry {
+                        index: entry.index,
+                        original: entry.text.clone(),
+                        translated: cached,
+                        from_cache: true,
+                        failed: true,
+                    });
                     continue;
                 }
                 results.push(TranslateEntry {
@@ -2608,8 +2612,10 @@ impl<'a> TranslateScheduler<'a> {
                         target_lang,
                         &self.provider_name,
                     );
-                } else if !restored.is_empty() && (same_as_orig || sound_mismatch) {
-                    // 译文=原文或音效标记不一致的 failed 条目写入缓存，保证恢复时译文一致
+                } else if !restored.is_empty() && (any_failed || same_as_orig || sound_mismatch || no_cjk || length_ratio_abnormal) {
+                    // 所有 failed 条目（译文非空）写入缓存，保证 get_cached_entries 恢复时译文一致。
+                    // translate_entries_full 的 bad_cache 检查会跳过坏缓存重新翻译，
+                    // 但恢复时 get_cached_entries 返回它们（标记 failed），前端视为未翻译，用户可重新翻译。
                     let cache_key = translate_cache_key(
                         &entry.text,
                         source_lang,
@@ -2820,10 +2826,10 @@ impl<'a> TranslateScheduler<'a> {
                             target_lang,
                             &self.provider_name,
                         );
-                    } else if failed && !batch_count_mismatch && !restored.is_empty()
-                        && (same_as_orig || sound_mismatch)
-                    {
-                        // 译文=原文或音效标记不一致的 failed 条目写入缓存，保证恢复时译文一致
+                    } else if failed && !batch_count_mismatch && !restored.is_empty() {
+                        // 所有 failed 条目（译文非空）写入缓存，保证 get_cached_entries 恢复时译文一致。
+                        // translate_entries_full 的 bad_cache 检查会跳过坏缓存重新翻译，
+                        // 但恢复时 get_cached_entries 返回它们（标记 failed），前端视为未翻译，用户可重新翻译。
                         let cache_key = translate_cache_key(
                             orig_text,
                             source_lang,
