@@ -1,25 +1,27 @@
 // AI-SubTrans 发布脚本
 // 用法：
-//   node scripts/publish.mjs 1.0.1 "更新内容"     → 改版本号 + 构建 + 发布（本地 Windows 全流程）
-//   node scripts/publish.mjs                       → 交互式输入
-//   node scripts/publish.mjs --build-only          → 只构建不发布（本地测试）
-//   node scripts/publish.mjs --set-version 1.0.1   → 只改版本号（CI 构建前用）
+//   node scripts/publish.mjs                        → 交互式输入版本号、说明、密码，确认后发布
+//   node scripts/publish.mjs 1.0.1 "更新内容"        → 改版本号 + 构建 + 发布（全流程）
+//   node scripts/publish.mjs 1.0.1 "更新内容" --password xxx → 带密码直接发布
+//   node scripts/publish.mjs --build-only           → 只构建不发布（本地测试）
+//   node scripts/publish.mjs --set-version 1.0.1    → 只改版本号（CI 构建前用）
 //   node scripts/publish.mjs --update-latest 1.0.1 "更新内容" → 只从 Release assets 合并生成 latest.json（CI 构建后用）
 //
-// 环境变量：
-//   GITHUB_TOKEN                          → GitHub Personal Access Token（repo 权限）
+// 环境变量（交互式模式会自动获取/输入，无需手动设置）：
+//   GITHUB_TOKEN                          → GitHub Token（自动从 gh CLI 获取）
 //   TAURI_SIGNING_PRIVATE_KEY_PATH        → 私钥文件路径（默认 ~/.tauri/ai-subtrans.key）
-//   TAURI_SIGNING_PRIVATE_KEY_PASSWORD    → 私钥密码
+//   TAURI_SIGNING_PRIVATE_KEY_PASSWORD    → 私钥密码（交互式输入或 --password 参数）
 //   TAURI_SIGNING_PRIVATE_KEY             → 私钥内容（CI 中用，优先于 PATH）
 //
 // 前提：
 //   1. 已生成签名密钥：npx tauri signer generate -w ~/.tauri/ai-subtrans.key
-//   2. GitHub Token 有 repo 权限
+//   2. gh CLI 已登录（gh auth login）或已设置 GITHUB_TOKEN
 //   3. 已创建 gh-pages 分支（首次需要手动创建）
 import { readFileSync, writeFileSync, existsSync, readdirSync, statSync } from "fs";
 import { join } from "path";
 import { execSync } from "child_process";
 import { homedir } from "os";
+import * as readline from "readline";
 
 const ROOT = process.cwd();
 const TARGET_DIR = "C:\\Users\\terry\\.cargo-target\\zimufan\\release";
@@ -33,14 +35,86 @@ const updateLatestOnly = args.includes("--update-latest");
 const isNightly = args.includes("--nightly");
 const isPrerelease = args.includes("--prerelease");
 const manifestArg = args.find(a => a.startsWith("--manifest="))?.split("=")[1] || "latest.json";
+const passwordArg = args.find(a => a.startsWith("--password="))?.split("=")[1];
 // 支持正式版(1.0.1)和nightly版本(1.0.1-nightly.20260706-143025)
 const versionArg = args.find(a => !a.startsWith("--") && /^\d+\.\d+\.\d+(-[\w.-]+)?$/.test(a));
 const notesArg = args.find(a => !a.startsWith("--") && a !== versionArg);
 
 // === 配置 ===
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+let GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const PRIVATE_KEY_PATH = process.env.TAURI_SIGNING_PRIVATE_KEY_PATH || join(homedir(), ".tauri", "ai-subtrans.key");
-const PRIVATE_KEY_PASSWORD = process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD;
+const PRIVATE_KEY_PASSWORD_FILE = join(homedir(), ".tauri", "ai-subtrans.key.password");
+// 密码优先级：环境变量 > --password 参数 > 密码文件 > 交互式输入
+let PRIVATE_KEY_PASSWORD = process.env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || passwordArg || null;
+
+// 尝试从密码文件读取
+function tryReadPasswordFile() {
+  try {
+    if (existsSync(PRIVATE_KEY_PASSWORD_FILE)) {
+      return readFileSync(PRIVATE_KEY_PASSWORD_FILE, "utf-8").trim();
+    }
+  } catch {}
+  return null;
+}
+
+// === 交互式输入 ===
+function ask(question, { hidden = false } = {}) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    if (hidden) {
+      // 隐藏密码输入
+      const stdin = process.stdin;
+      const isRaw = stdin.isTTY ? stdin.isRaw : false;
+      if (stdin.isTTY) stdin.setRawMode(true);
+      rl.question(question, (answer) => {
+        if (stdin.isTTY) stdin.setRawMode(isRaw);
+        console.log(); // 换行
+        rl.close();
+        resolve(answer);
+      });
+      // 隐藏输入字符
+      if (stdin.isTTY) {
+        stdin.on("data", (char) => {
+          if (char.toString() === "\r" || char.toString() === "\n") return;
+          process.stdout.write("\r\x1b[K" + question);
+        });
+      }
+    } else {
+      rl.question(question, (answer) => {
+        rl.close();
+        resolve(answer);
+      });
+    }
+  });
+}
+
+function askYesNo(question, defaultValue = true) {
+  return new Promise((resolve) => {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    const hint = defaultValue ? "[Y/n]" : "[y/N]";
+    rl.question(`${question} ${hint} `, (answer) => {
+      rl.close();
+      const a = answer.trim().toLowerCase();
+      if (a === "") resolve(defaultValue);
+      else resolve(a === "y" || a === "yes");
+    });
+  });
+}
+
+// === 自动获取 GitHub Token（从 gh CLI）===
+function tryGetGhToken() {
+  try {
+    const token = execSync("gh auth token", { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }).trim();
+    if (token && token.length > 0) return token;
+  } catch {}
+  return null;
+}
 
 // 从 git remote 获取 owner/repo
 function getRepoInfo() {
@@ -83,18 +157,24 @@ function build() {
     throw new Error(`私钥文件不存在: ${PRIVATE_KEY_PATH}\n请先运行: npx tauri signer generate -w ${PRIVATE_KEY_PATH}`);
   }
   if (!PRIVATE_KEY_PASSWORD) {
-    throw new Error("请设置环境变量 TAURI_SIGNING_PRIVATE_KEY_PASSWORD");
+    throw new Error("未提供私钥密码");
   }
 
   // 读取私钥内容（Tauri 需要 TAURI_SIGNING_PRIVATE_KEY 而非 PATH）
   const privateKeyContent = readFileSync(PRIVATE_KEY_PATH, "utf-8").trim();
 
+  // 自动设置 PATH 和 CARGO_TARGET_DIR（Windows 本地开发环境）
+  const cargoBin = join(homedir(), ".cargo", "bin");
+  const cargoTargetDir = "C:\\Users\\terry\\.cargo-target\\zimufan";
   const env = {
     ...process.env,
     TAURI_SIGNING_PRIVATE_KEY: privateKeyContent,
     TAURI_SIGNING_PRIVATE_KEY_PASSWORD: PRIVATE_KEY_PASSWORD,
+    PATH: `${cargoBin};${process.env.PATH || ""}`,
+    CARGO_TARGET_DIR: cargoTargetDir,
   };
   console.log(`  私钥: ${PRIVATE_KEY_PATH}`);
+  console.log(`  CARGO_TARGET_DIR: ${cargoTargetDir}`);
   execSync("npm run tauri build -- --bundles nsis", { cwd: ROOT, stdio: "inherit", env, shell: "cmd.exe" });
   console.log("  ✓ 构建完成");
 }
@@ -361,15 +441,67 @@ async function main() {
     return;
   }
 
-  // ── 模式 3：本地全流程发布（原有逻辑）──
+  // ── 模式 3：本地全流程发布 ──
 
-  // 交互式输入
+  // 交互式输入（无版本号参数时）
   if (!version) {
     const currentPkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf-8"));
+    console.log(`\n========================================`);
+    console.log(`  AI-SubTrans 发布脚本（交互式）`);
+    console.log(`========================================`);
     console.log(`\n当前版本: ${currentPkg.version}`);
-    console.log('用法: node scripts/publish.mjs <版本号> "更新内容"');
-    console.log('示例: node scripts/publish.mjs 1.0.1 "修复字幕提取进度条\\n新增自动更新"');
-    process.exit(1);
+
+    version = await ask("\n请输入发布版本号: ");
+    if (!version || !/^\d+\.\d+\.\d+(-[\w.-]+)?$/.test(version)) {
+      console.error("❌ 版本号格式无效，应为 x.y.z 或 x.y.z-prerelease");
+      process.exit(1);
+    }
+
+    notes = await ask("请输入更新说明: ");
+    if (!notes) {
+      console.error("❌ 更新说明不能为空");
+      process.exit(1);
+    }
+
+    // 自动获取 GitHub Token
+    if (!GITHUB_TOKEN) {
+      GITHUB_TOKEN = tryGetGhToken();
+      if (GITHUB_TOKEN) {
+        console.log("  ✓ 自动获取 GitHub Token（gh auth token）");
+      } else {
+        console.error("❌ 未找到 GitHub Token，请先运行 gh auth login 或设置 GITHUB_TOKEN 环境变量");
+        process.exit(1);
+      }
+    }
+
+    // 私钥密码：优先环境变量/参数，其次密码文件，最后交互输入
+    if (!PRIVATE_KEY_PASSWORD) {
+      PRIVATE_KEY_PASSWORD = tryReadPasswordFile();
+      if (PRIVATE_KEY_PASSWORD) {
+        console.log(`  ✓ 从密码文件读取: ${PRIVATE_KEY_PASSWORD_FILE}`);
+      } else {
+        PRIVATE_KEY_PASSWORD = await ask("请输入私钥密码: ", { hidden: true });
+        if (!PRIVATE_KEY_PASSWORD) {
+          console.error("❌ 私钥密码不能为空");
+          process.exit(1);
+        }
+      }
+    }
+
+    // 确认
+    console.log(`\n========================================`);
+    console.log(`  发布确认`);
+    console.log(`========================================`);
+    console.log(`  版本号: ${version}`);
+    console.log(`  说明:   ${notes}`);
+    console.log(`  仓库:   ${getRepoInfo().owner}/${getRepoInfo().repo}`);
+    console.log(`  预发布: ${isNightly || isPrerelease ? "是" : "否"}`);
+    console.log(`  构建:   ${buildOnly ? "仅构建" : "构建 + 发布"}`);
+    const confirmed = await askYesNo("\n确认发布？");
+    if (!confirmed) {
+      console.log("已取消发布。");
+      process.exit(0);
+    }
   }
 
   console.log(`\n========================================`);
@@ -378,7 +510,20 @@ async function main() {
 
   if (!buildOnly) {
     if (!GITHUB_TOKEN) {
-      throw new Error("请设置环境变量 GITHUB_TOKEN（GitHub Personal Access Token，需要 repo 权限）");
+      // 尝试自动获取
+      GITHUB_TOKEN = tryGetGhToken();
+      if (!GITHUB_TOKEN) {
+        throw new Error("未找到 GitHub Token，请先运行 gh auth login 或设置 GITHUB_TOKEN 环境变量");
+      }
+      console.log("  ✓ 自动获取 GitHub Token");
+    }
+  }
+
+  // 私钥密码：优先环境变量/参数，其次密码文件
+  if (!PRIVATE_KEY_PASSWORD) {
+    PRIVATE_KEY_PASSWORD = tryReadPasswordFile();
+    if (PRIVATE_KEY_PASSWORD) {
+      console.log(`  ✓ 从密码文件读取私钥密码: ${PRIVATE_KEY_PASSWORD_FILE}`);
     }
   }
 

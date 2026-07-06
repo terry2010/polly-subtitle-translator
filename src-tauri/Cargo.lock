@@ -6686,7 +6686,7 @@ dependencies = [
 
 [[package]]
 name = "zimufan"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "anyhow",
  "ass-core",
