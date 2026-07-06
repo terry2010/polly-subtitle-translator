@@ -2386,12 +2386,6 @@ fn build_updater_by_channel(
         tracing::info!("更新通道: nightly，使用 nightly.json");
         let endpoint = "https://terry2010.github.io/polly-subtitle-translator/nightly.json";
         let test_ver = test_version_override.clone();
-        // 读取已安装的 nightly 版本号（安装后记录的）
-        let installed_nightly = db
-            .get_config("installed_nightly_version")
-            .ok()
-            .flatten()
-            .filter(|s| !s.is_empty());
         let builder = app
             .updater_builder()
             .endpoints(vec![url::Url::parse(endpoint).map_err(|e| {
@@ -2403,36 +2397,18 @@ fn build_updater_by_channel(
                     .with_args(serde_json::json!({ "detail": e.to_string() }))
             })?
             .version_comparator(move |current, remote| {
-                let remote_str = remote.version.to_string();
-                // 如果有测试版本覆盖，用它代替真实版本
+                // nightly 构建时完整版本号已写入 tauri.conf.json
+                // 程序版本号就是完整的 nightly 版本号（如 1.0.1-nightly.20260706-104348）
+                // 直接比较：远程和当前不同就有更新
                 let current_str = test_ver.clone().unwrap_or_else(|| current.to_string());
-                // 如果已安装的 nightly 版本和远程相同，说明已经是最新 nightly
-                let has_update = if let Some(ref installed) = installed_nightly {
-                    if installed == &remote_str {
-                        tracing::info!(
-                            "nightly 版本比较: 已安装相同 nightly 版本 {} -> 无更新",
-                            installed
-                        );
-                        false
-                    } else {
-                        tracing::info!(
-                            "nightly 版本比较: installed={} remote={} -> 有更新",
-                            installed,
-                            remote_str
-                        );
-                        true
-                    }
-                } else {
-                    // 没有记录已安装版本，用旧逻辑
-                    let has_update = remote_str != current_str;
-                    tracing::info!(
-                        "nightly 版本比较(无记录): current={} remote={} -> {}",
-                        current_str,
-                        remote_str,
-                        has_update
-                    );
+                let remote_str = remote.version.to_string();
+                let has_update = remote_str != current_str;
+                tracing::info!(
+                    "nightly 版本比较: current={} remote={} -> {}",
+                    current_str,
+                    remote_str,
                     has_update
-                };
+                );
                 has_update
             });
         builder.build().map_err(|e| {
@@ -2565,16 +2541,6 @@ pub async fn download_and_install_update(
     match result {
         Ok(_) => {
             tracing::info!("更新下载安装完成，即将重启");
-            // 记录已安装的版本号（nightly 通道用于下次比较，避免重复弹窗）
-            let channel = db
-                .get_config("update_channel")
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| "stable".to_string());
-            if channel == "nightly" {
-                let _ = db.set_config("installed_nightly_version", &update.version);
-                tracing::info!("已记录 installed_nightly_version: {}", update.version);
-            }
             Ok(())
         }
         Err(e) => {
