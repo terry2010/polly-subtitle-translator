@@ -97,8 +97,10 @@ jobs:
 
       - run: npm ci
 
-      # nightly 不改 tauri.conf.json version（Tauri 不支持 prerelease 版本号）
-      # 用代码中的基础版本号构建，完整 nightly 版本号只用于 Release tag 和 nightly.json
+      # nightly 构建前设置完整版本号（含时间戳）到 tauri.conf.json/Cargo.toml/package.json
+      # 时间戳用连字符分隔（YYYYMMDD-HHMMSS），是合法 semver prerelease 标识符
+      - name: Set nightly version
+        run: node scripts/publish.mjs --set-version ${{ needs.prepare.outputs.version }}
 
       - name: Build with signing
         env:

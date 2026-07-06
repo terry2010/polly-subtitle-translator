@@ -2403,7 +2403,9 @@ fn build_updater_by_channel(
                     .with_args(serde_json::json!({ "detail": e.to_string() }))
             })?
             .version_comparator(move |current, remote| {
-                // 如果有测试版本覆盖，用它代替真实版本
+                // nightly 构建时完整版本号已写入 tauri.conf.json
+                // 程序版本号就是完整的 nightly 版本号（如 1.0.1-nightly.20260706-104348）
+                // 直接比较：远程和当前不同就有更新
                 let current_str = test_ver.clone().unwrap_or_else(|| current.to_string());
                 let remote_str = remote.version.to_string();
                 let has_update = remote_str != current_str;
