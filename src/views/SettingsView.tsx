@@ -2399,19 +2399,14 @@ function AboutSettings() {
   const { t } = useTranslation();
   const devMode = useDevModeStore((s) => s.devMode);
   const toggleDevMode = useDevModeStore((s) => s.toggle);
-  const updateChannel = useDevModeStore((s) => s.updateChannel);
   const [clickCount, setClickCount] = useState(0);
   const [appVersion, setAppVersion] = useState("1.0.1");
-  const [installedNightly, setInstalledNightly] = useState<string | null>(null);
   const checkManually = useUpdateStore((s) => s.checkManually);
   const updateChecking = useUpdateStore((s) => s.checking);
   const [updateResult, setUpdateResult] = useState<"latest" | "failed" | null>(null);
 
   useEffect(() => {
     import("@tauri-apps/api/app").then(({ getVersion }) => getVersion().then(setAppVersion).catch(() => {}));
-    import("../lib/api").then(({ api }) => {
-      api.getConfig("installed_nightly_version").then((v: string | null) => setInstalledNightly(v || null)).catch(() => {});
-    });
   }, []);
 
   const handleCheckUpdate = useCallback(async () => {
@@ -2457,11 +2452,6 @@ function AboutSettings() {
             onClick={handleVersionClick}
           >
             v{appVersion} (zimufan)
-            {installedNightly && updateChannel === "nightly" && (
-              <span className="block text-xs text-orange-600 mt-1">
-                nightly: {installedNightly}
-              </span>
-            )}
           </p>
           <p className="text-sm text-muted-foreground">{t("settings.aboutTagline")}</p>
           <div className="border-t pt-3 text-xs text-muted-foreground space-y-1">
