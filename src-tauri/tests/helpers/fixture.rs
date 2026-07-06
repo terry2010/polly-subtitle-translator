@@ -67,6 +67,16 @@ pub fn all_fixtures() -> Vec<Fixture> {
             has_sound_effects: false,
             tags: vec!["animation".into(), "dialogue".into(), "short_sentences".into()],
         },
+        Fixture {
+            name: "rick_s09e07".to_string(),
+            file: "rick_s09e07.srt".to_string(),
+            format: SubtitleFormat::Srt,
+            source_lang: "en".to_string(),
+            target_lang: "zh".to_string(),
+            has_names: true,
+            has_sound_effects: false,
+            tags: vec!["animation".into(), "dialogue".into(), "real_world".into()],
+        },
     ]
 }
 
