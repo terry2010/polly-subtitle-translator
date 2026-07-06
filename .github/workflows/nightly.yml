@@ -48,8 +48,9 @@ jobs:
         run: |
           # 从 Cargo.toml 读取基础版本号
           BASE_VERSION=$(grep '^version = ' src-tauri/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          # 生成时间戳 YYYYMMDD.HHMMSS（UTC）
-          TIMESTAMP=$(date -u +"%Y%m%d.%H%M%S")
+          # 生成时间戳 YYYYMMDD-HHMMSS（UTC）
+          # 用连字符分隔日期和时间，避免时间段以 0 开头时 semver 报 leading zero 错误
+          TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
           VERSION="${BASE_VERSION}-nightly.${TIMESTAMP}"
           TAG="nightly-${BASE_VERSION}-${TIMESTAMP}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
