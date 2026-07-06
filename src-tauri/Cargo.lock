@@ -6723,7 +6723,7 @@ dependencies = [
 
 [[package]]
 name = "zimufan"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "ass-core",
@@ -6746,6 +6746,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rusqlite",
  "scraper",
+ "semver",
  "serde",
  "serde_json",
  "sevenz-rust",

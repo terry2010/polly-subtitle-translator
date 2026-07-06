@@ -53,6 +53,7 @@ scraper = "0.22"
 hmac = "0.12"
 sha1 = "0.10"
 url = "2"
+semver = "1"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
