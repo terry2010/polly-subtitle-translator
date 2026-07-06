@@ -1,11 +1,11 @@
 {
-  "version": "1.0.1-nightly.20260706.082548",
+  "version": "1.0.1-nightly.20260706.091617",
   "notes": "首个 nightly 构建",
-  "pub_date": "2026-07-06T08:31:35.367Z",
+  "pub_date": "2026-07-06T09:21:18.804Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdCt5OW9KUWx6Y0N2RzJHK2lpbFlzdllmeXV6ZUpMMWgyY0ZzdjVBZ1M5RTZERVRUWmZrdUZBVGFQNGxkeFpOR0lVR1hoRDU1S3hGYmpGNnNPcUtwMUFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzI2NjczCWZpbGU6QUktU3ViVHJhbnNfMS4wLjFfeDY0LXNldHVwLmV4ZQo5enZuU245R2hQZnBwdnEwZ1EwczIzNm4ybWt2enJFaU5ESzlyUmlkeFRXcHIybkRwL0loMTBTS0lMc1VJZVQ4RWl2dFRNbWpYVHRCb0g0MHdCRllEZz09Cg==",
-      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/nightly-20260706.082548/AI-SubTrans_1.0.1_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdDZHdHBWekw5TDd6TlhsODRUWS8rcUdLb0RiVkpEMGMzMmM4TkgyZWNncUZUTXF5OWZFb25jWmhxc215cncyd3RGcHJ0THVkU3BBVjdQMXVydHFXZmc4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzI5NjU5CWZpbGU6QUktU3ViVHJhbnNfMS4wLjFfeDY0LXNldHVwLmV4ZQpyVkc1S0o3YUdNTzhMSUFBK3VYWHhVOWpSZGdOaFo3OUZxUHJuS0NhZ1lSVnR2cW1Kc0R5UkFlaisyYkdPcmgxYW5NZG9HWWZhZXpoSXVsWXM3ZDdCdz09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/nightly-1.0.1-20260706.091617/AI-SubTrans_1.0.1_x64-setup.exe"
     }
   }
 }
