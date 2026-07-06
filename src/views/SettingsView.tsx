@@ -1866,9 +1866,12 @@ function DeveloperSettings() {
   const toggleNamePrecision = useDevModeStore((s) => s.toggleNamePrecision);
   const updateChannel = useDevModeStore((s) => s.updateChannel);
   const setUpdateChannel = useDevModeStore((s) => s.setUpdateChannel);
+  const testVersionOverride = useDevModeStore((s) => s.testVersionOverride);
+  const setTestVersionOverride = useDevModeStore((s) => s.setTestVersionOverride);
   const checkManually = useUpdateStore((s) => s.checkManually);
   const updateChecking = useUpdateStore((s) => s.checking);
   const [channelCheckResult, setChannelCheckResult] = useState<"latest" | "failed" | null>(null);
+  const [versionInput, setVersionInput] = useState("");
 
   const handleChannelCheckUpdate = useCallback(async () => {
     setChannelCheckResult(null);
@@ -1878,6 +1881,17 @@ function DeveloperSettings() {
     // available 时弹窗会自动打开，不需要在这里处理
     setTimeout(() => setChannelCheckResult(null), 3000);
   }, [checkManually]);
+
+  const handleSaveTestVersion = useCallback(async () => {
+    await setTestVersionOverride(versionInput.trim());
+    toast.success(t("settings.testVersionSaved", "测试版本号已保存，点击检查更新生效"));
+  }, [versionInput, setTestVersionOverride, t]);
+
+  const handleClearTestVersion = useCallback(async () => {
+    setVersionInput("");
+    await setTestVersionOverride("");
+    toast.info(t("settings.testVersionCleared", "已清除测试版本号，恢复真实版本"));
+  }, [setTestVersionOverride, t]);
   const [crashDir, setCrashDir] = useState<string>("");
   const [crashCount, setCrashCount] = useState<number>(0);
   const [promptFailDir, setPromptFailDir] = useState<string>("");
@@ -2337,6 +2351,40 @@ function DeveloperSettings() {
               {t("settings.updateCheckFailed", "检查更新失败，请稍后重试")}
             </p>
           )}
+
+          {/* 测试版本号覆盖 */}
+          <div className="space-y-2 pt-2 border-t">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">
+                {t("settings.testVersion", "测试版本号")}
+              </span>
+              {testVersionOverride && (
+                <span className="text-xs text-blue-600">
+                  {t("settings.testVersionActive", "当前生效")}: {testVersionOverride}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.testVersionDesc", "填入版本号模拟旧版本，测试更新流程。留空恢复真实版本。")}
+            </p>
+            <div className="flex items-center gap-2">
+              <Input
+                value={versionInput}
+                onChange={(e) => setVersionInput(e.target.value)}
+                placeholder={testVersionOverride || "如 1.0.0"}
+                className="w-40"
+              />
+              <Button size="sm" variant="outline" onClick={handleSaveTestVersion} disabled={!versionInput.trim()}>
+                {t("settings.testVersionSave", "保存")}
+              </Button>
+              {testVersionOverride && (
+                <Button size="sm" variant="ghost" onClick={handleClearTestVersion}>
+                  {t("settings.testVersionClear", "清除")}
+                </Button>
+              )}
+            </div>
+          </div>
+
           <p className="text-xs text-muted-foreground">
             {t("settings.updateChannelNote", "切换后下次检查更新时生效（手动检查或重启后自动检查）。")}
           </p>

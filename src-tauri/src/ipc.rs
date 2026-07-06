@@ -2361,13 +2361,21 @@ fn build_updater_by_channel(
         .flatten()
         .unwrap_or_else(|| "stable".to_string());
 
+    // 开发者测试用：从 config 读取版本号覆盖（模拟旧版本测试更新流程）
+    let test_version_override = db
+        .get_config("test_version_override")
+        .ok()
+        .flatten()
+        .filter(|s| !s.is_empty());
+
+    if let Some(ref test_ver) = test_version_override {
+        tracing::info!("测试版本覆盖: {} (真实版本将被替换)", test_ver);
+    }
+
     if channel == "nightly" {
         tracing::info!("更新通道: nightly，使用 nightly.json");
-        // nightly 通道：覆盖 endpoint 指向 nightly.json
         let endpoint = "https://terry2010.github.io/polly-subtitle-translator/nightly.json";
-        // 自定义版本比较器：nightly 版本号格式为 1.0.1-nightly.20260706.143025
-        // 客户端版本是基础版本号（如 1.0.1），nightly.json 的 version 含时间戳
-        // 只要远程版本号和当前版本不同就认为有更新（因为 nightly 每次构建版本号都不同）
+        let test_ver = test_version_override.clone();
         let builder = app
             .updater_builder()
             .endpoints(vec![url::Url::parse(endpoint).map_err(|e| {
@@ -2378,18 +2386,18 @@ fn build_updater_by_channel(
                 IpcError::new("update.check_failed", Severity::Recoverable)
                     .with_args(serde_json::json!({ "detail": e.to_string() }))
             })?
-            .version_comparator(|current, remote| {
-                // nightly 通道：远程版本和当前版本不同就有更新
-                // 当前版本是基础版本号(如 1.0.1)，远程是 1.0.1-nightly.时间戳
+            .version_comparator(move |current, remote| {
+                // 如果有测试版本覆盖，用它代替真实版本
+                let current_str = test_ver.clone().unwrap_or_else(|| current.to_string());
                 let remote_str = remote.version.to_string();
-                let current_str = current.to_string();
+                let has_update = remote_str != current_str;
                 tracing::info!(
                     "nightly 版本比较: current={} remote={} -> {}",
                     current_str,
                     remote_str,
-                    remote_str != current_str
+                    has_update
                 );
-                remote_str != current_str
+                has_update
             });
         builder.build().map_err(|e| {
             IpcError::new("update.check_failed", Severity::Recoverable)
@@ -2397,10 +2405,38 @@ fn build_updater_by_channel(
         })
     } else {
         // stable 通道：用 tauri.conf.json 配置的默认 endpoint（latest.json）
-        app.updater().map_err(|e| {
-            IpcError::new("update.check_failed", Severity::Recoverable)
-                .with_args(serde_json::json!({ "detail": e.to_string() }))
-        })
+        if let Some(ref test_ver) = test_version_override {
+            // 有测试版本覆盖：用自定义比较器
+            let test_ver = test_ver.clone();
+            let builder = app
+                .updater_builder()
+                .version_comparator(move |_current, remote| {
+                    let current_str = test_ver.clone();
+                    let remote_str = remote.version.to_string();
+                    let has_update = semver::Version::parse(&remote_str)
+                        .ok()
+                        .zip(semver::Version::parse(&current_str).ok())
+                        .map(|(remote_v, current_v)| remote_v > current_v)
+                        .unwrap_or(false);
+                    tracing::info!(
+                        "stable 版本比较(测试): current={} remote={} -> {}",
+                        current_str,
+                        remote_str,
+                        has_update
+                    );
+                    has_update
+                });
+            builder.build().map_err(|e| {
+                IpcError::new("update.check_failed", Severity::Recoverable)
+                    .with_args(serde_json::json!({ "detail": e.to_string() }))
+            })
+        } else {
+            // 正常 stable：用默认比较器
+            app.updater().map_err(|e| {
+                IpcError::new("update.check_failed", Severity::Recoverable)
+                    .with_args(serde_json::json!({ "detail": e.to_string() }))
+            })
+        }
     }
 }
 
