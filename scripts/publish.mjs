@@ -33,8 +33,8 @@ const updateLatestOnly = args.includes("--update-latest");
 const isNightly = args.includes("--nightly");
 const isPrerelease = args.includes("--prerelease");
 const manifestArg = args.find(a => a.startsWith("--manifest="))?.split("=")[1] || "latest.json";
-// 支持正式版(1.0.1)和nightly版本(1.0.1-nightly.20260706.143025)
-const versionArg = args.find(a => !a.startsWith("--") && /^\d+\.\d+\.\d+(-[\w.]+)?$/.test(a));
+// 支持正式版(1.0.1)和nightly版本(1.0.1-nightly.20260706-143025)
+const versionArg = args.find(a => !a.startsWith("--") && /^\d+\.\d+\.\d+(-[\w.-]+)?$/.test(a));
 const notesArg = args.find(a => !a.startsWith("--") && a !== versionArg);
 
 // === 配置 ===
