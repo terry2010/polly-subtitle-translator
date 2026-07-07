@@ -146,7 +146,7 @@ fn classify_char(c: char) -> LangClass {
 }
 
 /// 检测一行文本的主导语言（忽略数字、标点、空白、ass 样式标记）
-fn detect_line_lang(line: &str) -> LangClass {
+pub fn detect_line_lang(line: &str) -> LangClass {
     // 剥离 ass 样式标记 {\...}，避免样式名中的文字干扰语言分类
     let stripped = strip_ass_tags(line);
     let mut counts: std::collections::HashMap<LangClass, usize> = std::collections::HashMap::new();
@@ -166,6 +166,7 @@ fn detect_line_lang(line: &str) -> LangClass {
 }
 
 /// 判断两个语言类别是否属于不同语言（用于双语检测）
+#[allow(dead_code)]
 fn is_different_lang(a: LangClass, b: LangClass) -> bool {
     // Hiragana/Katakana/Cjk 都算日语系，不互相区分
     let group = |c: LangClass| match c {

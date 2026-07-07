@@ -361,6 +361,19 @@ pub enum AppError {
     #[error("Download task failed: {detail}")]
     DownloadTaskFailed { detail: String },
 
+    // === Batch ===
+    #[error("批量翻译队列错误: {detail}")]
+    BatchQueueError { detail: String },
+
+    #[error("文件夹监视错误: {detail}")]
+    BatchWatchError { detail: String },
+
+    #[error("批量翻译文件不存在: {path}")]
+    BatchFileNotFound { path: String },
+
+    #[error("批量翻译配置无效: {detail}")]
+    BatchConfigInvalid { detail: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -664,6 +677,19 @@ impl AppError {
                 .with_args(serde_json::json!({ "detail": detail })),
 
             DownloadTaskFailed { detail } => IpcError::new("common.downloadTaskFailed", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": detail })),
+
+            // === Batch ===
+            BatchQueueError { detail } => IpcError::new("batch.queueError", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": detail })),
+
+            BatchWatchError { detail } => IpcError::new("batch.watchError", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": detail })),
+
+            BatchFileNotFound { path } => IpcError::new("batch.fileNotFound", Severity::Recoverable)
+                .with_args(serde_json::json!({ "path": path })),
+
+            BatchConfigInvalid { detail } => IpcError::new("batch.configInvalid", Severity::Recoverable)
                 .with_args(serde_json::json!({ "detail": detail })),
 
             Io(e) => IpcError::new("common.ioError", Severity::Recoverable)

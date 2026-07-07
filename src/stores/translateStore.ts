@@ -72,7 +72,7 @@ export const useTranslateStore = create<TranslateState>()(
       error: null,
       sourceLang: "en",
       targetLang: "zh",
-      provider: "baidu",
+      provider: "",
       model: "",
       modelType: "",
       serviceId: null,

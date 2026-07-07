@@ -11,9 +11,11 @@ pub mod ipc;
 pub mod search;
 pub mod context_menu;
 pub mod player;
+pub mod batch;
 
 use tauri::{Manager, Listener};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use crate::db::Database;
 
 /// 解析命令行参数，提取运行模式和文件路径
 /// --mode=quick: 右键视频静默流程（提取→翻译→合并）
@@ -261,8 +263,8 @@ fn get_stream_log_dir() -> std::path::PathBuf {
     }
 }
 
-/// task_local：存储当前并发槽位的流式日志文件句柄（保持打开，实时 flush）
-/// 在并发调度层设置，translate_single_batch_stream 中读取
+// task_local：存储当前并发槽位的流式日志文件句柄（保持打开，实时 flush）
+// 在并发调度层设置，translate_single_batch_stream 中读取
 tokio::task_local! {
     pub static STREAM_LOG_FILE: std::sync::Arc<std::sync::Mutex<std::fs::File>>;
 }
@@ -441,6 +443,7 @@ struct ExceptionRecord {
 
 #[cfg(windows)]
 #[repr(C)]
+#[allow(non_snake_case)]
 struct ExceptionPointers {
     ExceptionRecord: *mut ExceptionRecord,
     _ContextRecord: *mut std::ffi::c_void,
@@ -710,6 +713,12 @@ pub fn run() {
                 Ok(_) => {}
                 Err(e) => tracing::warn!("启动清理假翻译缓存失败: {:?}", e),
             }
+
+            // 在 manage(db) 之前读取批量配置（manage 会 move db）
+            let saved_batch_config = db.get_config("batch_config").ok().flatten()
+                .and_then(|json| serde_json::from_str::<batch::BatchConfig>(&json).ok())
+                .unwrap_or_default();
+
             app.manage(db);
 
             // 初始化翻译取消令牌
@@ -717,6 +726,89 @@ pub fn run() {
 
             // 初始化 ffmpeg 的 app_data_dir（供 find_ffmpeg 查找下载的 ffmpeg）
             crate::ffmpeg::init_app_data_dir(app_data_dir.clone());
+
+            // 初始化批量翻译队列
+            let (tx, rx) = tokio::sync::mpsc::channel::<batch::BatchCmd>(256);
+            let batch_tasks = std::sync::Arc::new(std::sync::Mutex::new(Vec::<batch::BatchTask>::new()));
+            // 从 DB 读取已保存的批量配置，fallback 到默认（已在 manage 前读取）
+            let batch_config = std::sync::Arc::new(std::sync::Mutex::new(saved_batch_config));
+            let batch_watcher = std::sync::Arc::new(std::sync::Mutex::new(None::<batch::FolderWatcher>));
+            let batch_paused = std::sync::Arc::new(std::sync::Mutex::new(false));
+            let batch_scan_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+            // V2 持久化：从 DB 恢复未完成的批量任务
+            // 处理中的任务标记为 Failed（重启后无法恢复处理上下文）
+            {
+                let db_state = app.state::<Database>();
+                match db_state.load_batch_tasks() {
+                    Ok(saved_tasks) => {
+                        let mut tasks = batch_tasks.lock().unwrap();
+                        for mut task in saved_tasks {
+                            // 处理中的任务标记为 Failed（重启后无法恢复）
+                            let is_processing = matches!(
+                                task.status,
+                                batch::BatchStatus::Probing
+                                    | batch::BatchStatus::CheckingSubtitle
+                                    | batch::BatchStatus::Extracting(_)
+                                    | batch::BatchStatus::Parsing
+                                    | batch::BatchStatus::Translating(_)
+                                    | batch::BatchStatus::Exporting
+                            );
+                            if is_processing {
+                                task.status = batch::BatchStatus::Failed(
+                                    "应用重启，任务中断".to_string()
+                                );
+                                task.error = Some("应用重启，任务中断".to_string());
+                                task.finished_at = Some(batch::now_ts());
+                                let _ = db_state.upsert_batch_task(&task);
+                            }
+                            // 已完成/已失败/已跳过的任务保留，Queued 的任务保留等待重新调度
+                            tasks.push(task);
+                        }
+                        tracing::info!("批量翻译：从 DB 恢复 {} 个任务", tasks.len());
+                    }
+                    Err(e) => {
+                        tracing::warn!("批量翻译：从 DB 恢复任务失败: {}", e);
+                    }
+                }
+            }
+
+            let batch_queue = batch::BatchQueue {
+                tx,
+                tasks: batch_tasks.clone(),
+                config: batch_config.clone(),
+                watcher: batch_watcher.clone(),
+                paused: batch_paused.clone(),
+                scan_cancel: batch_scan_cancel.clone(),
+            };
+            app.manage(batch_queue);
+
+            // 启动 BatchWorker 后台 task
+            let app_handle_for_batch = app.handle().clone();
+            // 在 move 之前先读取配置判断是否需要自动启动监视
+            let need_auto_watch = !batch_config.lock().unwrap().watch_paths.is_empty();
+            batch::spawn_batch_worker(
+                app_handle_for_batch,
+                rx,
+                batch_tasks,
+                batch_config,
+                batch_paused,
+                batch_scan_cancel,
+            );
+
+            // 启动时清理 batch_tmp/ 残留临时文件
+            batch::cleanup_batch_tmp();
+
+            // 若配置了 watch_paths，延迟 2 秒自动启动监视
+            if need_auto_watch {
+                let app_handle_for_watch = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    if let Err(e) = batch::auto_start_watch(&app_handle_for_watch).await {
+                        tracing::warn!("批量翻译：自动恢复文件夹监视失败: {}", e);
+                    }
+                });
+            }
 
             tracing::info!("AI-SubTrans 启动完成，数据目录: {:?}", app_data_dir);
 

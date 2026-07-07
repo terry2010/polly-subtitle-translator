@@ -25,6 +25,8 @@ import type {
   ExportOptions,
   SubtitleStreamEdit,
   PromptFailLogEntry,
+  BatchTask,
+  BatchConfig,
 } from "./ipc-types";
 
 /// 调用 IPC 命令并解析 IpcResult 包装
@@ -406,4 +408,66 @@ export const api = {
 
   downloadAndInstallUpdate: () =>
     callIpc<void>("download_and_install_update"),
+
+  // === 批量翻译 ===
+  getBatchStatus: () =>
+    callIpc<BatchTask[]>("get_batch_status"),
+
+  batchTranslateFiles: (paths: string[], config?: BatchConfig) =>
+    callIpc<string[]>("batch_translate_files", { paths, config: config ?? null }),
+
+  startFolderWatch: (paths: string[], recursive: boolean, config?: BatchConfig) =>
+    callIpc<void>("start_folder_watch", { paths, recursive, config: config ?? null }),
+
+  stopFolderWatch: () =>
+    callIpc<void>("stop_folder_watch"),
+
+  scanExistingFiles: (paths?: string[], recursive?: boolean) =>
+    callIpc<void>("scan_existing_files", { paths: paths ?? null, recursive: recursive ?? null }),
+
+  cancelScan: () =>
+    callIpc<void>("cancel_scan"),
+
+  addFilesToQueue: (files: string[]) =>
+    callIpc<number>("add_files_to_queue", { files }),
+
+  cancelBatchTask: (taskId: string) =>
+    callIpc<void>("cancel_batch_task", { taskId }),
+
+  deleteBatchTask: (taskId: string) =>
+    callIpc<void>("delete_batch_task", { taskId }),
+
+  startBatchTask: (taskId: string) =>
+    callIpc<void>("start_batch_task", { taskId }),
+
+  reorderBatchTasks: (taskIds: string[]) =>
+    callIpc<void>("reorder_batch_tasks", { taskIds }),
+
+  retryBatchTask: (taskId: string) =>
+    callIpc<void>("retry_batch_task", { taskId }),
+
+  clearBatchQueue: () =>
+    callIpc<void>("clear_batch_queue"),
+
+  pauseBatchQueue: () =>
+    callIpc<void>("pause_batch_queue"),
+
+  resumeBatchQueue: () =>
+    callIpc<void>("resume_batch_queue"),
+
+  saveBatchConfig: (config: BatchConfig) =>
+    callIpc<void>("save_batch_config", { config }),
+
+  getBatchConfig: () =>
+    callIpc<BatchConfig>("get_batch_config"),
+
+  // === 文件夹右键菜单 ===
+  registerFolderMenu: (exePath: string) =>
+    callIpc<void>("register_folder_menu", { exePath }),
+
+  unregisterFolderMenu: () =>
+    callIpc<void>("unregister_folder_menu"),
+
+  isFolderMenuRegistered: () =>
+    callIpc<boolean>("is_folder_menu_registered"),
 };

@@ -16,14 +16,14 @@ use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 pub type CancelToken = Arc<AtomicU64>;
 
 /// 将 AppError 转为 IpcError（用于 async 命令返回 Result<T, IpcError>）
-fn to_ipc_err(e: AppError) -> IpcError {
+pub(crate) fn to_ipc_err(e: AppError) -> IpcError {
     e.to_ipc_error()
 }
 
 /// 计算翻译（含人名预扫描）的实际并发数
 /// 规则：用户可覆盖 provider 的默认限流策略（config key 形如 translate_openai_{sid}_qps），
 /// 再与全局 translate_concurrency 取最小值。Qps 模式下强制串行（1 并发）。
-fn resolve_translation_concurrency(
+pub(crate) fn resolve_translation_concurrency(
     db: &Database,
     prov: &TranslateProvider,
     service_id: &Option<String>,
@@ -102,6 +102,9 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         unregister_subtitle_menu,
         is_video_menu_registered,
         is_subtitle_menu_registered,
+        register_folder_menu,
+        unregister_folder_menu,
+        is_folder_menu_registered,
         get_libmpv_status_cmd,
         download_libmpv_cmd,
         delete_libmpv_cmd,
@@ -153,10 +156,200 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         toggle_devtools,
         check_for_update,
         download_and_install_update,
+        // 批量翻译
+        batch_translate_files,
+        get_batch_status,
+        cancel_batch_task,
+        start_batch_task,
+        delete_batch_task,
+        reorder_batch_tasks,
+        clear_batch_queue,
+        retry_batch_task,
+        pause_batch_queue,
+        resume_batch_queue,
+        save_batch_config,
+        get_batch_config,
+        start_folder_watch,
+        stop_folder_watch,
+        scan_existing_files,
+        cancel_scan,
+        add_files_to_queue,
     ])
 }
 
 // === SECTION 1 END ===
+
+// === SECTION: resolve_provider（批量翻译共用凭据解析）===
+
+/// 从 DB 读取凭据配置，创建翻译 provider 实例
+/// 被 translate_subtitle（单文件 IPC）和 BatchWorker（批量）共用
+/// 返回 (provider_instance, provider_name, rate_limit)
+pub(crate) struct ResolvedProvider {
+    pub instance: std::sync::Arc<dyn translate::TranslateProviderTrait + Send + Sync>,
+    pub name: String,
+    pub rate_limit: translate::RateLimitPolicy,
+}
+
+/// 从 DB 解析凭据并创建 provider 实例
+/// glossary/name_tagging 仅 AI 翻译使用，传统翻译传空/false
+pub(crate) fn resolve_provider(
+    db: &Database,
+    provider: &str,
+    model: Option<&str>,
+    model_type: Option<&str>,
+    service_id: Option<&str>,
+    glossary: Vec<(String, String)>,
+    name_tagging: bool,
+) -> Result<ResolvedProvider, AppError> {
+    let prov = TranslateProvider::from_str(provider).ok_or_else(|| {
+        AppError::TranslateUnknownProvider { provider: provider.to_string() }
+    })?;
+
+    // 从 config 表读取凭据配置
+    let config_key = format!("translate_{}_app_id", provider);
+    let app_id = db.get_config(&config_key)?;
+    let region_ref = format!("translate_{}_region", provider);
+    let region = db.get_config(&region_ref)?;
+
+    // OpenAi 专属配置：base_url / model / model_type（per-service 读取）
+    let base_url = if prov == TranslateProvider::OpenAi {
+        let key = match service_id {
+            Some(sid) => format!("translate_openai_{}_base_url", sid),
+            None => "translate_openai_base_url".to_string(),
+        };
+        db.get_config(&key)?
+    } else { None };
+
+    // model：AI 翻译时前端必传
+    let model = if prov == TranslateProvider::OpenAi { model.map(|s| s.to_string()) } else { None };
+
+    // model_type：per-service 从 db 读取映射，再 fallback from_model_id
+    let model_type = if prov == TranslateProvider::OpenAi {
+        if let Some(mt) = model_type {
+            Some(mt.to_string())
+        } else if let Some(m) = &model {
+            let types_key = match service_id {
+                Some(sid) => format!("translate_openai_{}_selected_model_types", sid),
+                None => "translate_openai_selected_model_types".to_string(),
+            };
+            if let Ok(Some(json)) = db.get_config(&types_key) {
+                if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&json) {
+                    if let Some(val) = map.get(m) {
+                        if let Some(s) = val.as_str() { Some(s.to_string()) } else { None }
+                    } else {
+                        Some(translate::ModelType::from_model_id(m).as_str().to_string())
+                    }
+                } else {
+                    Some(translate::ModelType::from_model_id(m).as_str().to_string())
+                }
+            } else {
+                Some(translate::ModelType::from_model_id(m).as_str().to_string())
+            }
+        } else { None }
+    } else { None };
+
+    // 从数据库读取密钥
+    let keyring_provider = if prov == TranslateProvider::OpenAi {
+        match service_id {
+            Some(sid) => format!("openai_{}", sid),
+            None => "openai".to_string(),
+        }
+    } else {
+        provider.to_string()
+    };
+    let secret = match config::CredentialStore::load(db, &keyring_provider, "secret", "翻译字幕") {
+        Ok(s) => Some(s),
+        Err(AppError::StorageCredentialNotFound { .. }) => None,
+        Err(e) => {
+            tracing::warn!("resolve_provider db 读取失败: {}", e);
+            None
+        }
+    };
+
+    // 验证凭据存在
+    if prov == TranslateProvider::OpenAi {
+        if base_url.is_none() {
+            return Err(AppError::TranslateCredentialsNotConfigured);
+        }
+    } else if app_id.is_none() && secret.is_none() {
+        return Err(AppError::TranslateCredentialsNotConfigured);
+    }
+
+    let credentials = ProviderCredentials {
+        app_id,
+        secret_key: secret,
+        region,
+        base_url,
+        model: model.clone(),
+        model_type: model_type.clone(),
+    };
+
+    // 代理：per-service 读取
+    let proxy_config = ProxyConfig::load_from_db(db);
+    let use_proxy_key = if prov == TranslateProvider::OpenAi {
+        match service_id {
+            Some(sid) => format!("translate_openai_{}_use_proxy", sid),
+            None => format!("translate_{}_use_proxy", provider),
+        }
+    } else {
+        format!("translate_{}_use_proxy", provider)
+    };
+    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
+    let effective_proxy = match use_proxy.as_deref() {
+        Some("false") => ProxyConfig::default(),
+        _ => proxy_config,
+    };
+
+    // AI 服务：用真实服务商名作为 service_name
+    let service_name = if prov == translate::TranslateProvider::OpenAi {
+        service_id.map(translate::ai_service_display_name)
+    } else {
+        None
+    };
+    let provider_options = translate::ProviderOptions {
+        glossary,
+        name_tagging,
+    };
+    let prov_instance = translate::create_provider_with_proxy(
+        &prov, &credentials, &effective_proxy, service_name, &provider_options,
+    )?;
+
+    // 缓存 key 隔离：provider_name 纳入 service_id + model
+    let provider_name = if prov == TranslateProvider::OpenAi {
+        match (&service_id.map(|s| s.to_string()), &model) {
+            (Some(sid), Some(m)) => translate::build_cache_provider_name(&["openai", sid, m]),
+            _ => "openai".to_string(),
+        }
+    } else {
+        provider.to_string()
+    };
+
+    // 限流策略
+    let rate_limit = prov.rate_limit_policy();
+    let config_key = if prov == TranslateProvider::OpenAi {
+        service_id
+            .map(|sid| format!("translate_openai_{}_qps", sid))
+            .unwrap_or_else(|| "translate_openai_qps".to_string())
+    } else {
+        format!("translate_{}_qps", prov.as_str())
+    };
+    let user_override = db.get_config(&config_key)
+        .ok().flatten()
+        .and_then(|v| v.parse::<usize>().ok());
+    let rate_limit = match (rate_limit, user_override) {
+        (translate::RateLimitPolicy::Qps(_), Some(q)) => translate::RateLimitPolicy::Qps(q),
+        (translate::RateLimitPolicy::Concurrency(_), Some(c)) => translate::RateLimitPolicy::Concurrency(c),
+        (policy, None) => policy,
+    };
+
+    Ok(ResolvedProvider {
+        instance: prov_instance,
+        name: provider_name,
+        rate_limit,
+    })
+}
+
+// === SECTION: resolve_provider END ===
 
 /// probe_video：探测视频文件信息
 #[tauri::command]
@@ -459,159 +652,23 @@ pub async fn translate_subtitle(
     // 代际计数器：获取唯一代际号，使之前的翻译任务自动失效
     let my_gen = cancel_token.fetch_add(1, Ordering::Relaxed) + 1;
 
-    // comingSoon 拦截：在 TranslateProvider::from_str 之前，返回友好错误
+    // 复用抽取后的 resolve_provider 公用函数（批量翻译也共用此逻辑）
+    let resolved = resolve_provider(
+        &db, &provider, model.as_deref(), model_type.as_deref(),
+        service_id.as_deref(),
+        glossary.clone().unwrap_or_default(),
+        name_tagging.unwrap_or(false),
+    ).map_err(to_ipc_err)?;
 
+    let prov_instance = resolved.instance;
+    let provider_name = resolved.name;
+    let rate_limit = resolved.rate_limit;
+
+    // 计算实际并发数（限流策略 + 用户覆盖 + 全局并发数取最小）
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
         AppError::TranslateUnknownProvider { provider: provider.clone() }
     }).map_err(to_ipc_err)?;
-
-    // 从 config 表读取凭据配置
-    let config_key = format!("translate_{}_app_id", provider);
-    let app_id = db.get_config(&config_key).map_err(to_ipc_err)?;
-    tracing::info!("translate_subtitle app_id from config: {:?}", app_id);
-    let region_ref = format!("translate_{}_region", provider);
-    let region = db.get_config(&region_ref).map_err(to_ipc_err)?;
-
-    // OpenAi 专属配置：base_url / model / model_type（per-service 读取）
-    let base_url = if prov == TranslateProvider::OpenAi {
-        let key = match &service_id {
-            Some(sid) => format!("translate_openai_{}_base_url", sid),
-            None => "translate_openai_base_url".to_string(),
-        };
-        db.get_config(&key).map_err(to_ipc_err)?
-    } else { None };
-
-    // model：AI 翻译时前端必传，不再从 db fallback（避免读到其他服务的模型）
-    let model = if prov == TranslateProvider::OpenAi { model } else { None };
-
-    // model_type：per-service 从 db 读取映射，再 fallback from_model_id
-    let model_type = if prov == TranslateProvider::OpenAi {
-        if let Some(mt) = model_type {
-            Some(mt)
-        } else if let Some(m) = &model {
-            let types_key = match &service_id {
-                Some(sid) => format!("translate_openai_{}_selected_model_types", sid),
-                None => "translate_openai_selected_model_types".to_string(),
-            };
-            if let Ok(Some(json)) = db.get_config(&types_key) {
-                if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&json) {
-                    if let Some(val) = map.get(m) {
-                        if let Some(s) = val.as_str() { Some(s.to_string()) } else { None }
-                    } else {
-                        Some(translate::ModelType::from_model_id(m).as_str().to_string())
-                    }
-                } else {
-                    Some(translate::ModelType::from_model_id(m).as_str().to_string())
-                }
-            } else {
-                Some(translate::ModelType::from_model_id(m).as_str().to_string())
-            }
-        } else { None }
-    } else { None };
-
-    // 从数据库读取密钥：AI 服务用 openai_{service_id} 作为凭据 provider key
-    let keyring_provider = if prov == TranslateProvider::OpenAi {
-        match &service_id {
-            Some(sid) => format!("openai_{}", sid),
-            None => "openai".to_string(),
-        }
-    } else {
-        provider.clone()
-    };
-    let secret = match config::CredentialStore::load(&db, &keyring_provider, "secret", "翻译字幕") {
-        Ok(s) => {
-            tracing::info!("translate_subtitle secret from db: 已获取");
-            Some(s)
-        }
-        Err(AppError::StorageCredentialNotFound { .. }) => {
-            tracing::info!("translate_subtitle db: 凭据未配置");
-            None
-        }
-        Err(e) => {
-            tracing::warn!("translate_subtitle db 读取失败: {}", e);
-            None
-        }
-    };
-    tracing::info!("translate_subtitle secret: {:?}", if secret.is_some() { "Some" } else { "None" });
-
-    // 验证凭据存在
-    // OpenAi 只要求 base_url 存在（api_key 可选，局域网无认证）
-    if prov == TranslateProvider::OpenAi {
-        if base_url.is_none() {
-            return Err(AppError::TranslateCredentialsNotConfigured.to_ipc_error());
-        }
-    } else if app_id.is_none() && secret.is_none() {
-        return Err(AppError::TranslateCredentialsNotConfigured.to_ipc_error());
-    }
-
-    let credentials = ProviderCredentials {
-        app_id,
-        secret_key: secret,
-        region,
-        base_url,
-        model: model.clone(),
-        model_type: model_type.clone(),
-    };
-
-    // 代理：per-service 读取
-    let proxy_config = ProxyConfig::load_from_db(&db);
-    let use_proxy_key = if prov == TranslateProvider::OpenAi {
-        match &service_id {
-            Some(sid) => format!("translate_openai_{}_use_proxy", sid),
-            None => format!("translate_{}_use_proxy", provider),
-        }
-    } else {
-        format!("translate_{}_use_proxy", provider)
-    };
-    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
-    let effective_proxy = match use_proxy.as_deref() {
-        Some("false") => ProxyConfig::default(),
-        _ => proxy_config,
-    };
-    tracing::info!("translate_subtitle proxy: use_proxy={:?}, mode={}", use_proxy, effective_proxy.mode);
-
-    // AI 服务：用真实服务商名作为 service_name（错误消息中显示）
-    let service_name = if prov == translate::TranslateProvider::OpenAi {
-        service_id.as_deref().map(translate::ai_service_display_name)
-    } else {
-        None
-    };
-    // 构造 AI 翻译附加选项（glossary / name_tagging），传统翻译忽略
-    let glossary_vec = glossary.clone().unwrap_or_default();
-    let provider_options = translate::ProviderOptions {
-        glossary: glossary_vec,
-        name_tagging: name_tagging.unwrap_or(false),
-    };
-    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_name, &provider_options).map_err(to_ipc_err)?;
-
-    // 缓存 key 隔离：provider_name 纳入 service_id + model
-    let provider_name = if prov == TranslateProvider::OpenAi {
-        match (&service_id, &model) {
-            (Some(sid), Some(m)) => translate::build_cache_provider_name(&["openai", sid, m]),
-            _ => "openai".to_string(),
-        }
-    } else {
-        provider.clone()
-    };
-
-    // 计算实际并发数（限流策略 + 用户覆盖 + 全局并发数取最小）
-    let final_concurrency = resolve_translation_concurrency(&db, &prov, &service_id)?;
-    let rate_limit = prov.rate_limit_policy();
-    let config_key = if prov == TranslateProvider::OpenAi {
-        service_id.as_ref()
-            .map(|sid| format!("translate_openai_{}_qps", sid))
-            .unwrap_or_else(|| "translate_openai_qps".to_string())
-    } else {
-        format!("translate_{}_qps", prov.as_str())
-    };
-    let user_override = db.get_config(&config_key)
-        .ok().flatten()
-        .and_then(|v| v.parse::<usize>().ok());
-    let rate_limit = match (rate_limit, user_override) {
-        (translate::RateLimitPolicy::Qps(_), Some(q)) => translate::RateLimitPolicy::Qps(q),
-        (translate::RateLimitPolicy::Concurrency(_), Some(c)) => translate::RateLimitPolicy::Concurrency(c),
-        (policy, None) => policy,
-    };
+    let _final_concurrency = resolve_translation_concurrency(&db, &prov, &service_id)?;
 
     // 字幕内容 hash，用于缓存隔离
     // 优先用前端传来的 file_hash（整个字幕文件的 hash），
@@ -1231,6 +1288,24 @@ pub fn is_video_menu_registered() -> IpcResult<bool> {
 #[tauri::command]
 pub fn is_subtitle_menu_registered() -> IpcResult<bool> {
     ipc_result(Ok(crate::context_menu::is_subtitle_context_menu_registered()))
+}
+
+/// register_folder_menu：注册文件夹右键菜单「批量翻译」
+#[tauri::command]
+pub fn register_folder_menu(exe_path: String) -> IpcResult<()> {
+    ipc_result(crate::context_menu::register_folder_context_menu(&exe_path))
+}
+
+/// unregister_folder_menu：注销文件夹右键菜单
+#[tauri::command]
+pub fn unregister_folder_menu() -> IpcResult<()> {
+    ipc_result(crate::context_menu::unregister_folder_context_menu())
+}
+
+/// is_folder_menu_registered：检查文件夹右键菜单是否已注册
+#[tauri::command]
+pub fn is_folder_menu_registered() -> IpcResult<bool> {
+    ipc_result(Ok(crate::context_menu::is_folder_context_menu_registered()))
 }
 
 /// get_libmpv_status_cmd：获取 libmpv 下载状态
@@ -2560,6 +2635,360 @@ pub async fn download_and_install_update(
 }
 
 // === SECTION 7 END ===
+
+// === SECTION 9: 批量翻译 IPC 命令 ===
+
+use crate::batch::{self, BatchConfig, BatchQueue, BatchTask, BatchStatus, PathType};
+
+/// 队列 Queued 任务上限
+const MAX_QUEUED_TASKS: usize = 100;
+
+/// 提交文件列表批量翻译
+#[tauri::command]
+pub async fn batch_translate_files(
+    paths: Vec<String>,
+    config: Option<BatchConfig>,
+    batch_queue: State<'_, BatchQueue>,
+    db: State<'_, Database>,
+) -> Result<Vec<String>, IpcError> {
+    // 若传入 config 则更新，否则用当前配置
+    if let Some(cfg) = &config {
+        let _ = batch_queue.tx.try_send(batch::BatchCmd::UpdateConfig(cfg.clone()));
+        if let Ok(json) = serde_json::to_string(cfg) {
+            let _ = db.set_config("batch_config", &json);
+        }
+    }
+
+    let current_config = batch_queue.config.lock().unwrap().clone();
+    let mut task_ids = Vec::new();
+
+    // 队列上限检查
+    let queued_count = batch_queue.tasks.lock().unwrap().iter()
+        .filter(|t| t.status == BatchStatus::Queued).count();
+    if queued_count + paths.len() > MAX_QUEUED_TASKS {
+        return Err(AppError::BatchQueueError {
+            detail: format!(
+                "队列已满（{}个排队中），最多 {} 个，请先处理现有任务",
+                queued_count, MAX_QUEUED_TASKS
+            ),
+        }.to_ipc_error());
+    }
+
+    for path in paths {
+        // 查重
+        let exists = batch_queue.tasks.lock().unwrap().iter().any(|t| {
+            t.video_path == path && !matches!(t.status,
+                BatchStatus::Done | BatchStatus::Failed(_) |
+                BatchStatus::Cancelled | BatchStatus::Skipped(_))
+        });
+        if exists {
+            tracing::info!("批量翻译：文件已在队列中，跳过: {}", path);
+            continue;
+        }
+
+        let path_type = if batch::is_subtitle_file(&path) {
+            PathType::Subtitle
+        } else {
+            PathType::Video
+        };
+
+        let task = BatchTask {
+            id: uuid::Uuid::new_v4().to_string(),
+            video_path: path,
+            source_path_type: path_type,
+            status: BatchStatus::Queued,
+            source_lang: current_config.source_lang.clone(),
+            target_lang: current_config.target_lang.clone(),
+            provider: current_config.provider.clone(),
+            created_at: batch::now_ts(),
+            ..Default::default()
+        };
+
+        task_ids.push(task.id.clone());
+        let _ = batch_queue.tx.try_send(batch::BatchCmd::AddTask(task));
+    }
+
+    Ok(task_ids)
+}
+
+/// 查询队列状态
+#[tauri::command]
+pub fn get_batch_status(
+    batch_queue: State<'_, BatchQueue>,
+) -> IpcResult<Vec<BatchTask>> {
+    let tasks = batch_queue.tasks.lock().unwrap().clone();
+    ipc_result(Ok(tasks))
+}
+
+/// 取消单个任务
+#[tauri::command]
+pub async fn cancel_batch_task(
+    task_id: String,
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::CancelTask(task_id));
+    Ok(())
+}
+
+/// 启动单个任务（强制调度，忽略暂停和工作时间段）
+#[tauri::command]
+pub async fn start_batch_task(
+    task_id: String,
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::StartTask(task_id));
+    Ok(())
+}
+
+/// 删除单个任务记录（从队列和 DB 中移除）
+#[tauri::command]
+pub async fn delete_batch_task(
+    task_id: String,
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::DeleteTask(task_id));
+    Ok(())
+}
+
+/// 重新排序队列任务
+#[tauri::command]
+pub async fn reorder_batch_tasks(
+    task_ids: Vec<String>,
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::ReorderTasks(task_ids));
+    Ok(())
+}
+
+/// 清空队列中所有 Queued 任务
+#[tauri::command]
+pub async fn clear_batch_queue(
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::ClearQueue);
+    Ok(())
+}
+
+/// 重试失败任务
+#[tauri::command]
+pub async fn retry_batch_task(
+    task_id: String,
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::RetryTask(task_id));
+    Ok(())
+}
+
+/// 暂停队列
+#[tauri::command]
+pub async fn pause_batch_queue(
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::Pause);
+    Ok(())
+}
+
+/// 恢复队列
+#[tauri::command]
+pub async fn resume_batch_queue(
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::Resume);
+    Ok(())
+}
+
+/// 保存批量配置
+#[tauri::command]
+pub fn save_batch_config(
+    mut config: BatchConfig,
+    db: State<'_, Database>,
+    batch_queue: State<'_, BatchQueue>,
+) -> IpcResult<()> {
+    // source_lang 保留为向后兼容字段（source_langs 为优先级列表，翻译时按优先级匹配）
+    if config.source_langs.is_empty() && !config.source_lang.is_empty() {
+        config.source_langs = vec![config.source_lang.clone()];
+    }
+    let json = match serde_json::to_string(&config) {
+        Ok(j) => j,
+        Err(e) => return ipc_result(Err(AppError::BatchConfigInvalid { detail: e.to_string() })),
+    };
+    if let Err(e) = db.set_config("batch_config", &json) {
+        return ipc_result(Err(e));
+    }
+    *batch_queue.config.lock().unwrap() = config;
+    ipc_result(Ok(()))
+}
+
+/// 读取批量配置
+#[tauri::command]
+pub fn get_batch_config(
+    db: State<'_, Database>,
+    batch_queue: State<'_, BatchQueue>,
+) -> IpcResult<BatchConfig> {
+    let config = batch_queue.config.lock().unwrap().clone();
+    // 内存配置为默认值时，尝试从 DB 读取
+    if config.watch_paths.is_empty() {
+        if let Ok(Some(saved)) = db.get_config("batch_config") {
+            if let Ok(db_cfg) = serde_json::from_str::<BatchConfig>(&saved) {
+                return ipc_result(Ok(db_cfg));
+            }
+        }
+    }
+    ipc_result(Ok(config))
+}
+
+/// 启动文件夹监视
+#[tauri::command]
+pub async fn start_folder_watch(
+    paths: Vec<String>,
+    recursive: bool,
+    config: Option<BatchConfig>,
+    batch_queue: State<'_, BatchQueue>,
+    db: State<'_, Database>,
+) -> Result<(), IpcError> {
+    // 更新配置
+    {
+        let mut current = batch_queue.config.lock().unwrap();
+        if let Some(cfg) = &config {
+            let _ = batch_queue.tx.try_send(batch::BatchCmd::UpdateConfig(cfg.clone()));
+            *current = cfg.clone();
+        }
+        current.watch_paths = paths.clone();
+        current.watch_recursive = recursive;
+    }
+
+    // 持久化到 DB
+    let config_to_save = batch_queue.config.lock().unwrap().clone();
+    if let Ok(json) = serde_json::to_string(&config_to_save) {
+        let _ = db.set_config("batch_config", &json);
+    }
+
+    let current_config = batch_queue.config.lock().unwrap().clone();
+    let debounce = current_config.debounce_secs;
+
+    // 停止旧 watcher
+    {
+        let mut watcher = batch_queue.watcher.lock().unwrap();
+        *watcher = None;
+    }
+
+    // 若 scan_on_start，发送 ScanExisting 命令（扫描+检查+入队）
+    if current_config.scan_on_start {
+        let _ = batch_queue.tx.try_send(batch::BatchCmd::ScanExisting);
+    }
+
+    // 启动 notify watcher
+    let tx = batch_queue.tx.clone();
+    let watcher = batch::FolderWatcher::start(
+        paths, recursive, debounce,
+        move |file_path: String| {
+            let task = BatchTask {
+                id: uuid::Uuid::new_v4().to_string(),
+                video_path: file_path,
+                source_path_type: PathType::Video,
+                status: BatchStatus::Queued,
+                created_at: batch::now_ts(),
+                ..Default::default()
+            };
+            let _ = tx.try_send(batch::BatchCmd::AddTask(task));
+        },
+    ).map_err(to_ipc_err)?;
+
+    *batch_queue.watcher.lock().unwrap() = Some(watcher);
+
+    Ok(())
+}
+
+/// 停止文件夹监视
+#[tauri::command]
+pub async fn stop_folder_watch(
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    *batch_queue.watcher.lock().unwrap() = None;
+    // 注意：不清空 watch_paths，保留路径配置以便重新开始监视
+    Ok(())
+}
+
+/// 手动扫描已有文件并检查（外挂/内嵌字幕）
+/// 可选传入 paths/recursive，会先保存到 config 再扫描
+#[tauri::command]
+pub async fn scan_existing_files(
+    paths: Option<Vec<String>>,
+    recursive: Option<bool>,
+    batch_queue: State<'_, BatchQueue>,
+    db: State<'_, Database>,
+) -> Result<(), IpcError> {
+    // 如果传入了 paths，先保存到 config
+    if let Some(paths) = paths {
+        {
+            let mut current = batch_queue.config.lock().unwrap();
+            current.watch_paths = paths;
+            if let Some(rec) = recursive {
+                current.watch_recursive = rec;
+            }
+        }
+        let config_to_save = batch_queue.config.lock().unwrap().clone();
+        if let Ok(json) = serde_json::to_string(&config_to_save) {
+            let _ = db.set_config("batch_config", &json);
+        }
+    }
+
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::ScanExisting);
+    Ok(())
+}
+
+/// 取消正在进行的扫描检查
+#[tauri::command]
+pub async fn cancel_scan(
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<(), IpcError> {
+    batch_queue.scan_cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    Ok(())
+}
+
+/// 手动添加多个文件到批量翻译队列
+#[tauri::command]
+pub async fn add_files_to_queue(
+    files: Vec<String>,
+    batch_queue: State<'_, BatchQueue>,
+) -> Result<usize, IpcError> {
+    let config = batch_queue.config.lock().unwrap().clone();
+    let mut added = 0usize;
+
+    for file_path in files {
+        // 跳过已有非终态任务
+        let exists = batch_queue.tasks.lock().unwrap().iter().any(|t| {
+            t.video_path == file_path && !matches!(t.status,
+                BatchStatus::Done | BatchStatus::Failed(_) |
+                BatchStatus::Cancelled | BatchStatus::Skipped(_))
+        });
+        if exists { continue; }
+
+        let path_type = if batch::is_video_file(&file_path) {
+            PathType::Video
+        } else {
+            PathType::Subtitle
+        };
+
+        let task = BatchTask {
+            id: uuid::Uuid::new_v4().to_string(),
+            video_path: file_path,
+            source_path_type: path_type,
+            status: BatchStatus::Queued,
+            source_lang: config.source_lang.clone(),
+            target_lang: config.target_lang.clone(),
+            provider: config.provider.clone(),
+            created_at: batch::now_ts(),
+            ..Default::default()
+        };
+        let _ = batch_queue.tx.try_send(batch::BatchCmd::AddTask(task));
+        added += 1;
+    }
+
+    Ok(added)
+}
+
+// === SECTION 9 END ===
 
 // === SECTION 8: 跨平台单元测试 ===
 

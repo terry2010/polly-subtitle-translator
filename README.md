@@ -66,11 +66,14 @@ AI-SubTrans（内部代号 `zimufan`）是一款基于 **Tauri 2 + React 18 + Ru
 - **余额不足检测**：统一检测 HTTP 402 与响应体关键词（中英文），命中时返回 `TranslateInsufficientBalance` 错误，前端提示充值而非重试。
 - 占位符保护算法：翻译前用 Unicode 私用区字符替换 ass 样式标记 `{\\...}`、HTML 标签、换行符，翻译后回填，避免标记被翻译破坏。
 - 翻译分段：按字幕条数分段，按 API 单位（百度按字节、Google/Bing 按字符、AI 按 token）累计，单条超限按句号二次切分。
-- 翻译缓存：相同原文 + 源语言 + 目标语言 + provider + service_id + model 的结果缓存到 SQLite（缓存 key 用 `escape_field` 防注入），避免重复计费。
-- 失败重试：单条失败指数退避重试 3 次（1s/2s/4s），仍失败保留原文并标记 `failed` 布尔字段（前端以样式区分，未在译文文本中插入 `[翻译失败]` 标记）。
-- 凭据通过系统密钥环（keyring）存储，不写入数据库。
-- 支持单条翻译：在字幕预览区右键单条字幕可单独翻译。
-- **翻译统计**：实时显示字符数、EMA 速度（字符/秒）、ETA（剩余时间），用指数移动平均避免速度反复跳。
+- **AI 翻译 JSON 输出**：prompt 要求模型返回 JSON 数组 `[{"n":N,"t":"..."}]`，`strip_markdown_code_fence` 剥离代码块包裹，正则兜底解析未转义 JSON。
+- **音效/音乐符号处理**：`looks_like_sound_effect` 识别 `[clattering continues]` 等方括号音效标记，`is_music_or_symbol_only` 识别纯音乐符号（♪♬等），翻译调度器跳过纯音乐符号条目保持原样，避免 9b 等小模型错译为无关内容。
+- **批次错位检测**：`translate_batch_with_fallback` 检查译文长度比值异常（< 0.2 或 > 5.0）标记为待重试进入更小批次；JSON 解析检测 AI 返回的编号 `n` 超出范围（说明 AI 拆分了含多行的条目），整批返回对齐失败触发降级重试；批次返回数量不匹配时整批不缓存，防止错位译文污染缓存。
+- **翻译缓存**：缓存 key = `sha256(原文 + 源语言 + 目标语言 + provider + file_hash)`，`file_hash` 基于字幕条目的 index+时间轴+text 计算（`compute_subtitle_hash`），确保不同字幕文件即使含相同句子也不会命中彼此的缓存。后端从 entries 直接计算 hash，前端编辑条目后自动更新。双语文件打开时跳过缓存查询（失败条目导出为单行原文，与单语条目 cache key 相同会被误填旧缓存）。启动时 `purge_fake_translate_cache` 清理三类坏缓存：译文=原文、目标语言为中文但译文无 CJK、音效标记类型不一致。
+- 失败重试：单条失败指数退避重试 3 次（1s/2s/4s），仍失败保留原文并标记 `failed` 布尔字段（前端以样式区分，未在译文文本中插入 `[翻译失败]` 标记）。`failed` 判定包含音效错位（原文/译文音效类型不一致）。
+- **凭据存储**：翻译服务密钥与代理密码统一存储到 SQLite `credentials` 表（entry_name + value），不再使用系统密钥环。
+- 支持单条翻译：在字幕预览区右键单条字幕可单独翻译，使用与全量翻译相同的 file_hash 保证缓存一致。
+- **翻译统计**：实时显示字符数、EMA 速度（字符/秒）、ETA（剩余时间），用指数移动平均避免速度反复跳。开发者模式下显示已翻译/缓存/失败/未翻译分类统计。
 
 ### 字幕编辑
 
@@ -143,14 +146,17 @@ AI-SubTrans（内部代号 `zimufan`）是一款基于 **Tauri 2 + React 18 + Ru
   - 前端 logger 仅在开发者模式输出到 console。
   - "全量记录翻译数据"开关：开启后记录 API 请求/响应到 `api_debug/` 目录。
   - "人名精译"开关：开启后翻译前预扫描人名生成译名表（退出开发模式后仍保持启用）。
+  - "更新通道"卡片：切换 stable / nightly，仅开发者模式可见。
+  - 右键单击 toast 复制内容到剪贴板（调试时快速复制错误信息）。
 
 ### 自动更新
 
 - 基于 Tauri Updater 插件，启动后自动检查新版本。
+- **双更新通道**：stable（`latest.json`）与 nightly（`nightly.json`），开发者模式下「更新通道」卡片可切换。后端用 `UpdaterBuilder` 按配置选 endpoint。
 - 发现新版本时弹窗显示版本号和更新内容，用户确认后自动下载安装。
 - 下载过程显示进度/速度/ETA，签名验证后静默安装（不弹 SmartScreen）。
-- 安装完成后提示重启应用。
-- 设置页「关于」分区可手动检查更新。
+- 安装完成后提示重启应用。nightly 通道记录已安装版本号，避免重启后重复弹更新。
+- 设置页「关于」分区可手动检查更新，关于页面动态显示当前版本号与已安装 nightly 版本。
 
 ### 多入口触发
 
@@ -172,7 +178,7 @@ AI-SubTrans（内部代号 `zimufan`）是一款基于 **Tauri 2 + React 18 + Ru
 | 异步运行时 | tokio（full features） |
 | 数据库 | rusqlite 0.32（bundled SQLite） |
 | HTTP 客户端 | reqwest 0.12（default-tls / native-tls，Windows 用 SChannel） |
-| 凭据存储 | keyring 3（系统密钥环：Windows Credential Manager / macOS Keychain） |
+| 凭据存储 | SQLite `credentials` 表（entry_name + value，迁移自 keyring） |
 | 字幕解析 | srt/vtt 自写解析器；ass 使用 ass-core + ass-editor |
 | 编码探测 | chardetng + encoding_rs |
 | 日志 | tracing + tracing-subscriber + tracing-appender（按天滚动，保留 7 天） |
@@ -621,8 +627,8 @@ start explorer.exe
          │                    │
          ▼                    ▼
    ┌──────────┐        ┌──────────────┐
-   │ keyring  │        │ FFmpeg       │
-   │ (凭据)   │        │ (按需下载)    │
+   │credentials│        │ FFmpeg       │
+   │ 表(凭据) │        │ (按需下载)    │
    └──────────┘        └──────────────┘
 ```
 
@@ -730,9 +736,13 @@ subtitle.rs
 | 人名精译 | ✅ | 预扫描人名 → 译名表确认 → 翻译时传入 glossary |
 | 余额不足检测 | ✅ | HTTP 402 + 中英文关键词检测，提示充值而非重试 |
 | 占位符保护 | ✅ | 私用区字符方案（U+E000~U+E0FF） |
-| 单条翻译 | ✅ | 字幕预览区右键单条翻译 |
-| 翻译失败标记 | ✅ | `failed` 布尔字段标记单条翻译失败（不插入 `[翻译失败]` 文本） |
-| 翻译统计 | ✅ | 实时字符数、EMA 速度、ETA |
+| AI JSON 输出 | ✅ | prompt 要求 `[{"n":N,"t":"..."}]`，剥离代码块包裹，正则兜底解析 |
+| 音效/音乐符号处理 | ✅ | 跳过纯音乐符号（♪♬），识别方括号音效标记，避免小模型错译 |
+| 批次错位检测 | ✅ | 译文长度比异常 / JSON 编号超范围 / 数量不匹配 → 降级重试 + 整批不缓存 |
+| 翻译缓存隔离 | ✅ | cache key 含 file_hash（基于条目内容），不同字幕不共享缓存；启动清理假翻译缓存 |
+| 单条翻译 | ✅ | 字幕预览区右键单条翻译，使用与全量翻译相同的 file_hash |
+| 翻译失败标记 | ✅ | `failed` 布尔字段标记单条翻译失败（含音效错位检测，不插入 `[翻译失败]` 文本） |
+| 翻译统计 | ✅ | 实时字符数、EMA 速度、ETA；开发者模式分类统计（已翻译/缓存/失败/未翻译） |
 | 字幕编辑器 | ⚠️ | 虚拟滚动、增删行、查找替换、时间轴偏移（手动输入）、撤销重做；时间码编辑/复制行/快捷键偏移暂未实现 |
 | 导出对话框 | ✅ | srt/ass/vtt 多格式，ASS 样式实时预览，双语配置 |
 | 播放预览 | ✅ | libmpv 悬浮窗叠加（Windows WS_POPUP / macOS NSWindow）、播放控制、音轨切换、字幕联动高亮 |
@@ -743,10 +753,11 @@ subtitle.rs
 | OpenSubtitles 搜索 | ✅ | REST API 关键词搜索与下载（不做 moviehash/时长精确匹配） |
 | 系统右键菜单 | ✅ | Windows 注册表注册/注销/状态检测（macOS 不支持） |
 | 单实例转发 | ✅ | argv 解析与事件转发 |
-| 配置与凭据 | ✅ | SQLite + keyring（Windows Credential Manager / macOS Keychain） |
+| 配置与凭据 | ✅ | SQLite 配置表 + `credentials` 表（迁移自 keyring） |
 | FFmpeg 按需下载 | ✅ | 跨平台按 arch 下载（Windows/macOS/Linux），多源加速 |
 | libmpv 按需下载 | ✅ | 跨平台按 arch 下载（Windows/macOS），进度显示速度/ETA |
-| 自动更新 | ✅ | Tauri Updater，启动检查 + 手动检查，签名验证静默安装 |
+| 自动更新 | ✅ | Tauri Updater，stable + nightly 双通道，启动检查 + 手动检查，签名验证静默安装 |
+| CI 双平台发布 | ✅ | `.github/workflows/release.yml`（push tag v* 自动构建 Win+Mac）+ `nightly.yml`（手动触发，prerelease，保留最近 5 个） |
 | 崩溃日志 | ✅ | panic hook + Windows VEH/UEF 原生异常捕获 + minidump |
 | prompt 失败日志 | ✅ | 翻译对齐失败时记录 prompt 与模型返回 |
 | API 调试日志 | ✅ | 开发者模式开启后记录 API 请求/响应 |
@@ -754,9 +765,9 @@ subtitle.rs
 | 国际化 | ✅ | 中/英双语，576 key |
 | 主题 | ✅ | 浅色/深色/跟随系统 |
 | 日志 | ✅ | tracing 按天滚动，保留 7 天（启动时清理旧日志） |
-| 开发者模式 | ✅ | 关于页点击版本号 7 次开启，含 DevTools/全量记录/人名精译开关 |
-| macOS 支持 | ✅ | Universal Binary（Apple Silicon + Intel），NSWindow 悬浮窗，Keychain 凭据 |
-| 跨平台测试 | ✅ | 前端 264 个测试 + 后端 219 个单元测试 |
+| 开发者模式 | ✅ | 关于页点击版本号 7 次开启，含 DevTools/全量记录/人名精译/更新通道开关，右键 toast 复制内容 |
+| macOS 支持 | ✅ | Universal Binary（Apple Silicon + Intel），NSWindow 悬浮窗 |
+| 跨平台测试 | ✅ | 前端 264 个测试 + 后端单元测试 + E2E 测试（含多级检查 L1/L2/L3） |
 
 ### 待完善 / 待实现
 
@@ -784,26 +795,38 @@ subtitle.rs
 
 - 使用 `tauri-plugin-updater` 实现自动更新
 - 签名密钥：Ed25519 密钥对，私钥本地保存，公钥写入 `tauri.conf.json`
-- 更新清单：`latest.json` 托管在 GitHub Pages（`gh-pages` 分支）
+- **双更新通道**：
+  - **stable**：`latest.json` 托管在 GitHub Pages（`gh-pages` 分支）
+  - **nightly**：`nightly.json` 托管在 GitHub Pages，每日构建/prerelease，保留最近 5 个版本
 - 安装包存储：GitHub Releases
-- 国内加速：`latest.json` 里的 URL 用 `gh-proxy.com` 前缀
+- 国内加速：更新清单里的 URL 用 `gh-proxy.com` 前缀
+- 后端 `UpdaterBuilder` 按开发者模式配置的 `updateChannel` 选 endpoint
 
-### 发布流程
+### CI 自动发布
+
+- **stable**：`.github/workflows/release.yml`，push tag `v*` 自动构建 Win+Mac 并发布到 GitHub Release
+- **nightly**：`.github/workflows/nightly.yml`，手动触发构建 Win+Mac，标记为 prerelease，保留最近 5 个
+
+### 手动发布流程
 
 ```cmd
-set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=你的私钥密码
-set GITHUB_TOKEN=ghp_xxxxxxxxxxxx
-
 npm run publish 1.0.1 "修复字幕提取进度条
 新增自动更新功能"
 ```
 
-脚本自动完成：改版本号 → 带签名构建 → 创建 GitHub Release → 上传 .exe + .sig → 推送 latest.json
+`publish.mjs` 支持交互式发布（自动获取 token、输入密码、确认），自动完成：改版本号 → 带签名构建 → 创建 GitHub Release → 上传 .exe + .sig → 推送 latest.json。
+
+### Nightly 发布
+
+```cmd
+npm run publish 1.0.1-2026-07-06 "测试内容" -- --nightly
+```
+
+`--nightly` 参数推送 `nightly.json`，版本号支持 prerelease 格式（连字符分隔避免 semver leading zero 错误）。详见 [`docs/nightly-publish-guide.md`](./docs/nightly-publish-guide.md)。
 
 ### 仅构建不发布
 
 ```cmd
-set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=你的密码
 npm run publish:dry 1.0.1 "测试内容"
 ```
 

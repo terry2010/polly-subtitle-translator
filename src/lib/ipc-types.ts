@@ -273,6 +273,83 @@ export interface AssBilingualStyle {
   shadow_color: string;
 }
 
+// === 批量翻译类型 ===
+
+export type BatchStatus =
+  | "Queued"
+  | "Probing"
+  | "CheckingSubtitle"
+  | { Extracting: number }
+  | "Parsing"
+  | { Translating: number }
+  | "Exporting"
+  | "Done"
+  | { Skipped: string }
+  | { Failed: string }
+  | "Cancelled";
+
+export type PathType = "Video" | "Subtitle";
+
+export interface BatchTask {
+  id: string;
+  video_path: string;
+  source_path_type: PathType;
+  status: BatchStatus;
+  subtitle_path: string | null;
+  output_path: string | null;
+  source_lang: string;
+  target_lang: string;
+  provider: string;
+  total_entries: number;
+  done_entries: number;
+  cached_entries: number;
+  failed_entries: number;
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  error: string | null;
+}
+
+export type OutputMode = "Monolingual" | "Bilingual";
+
+export type BatchSchedule =
+  | "Always"
+  | { TimeWindow: { windows: [number, number][]; weekdays: number[] } };
+
+export interface BatchConfig {
+  source_lang: string;
+  /** 源语言多选（仅作过滤，字幕语言不在列表中则跳过；空列表 = 不过滤） */
+  source_langs?: string[];
+  target_lang: string;
+  /** 不翻译的语言列表（检测到这些语言则跳过，外挂+内嵌+内容三处检测） */
+  skip_langs?: string[];
+  provider: string;
+  model?: string | null;
+  model_type?: string | null;
+  service_id?: string | null;
+  file_concurrency: number;
+  entry_concurrency: number;
+  output_mode: OutputMode;
+  /** 输出格式多选（选多种则一次生成多个不同格式字幕文件） */
+  output_formats?: Array<"srt" | "vtt" | "ass" | "ssa">;
+  /** @deprecated 已废弃，由 output_formats 取代 */
+  output_format: "srt" | "vtt" | "ass" | "ssa";
+  /** 嵌入视频（将字幕合并到 mkv 文件中） */
+  embed_to_video?: boolean;
+  /** @deprecated 已废弃，根据输出模式自动选择后缀 */
+  output_suffix?: string;
+  check_external: boolean;
+  check_embedded: boolean;
+  watch_paths: string[];
+  watch_recursive: boolean;
+  scan_on_start: boolean;
+  schedule: BatchSchedule;
+  min_file_size_mb: number;
+  min_duration_secs: number;
+  skip_cache: boolean;
+  debounce_secs: number;
+}
+
 /** TS 端默认值常量，与 Rust 端 `impl Default for AssBilingualStyle` 对齐 */
 export const DEFAULT_ASS_STYLE: AssBilingualStyle = {
   primary_font_size: 48,

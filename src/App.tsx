@@ -5,8 +5,9 @@ import { listen, emit } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import MainView from "./views/MainView";
-// 路由级懒加载：SettingsView 不在首屏加载，减小首屏 JS 体积
+// 路由级懒加载：SettingsView/BatchView 不在首屏加载，减小首屏 JS 体积
 const SettingsView = lazy(() => import("./views/SettingsView"));
+const BatchView = lazy(() => import("./views/BatchView"));
 import { useThemeStore } from "./stores/themeStore";
 import { useVideoStore } from "./stores/videoStore";
 import { useSubtitleStore } from "./stores/subtitleStore";
@@ -26,8 +27,6 @@ export default function App() {
   const lang = useThemeStore((s) => s.language);
   const openVideo = useVideoStore((s) => s.openVideo);
   const loadSubtitle = useSubtitleStore((s) => s.loadSubtitle);
-  const setFile = useSubtitleStore((s) => s.setFile);
-  const startTranslate = useTranslateStore((s) => s.startTranslate);
 
   // 根据 theme 设置 dark class；system 模式下跟随系统 prefers-color-scheme
   useEffect(() => {
@@ -121,12 +120,35 @@ export default function App() {
         // 字幕静默编辑模式
         await loadSubtitle(filePath);
       } else if (mode === "quick") {
-        // 视频静默流程：自动提取→翻译→合并
-        await openVideo(filePath);
-        // 等待 probe 完成后自动处理
-        setTimeout(async () => {
-          await runQuickMode(filePath);
-        }, 1000);
+        // V2: quick 模式走批量翻译队列
+        // 初始化 batchStore（如果尚未初始化），然后提交文件
+        try {
+          const { useBatchStore } = await import("./stores/batchStore");
+          const batchStore = useBatchStore.getState();
+          await batchStore.init();
+          await batchStore.loadConfig();
+          await batchStore.submitFiles([filePath]);
+          // 跳转到批量翻译页面
+          window.location.hash = "#/batch";
+        } catch (e) {
+          error("批量翻译提交失败，回退到旧流程:", e);
+          // 回退：旧的静默流程
+          await openVideo(filePath);
+        }
+      } else if (mode === "watch") {
+        // V2: 文件夹右键菜单 → 添加到批量翻译监视
+        try {
+          const { useBatchStore } = await import("./stores/batchStore");
+          const batchStore = useBatchStore.getState();
+          await batchStore.init();
+          await batchStore.loadConfig();
+          // 启动文件夹监视
+          await batchStore.startWatch([filePath], true);
+          // 跳转到批量翻译页面
+          window.location.hash = "#/batch";
+        } catch (e) {
+          error("文件夹监视启动失败:", e);
+        }
       } else {
         // 无模式，根据文件扩展名判断
         const ext = filePath.split(".").pop()?.toLowerCase();
@@ -138,48 +160,8 @@ export default function App() {
       }
     });
 
-    // 静默流程：自动提取第一条文本字幕→翻译→合并
-    const runQuickMode = async (videoPath: string) => {
-      try {
-        const probe = await api.probeVideo(videoPath);
-        // 找第一条英文文本字幕
-        const subStream = probe.subtitle_streams.find(
-          (s) => !s.is_graphic && (s.language === "en" || s.language === "eng")
-        );
-        if (!subStream) return;
-
-        // 提取字幕到临时文件
-        const tempPath = videoPath.replace(/\.[^.]+$/, ".temp.srt");
-        await api.extractSubtitle(videoPath, subStream.index, tempPath);
-        await loadSubtitle(tempPath);
-
-        // 翻译
-        const subtitleState = useSubtitleStore.getState();
-        if (subtitleState.file) {
-          const result = await startTranslate(subtitleState.file.entries, undefined, undefined, undefined, undefined, subtitleState.file.file_hash || undefined);
-          if (result) {
-            const entries = subtitleState.file.entries.map((e) => {
-              const tr = result.translations.find((r) => r.index === e.index);
-              return tr ? { ...e, translated: tr.translated, failed: tr.failed } : e;
-            });
-            setFile({ ...subtitleState.file, entries });
-
-            // 保存翻译后字幕
-            const translatedPath = videoPath.replace(/\.[^.]+$/, ".zh.srt");
-            await subtitleState.saveSubtitle(translatedPath);
-
-            // 合并到视频
-            const outputPath = videoPath.replace(/\.[^.]+$/, ".merged.mkv");
-            await api.mergeSubtitle(videoPath, translatedPath, outputPath, "zh");
-          }
-        }
-      } catch (e) {
-        error("静默流程失败:", e);
-      }
-    };
-
     return () => { void unlisten.then((fn) => fn()); };
-  }, [openVideo, loadSubtitle, setFile, startTranslate]);
+  }, [openVideo, loadSubtitle]);
 
   // 阻止浏览器默认拖放行为
   useEffect(() => {
@@ -331,6 +313,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<MainView />} />
             <Route path="/settings" element={<SettingsView />} />
+            <Route path="/batch" element={<BatchView />} />
           </Routes>
         </Suspense>
       </HashRouter>

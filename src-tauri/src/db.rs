@@ -193,6 +193,31 @@ CREATE TABLE IF NOT EXISTS credentials (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 "#,
+},
+Migration {
+    version: 2,
+    sql: r#"
+-- 批量翻译任务持久化
+CREATE TABLE IF NOT EXISTS batch_tasks (
+    id TEXT PRIMARY KEY,
+    video_path TEXT NOT NULL,
+    source_path_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    subtitle_path TEXT,
+    output_path TEXT,
+    source_lang TEXT,
+    target_lang TEXT,
+    provider TEXT,
+    total_entries INTEGER DEFAULT 0,
+    done_entries INTEGER DEFAULT 0,
+    cached_entries INTEGER DEFAULT 0,
+    failed_entries INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    started_at INTEGER,
+    finished_at INTEGER,
+    error TEXT
+);
+"#,
 }];
 
 // === SECTION 2 END ===
@@ -485,6 +510,172 @@ impl Database {
                 stmt.execute(rusqlite::params![key])?;
             }
             Ok(count)
+        })
+    }
+
+    // === 批量翻译任务持久化 ===
+
+    /// 保存批量任务（完整字段）
+    pub fn upsert_batch_task(&self, task: &crate::batch::BatchTask) -> Result<(), AppError> {
+        let status_str = serde_json::to_string(&task.status)
+            .unwrap_or_else(|_| "\"Queued\"".to_string());
+        let path_type_str = serde_json::to_string(&task.source_path_type)
+            .unwrap_or_else(|_| "\"Video\"".to_string());
+        self.with_conn(|conn| {
+            // 安全兜底：确保表存在
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS batch_tasks (
+                    id TEXT PRIMARY KEY,
+                    video_path TEXT NOT NULL,
+                    source_path_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    subtitle_path TEXT,
+                    output_path TEXT,
+                    source_lang TEXT,
+                    target_lang TEXT,
+                    provider TEXT,
+                    total_entries INTEGER DEFAULT 0,
+                    done_entries INTEGER DEFAULT 0,
+                    cached_entries INTEGER DEFAULT 0,
+                    failed_entries INTEGER DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    started_at INTEGER,
+                    finished_at INTEGER,
+                    error TEXT
+                );",
+            )?;
+            conn.execute(
+                "INSERT INTO batch_tasks (id, video_path, source_path_type, status, subtitle_path, output_path,
+                    source_lang, target_lang, provider, total_entries, done_entries, cached_entries,
+                    failed_entries, created_at, started_at, finished_at, error)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+                 ON CONFLICT(id) DO UPDATE SET
+                    status=excluded.status, subtitle_path=excluded.subtitle_path,
+                    output_path=excluded.output_path, total_entries=excluded.total_entries,
+                    done_entries=excluded.done_entries, cached_entries=excluded.cached_entries,
+                    failed_entries=excluded.failed_entries, started_at=excluded.started_at,
+                    finished_at=excluded.finished_at, error=excluded.error",
+                rusqlite::params![
+                    task.id,
+                    task.video_path,
+                    path_type_str,
+                    status_str,
+                    task.subtitle_path,
+                    task.output_path,
+                    task.source_lang,
+                    task.target_lang,
+                    task.provider,
+                    task.total_entries,
+                    task.done_entries,
+                    task.cached_entries,
+                    task.failed_entries,
+                    task.created_at,
+                    task.started_at,
+                    task.finished_at,
+                    task.error,
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// 加载所有批量翻译任务（重启恢复用）
+    pub fn load_batch_tasks(&self) -> Result<Vec<crate::batch::BatchTask>, AppError> {
+        self.with_conn(|conn| {
+            // 安全兜底：确保表存在（防止迁移残留状态导致表缺失）
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS batch_tasks (
+                    id TEXT PRIMARY KEY,
+                    video_path TEXT NOT NULL,
+                    source_path_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    subtitle_path TEXT,
+                    output_path TEXT,
+                    source_lang TEXT,
+                    target_lang TEXT,
+                    provider TEXT,
+                    total_entries INTEGER DEFAULT 0,
+                    done_entries INTEGER DEFAULT 0,
+                    cached_entries INTEGER DEFAULT 0,
+                    failed_entries INTEGER DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    started_at INTEGER,
+                    finished_at INTEGER,
+                    error TEXT
+                );",
+            )?;
+
+            let mut stmt = conn.prepare(
+                "SELECT id, video_path, source_path_type, status, subtitle_path, output_path,
+                    source_lang, target_lang, provider, total_entries, done_entries, cached_entries,
+                    failed_entries, created_at, started_at, finished_at, error
+                 FROM batch_tasks ORDER BY created_at ASC",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let id: String = row.get(0)?;
+                let video_path: String = row.get(1)?;
+                let path_type_str: String = row.get(2)?;
+                let status_str: String = row.get(3)?;
+                let subtitle_path: Option<String> = row.get(4)?;
+                let output_path: Option<String> = row.get(5)?;
+                let source_lang: String = row.get(6).unwrap_or_default();
+                let target_lang: String = row.get(7).unwrap_or_default();
+                let provider: String = row.get(8).unwrap_or_default();
+                let total_entries: usize = row.get(9).unwrap_or(0);
+                let done_entries: usize = row.get(10).unwrap_or(0);
+                let cached_entries: usize = row.get(11).unwrap_or(0);
+                let failed_entries: usize = row.get(12).unwrap_or(0);
+                let created_at: i64 = row.get(13).unwrap_or(0);
+                let started_at: Option<i64> = row.get(14).ok().flatten();
+                let finished_at: Option<i64> = row.get(15).ok().flatten();
+                let error: Option<String> = row.get(16).ok().flatten();
+
+                let source_path_type: crate::batch::PathType =
+                    serde_json::from_str(&path_type_str).unwrap_or_default();
+                let status: crate::batch::BatchStatus =
+                    serde_json::from_str(&status_str).unwrap_or_default();
+
+                Ok(crate::batch::BatchTask {
+                    id,
+                    video_path,
+                    source_path_type,
+                    status,
+                    subtitle_path,
+                    output_path,
+                    source_lang,
+                    target_lang,
+                    provider,
+                    total_entries,
+                    done_entries,
+                    cached_entries,
+                    failed_entries,
+                    created_at,
+                    started_at,
+                    finished_at,
+                    error,
+                })
+            })?;
+            let mut result = Vec::new();
+            for row in rows {
+                result.push(row?);
+            }
+            Ok(result)
+        })
+    }
+
+    /// 删除批量翻译任务
+    pub fn delete_batch_task(&self, task_id: &str) -> Result<(), AppError> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM batch_tasks WHERE id = ?1", rusqlite::params![task_id])?;
+            Ok(())
+        })
+    }
+
+    /// 清空所有批量翻译任务
+    pub fn clear_batch_tasks(&self) -> Result<(), AppError> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM batch_tasks", [])?;
+            Ok(())
         })
     }
 }

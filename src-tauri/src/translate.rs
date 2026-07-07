@@ -2659,7 +2659,7 @@ impl<'a> TranslateScheduler<'a> {
         const SHORT_BATCH_SIZE: usize = 5;
         const SHORT_TEXT_THRESHOLD: usize = 30;
         if !to_translate.is_empty() {
-            let (mut short_entries, mut long_entries): (
+            let (short_entries, long_entries): (
                 Vec<(usize, String, String, PlaceholderProtector)>,
                 Vec<(usize, String, String, PlaceholderProtector)>,
             ) = to_translate.into_iter().partition(|(_, _, t, _)| t.len() < SHORT_TEXT_THRESHOLD);
@@ -2808,7 +2808,7 @@ impl<'a> TranslateScheduler<'a> {
                     //   2. 音效标记不一致（sound_mismatch，如含 {\an8} 定位标签的混合条目被译成纯音效标记）
                     // 翻译时 translate_entries_full 的 bad_cache 检查会跳过这些坏缓存重新翻译，
                     // 但恢复时 get_cached_entries 返回它们（标记 failed），前端视为未翻译，用户可重新翻译。
-                    let same_as_orig = restored.trim() == orig_text.trim();
+                    let _same_as_orig = restored.trim() == orig_text.trim();
                     if !failed && !batch_count_mismatch {
                         // 缓存 key 用原始文本（与查询时一致），而非占位符保护后的文本
                         let cache_key = translate_cache_key(
@@ -5897,7 +5897,7 @@ pub fn post_process_name_tags(
                 .max_by_key(|(_, count)| *count)
                 .map(|(zh, _)| zh.clone())
                 .unwrap_or_default();
-            let mut all_translations: Vec<String> = zh_map.keys().cloned().collect();
+            let all_translations: Vec<String> = zh_map.keys().cloned().collect();
             if all_translations.len() > 1 {
                 inconsistencies.push(NameInconsistency {
                     english: en.clone(),
