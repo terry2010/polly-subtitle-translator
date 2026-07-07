@@ -780,6 +780,120 @@ impl PlaceholderProtector {
     pub fn placeholder_count(&self) -> usize {
         self.placeholders.len()
     }
+
+    /// 回填占位符并恢复丢失的 ASS 前缀标签
+    /// 比 restore 多两步：
+    /// 1. 9b 模型可能丢弃占位符字符（U+E000~U+E0FF），导致 ASS 标签（如 {\an8}）在译文中丢失。
+    ///    此方法检测丢失的前缀 ASS 标签并加回译文开头。
+    /// 2. 9b 模型可能多输出未注册的占位符字符（如重复、错位），
+    ///    restore() 只能替换已注册的占位符，无法清除多余字符。
+    ///    此方法清除所有残留的 U+E000~U+E0FF 字符，避免污染译文导致 failed 误判。
+    pub fn restore_with_ass_recovery(&self, text: &str, original_text: &str) -> String {
+        let restored = self.restore(text);
+        let recovered = recover_lost_ass_prefix_tags(&restored, original_text);
+        strip_remaining_placeholders(&recovered)
+    }
+}
+
+/// 清除译文中残留的占位符字符（U+E000~U+E0FF）
+/// 9b 模型有时会多输出未注册的占位符字符（如重复、错位），
+/// 这些字符无法被 restore() 替换回原始内容，会污染译文。
+fn strip_remaining_placeholders(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for ch in s.chars() {
+        // U+E000 ~ U+E0FF 是 PlaceholderProtector 使用的私有区字符
+        if !('\u{E000}'..='\u{E0FF}').contains(&ch) {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// 清理译文中泄漏的 JSON 格式语法
+/// 9b 模型有时返回 JSON 数组格式（如 [{"n": 1, "t": "..."}]），但 JSON 解析因未转义引号而失败，
+/// 回退到行对齐时 JSON 语法会被当作译文文本，导致译文中出现：
+/// - 完整 JSON 包装：[{"n": 1, "t": "让我们看看发生了什么事。"}]
+/// - JSON 语法残留：译文末尾出现 '},\n  { 等字符
+/// 此函数提取 JSON 中的实际文本，剥离 JSON 语法残留。
+fn clean_json_leak(s: &str) -> String {
+    let trimmed = s.trim();
+
+    // 1. 完整 JSON 数组包装：[{"n": N, "t": "..."}]
+    // 提取 "t" 字段的值
+    if trimmed.starts_with("[{\"n\":") || trimmed.starts_with("[{ \"n\":") {
+        let re = regex::Regex::new(
+            r#""t"\s*:\s*"((?:[^"\\]|\\.)*)""#
+        ).unwrap();
+        if let Some(cap) = re.captures(trimmed) {
+            if let Some(t) = cap.get(1) {
+                let text = t.as_str()
+                    .replace("\\\"", "\"")
+                    .replace("\\\\", "\\")
+                    .replace("\\n", "\n")
+                    .replace("\\t", "\t");
+                return text.trim().to_string();
+            }
+        }
+    }
+
+    // 2. 译文末尾有 JSON 数组语法残留（如 '},\n  { 或 "},）
+    // JSON 数组元素之间是 "},\n  {" 的模式，检测并截断
+    // 匹配 JSON 对象结束符 }, 后跟空白和 {（下一个 JSON 对象的开始）
+    let re_json_sep = regex::Regex::new(r"\},\s*\{.*$").unwrap();
+    if let Some(m) = re_json_sep.find(trimmed) {
+        let before = trimmed[..m.start()].trim_end();
+        // 确保截断后仍有实质内容（含 CJK 字符，避免误截正常文本）
+        if !before.is_empty() && has_cjk(before) {
+            return before.to_string();
+        }
+    }
+
+    s.to_string()
+}
+
+/// 恢复丢失的 ASS 前缀标签
+/// 如果原文以 ASS 标签（如 {\an8}）开头但译文丢失了该标签，把丢失的前缀标签加回译文开头
+fn recover_lost_ass_prefix_tags(restored: &str, original_text: &str) -> String {
+    let orig_prefix_tags = extract_prefix_ass_tags(original_text);
+    if orig_prefix_tags.is_empty() {
+        return restored.to_string();
+    }
+
+    // 译文中已包含的 ASS 标签（不限于前缀，因为 9b 可能改变了标签位置）
+    let trans_prefix_tags = extract_prefix_ass_tags(restored);
+
+    // 找出丢失的前缀标签：原文有但译文完全没有的
+    let lost_tags: Vec<&String> = orig_prefix_tags
+        .iter()
+        .filter(|tag| !trans_prefix_tags.contains(tag) && !restored.contains(tag.as_str()))
+        .collect();
+
+    if lost_tags.is_empty() {
+        return restored.to_string();
+    }
+
+    // 把丢失的标签加到译文开头
+    let mut result = String::with_capacity(restored.len() + 16);
+    for tag in &lost_tags {
+        result.push_str(tag);
+    }
+    result.push_str(restored);
+    result
+}
+
+/// 提取文本开头的连续 ASS 标签（{\...} 格式）
+fn extract_prefix_ass_tags(s: &str) -> Vec<String> {
+    let mut tags = Vec::new();
+    let mut remaining = s;
+    while remaining.starts_with('{') {
+        if let Some(end) = remaining.find('}') {
+            tags.push(remaining[..=end].to_string());
+            remaining = &remaining[end + 1..];
+        } else {
+            break;
+        }
+    }
+    tags
 }
 
 /// 翻译分段：将长文本按句号/换行切分，确保单段不超过 max_length（按字节计）。
@@ -1932,6 +2046,12 @@ impl OpenAiProvider {
         );
 
         Self::parse_numbered_response(&full_content, texts.len())
+            .map(|translations| {
+                translations
+                    .into_iter()
+                    .map(|t| clean_json_leak(&t))
+                    .collect()
+            })
     }
 
     /// 判断 base_url 是否为本地模型
@@ -2580,7 +2700,7 @@ impl<'a> TranslateScheduler<'a> {
                     }
                 }
 
-                let restored = protector.restore(&combined);
+                let restored = protector.restore_with_ass_recovery(&combined, &entry.text);
                 // 翻译失败判定
                 let same_as_orig = restored.trim() == entry.text.trim();
                 let no_cjk = target_lang.starts_with("zh")
@@ -2762,7 +2882,7 @@ impl<'a> TranslateScheduler<'a> {
                 for ((index, orig_text, _protected_text, protector), translated) in
                     batch.iter().zip(final_translations.iter())
                 {
-                    let restored = protector.restore(translated);
+                    let restored = protector.restore_with_ass_recovery(translated, orig_text);
                     // 翻译失败判定：
                     // 1. 译文为空
                     // 2. 译文与原文相同（AI 未实际翻译，原样返回）
@@ -3009,13 +3129,15 @@ async fn translate_batch_with_fallback(
                         if !is_sound && !is_music && trans_len > 0 {
                             let ratio = trans_len as f64 / orig_len as f64;
                             // 错位检测阈值根据原文长度动态调整：
-                            // - 长原文（≥30字符）：ratio < 0.25 表示严重偏短（如两行只翻译了第一行）
-                            //   0.25 能捕获 "I had the craziest night\n..." (55字符) → "这棵树的汁液绝对值得。" (11字符) ratio=0.20
+                            // - 长原文（≥30字符）：ratio < 0.15 表示严重偏短（如两行只翻译了第一行）
+                            //   0.15 能捕获真正的错位（ratio 通常 < 0.1），同时不误判正常的中英翻译
+                            //   注意：中英翻译压缩比通常在 0.15-0.3（中文信息密度高），
+                            //   之前的 0.25 阈值会误判正常翻译为错位，导致降级重试失败（空译文）
                             // - 短原文（<30字符）：中英翻译压缩比可达 0.1（如 "Congratulations!" → "恭喜！"），
                             //   用固定字符数差值检测更可靠：译文比原文少 20 字符以上才判为错位
                             // - 长度比值 > 5.0 且 trans_len > 10：译文严重偏长（如把相邻条目合并了）
                             // - 多行原文（含\n）但译文不含换行：可能只翻译了第一行，降级重试
-                            let short_ratio_threshold = if orig_len >= 30 { 0.25 } else { 0.0 };
+                            let short_ratio_threshold = if orig_len >= 30 { 0.15 } else { 0.0 };
                             let short_char_diff = if orig_len < 30 {
                                 (orig_len as i64 - trans_len as i64) > 20
                             } else {
@@ -3085,6 +3207,20 @@ async fn translate_batch_with_fallback(
         }
 
         pending = still_pending;
+    }
+
+    // 最终兜底：经过所有降级重试（30→10→5→3→1）仍为空的条目，
+    // 用原文填充译文，确保导出时不出现空白行。
+    // 这些条目会在后续 failed 判定逻辑中被标记为 failed（译文=原文），
+    // 用户可在 UI 中看到并手动重翻译或编辑。
+    for (idx, r) in results.iter_mut().enumerate() {
+        if r.is_empty() {
+            tracing::warn!(
+                "批次降级翻译：条目 {} 经所有重试仍为空，用原文兜底",
+                idx
+            );
+            *r = texts[idx].clone();
+        }
     }
 
     results
@@ -5979,6 +6115,87 @@ mod tests {
         let protected = p.protect(input);
         let restored = p.restore(&protected);
         assert_eq!(restored, input);
+    }
+
+    #[test]
+    fn test_ass_tag_recovery_when_9b_drops_placeholder() {
+        // 模拟 9b 模型丢弃占位符字符的情况
+        let mut p = PlaceholderProtector::new();
+        let input = r"{\an8}[phone buzzing] Oh, Greater Whitethroat!";
+        let protected = p.protect(input);
+        // 9b 模型翻译后丢弃了占位符（模拟：翻译结果中不含占位符字符）
+        let fake_translation = "哦，是白喉林莺！";
+        // 普通 restore 会丢失 {\an8}
+        let plain_restored = p.restore(fake_translation);
+        assert!(!plain_restored.contains("{\\an8}"));
+        // restore_with_ass_recovery 应恢复 {\an8} 前缀
+        let recovered = p.restore_with_ass_recovery(fake_translation, input);
+        assert!(recovered.starts_with("{\\an8}"));
+        assert!(recovered.contains("白喉林莺"));
+    }
+
+    #[test]
+    fn test_ass_tag_recovery_no_loss() {
+        // 译文中已包含 ASS 标签时不应重复添加
+        let mut p = PlaceholderProtector::new();
+        let input = r"{\an8}Hello world";
+        let protected = p.protect(input);
+        // 模拟 9b 正确保留占位符
+        let restored = p.restore_with_ass_recovery(&protected, input);
+        assert_eq!(restored, input);
+    }
+
+    #[test]
+    fn test_ass_tag_recovery_no_prefix_tags() {
+        // 原文没有前缀 ASS 标签时不做任何处理
+        let mut p = PlaceholderProtector::new();
+        let input = "Hello world";
+        let protected = p.protect(input);
+        let restored = p.restore_with_ass_recovery(&protected, input);
+        assert_eq!(restored, input);
+    }
+
+    #[test]
+    fn test_strip_remaining_placeholders() {
+        // 9b 模型多输出未注册的占位符字符
+        let mut p = PlaceholderProtector::new();
+        let input = r"{\an8}[phone buzzing]";
+        let protected = p.protect(input);
+        // 9b 返回时多了一个 \ue001（未注册的占位符）
+        let fake = format!("\u{E000}\u{E001}[手机震动]");
+        let restored = p.restore_with_ass_recovery(&fake, input);
+        // \ue001 应被清除，不应出现在最终译文中
+        assert!(!restored.contains('\u{E001}'));
+        assert!(!restored.contains('\u{E000}'));
+        assert!(restored.starts_with("{\\an8}"));
+        assert!(restored.contains("[手机震动]"));
+    }
+
+    #[test]
+    fn test_clean_json_leak_full_array() {
+        // 完整 JSON 数组包装泄漏
+        let leaked = r#"[{"n": 1, "t": "让我们看看发生了什么事。"}]"#;
+        let cleaned = clean_json_leak(leaked);
+        assert_eq!(cleaned, "让我们看看发生了什么事。");
+    }
+
+    #[test]
+    fn test_clean_json_leak_trailing_syntax() {
+        // 译文末尾 JSON 语法残留
+        let leaked = "她说：'好吧，那我来看看情况吧，'},\n  {";
+        let cleaned = clean_json_leak(leaked);
+        assert_eq!(cleaned, "她说：'好吧，那我来看看情况吧，'");
+        // 不应包含 JSON 语法
+        assert!(!cleaned.contains("'},"));
+        assert!(!cleaned.contains("\n  {"));
+    }
+
+    #[test]
+    fn test_clean_json_leak_normal_text() {
+        // 正常译文不应被修改
+        let normal = "这是一个正常的翻译。";
+        let cleaned = clean_json_leak(normal);
+        assert_eq!(cleaned, normal);
     }
 
     #[test]
