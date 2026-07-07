@@ -770,6 +770,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       if (exists) return prev.filter((x) => x.id !== m);
       return [...prev, { id: m, modelType: autoDetectModelTypeStr(m) }];
     });
+    setModelFilter("");
   }, [autoDetectModelTypeStr]);
 
   const setModelTypeForModel = useCallback((modelId: string, newType: string) => {

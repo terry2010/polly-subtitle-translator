@@ -88,6 +88,8 @@ mod integration_tests {
             eng_stream.index,
             output_path,
             None,
+            None,
+            None,
         );
         assert!(result.is_ok(), "字幕提取应成功: {:?}", result.err());
 

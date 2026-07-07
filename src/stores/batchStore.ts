@@ -240,7 +240,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     unlistens.push(
       await listen<{ reason: string }>("batch-queue-paused", (e) => {
         set({ isPaused: true, pauseReason: e.payload.reason });
-        toast.error(`队列已暂停: ${e.payload.reason}`);
+        toast.error(e.payload.reason);
       })
     );
 
