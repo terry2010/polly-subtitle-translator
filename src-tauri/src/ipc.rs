@@ -184,7 +184,7 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
 /// 从 DB 读取凭据配置，创建翻译 provider 实例
 /// 被 translate_subtitle（单文件 IPC）和 BatchWorker（批量）共用
 /// 返回 (provider_instance, provider_name, rate_limit)
-pub(crate) struct ResolvedProvider {
+pub struct ResolvedProvider {
     pub instance: std::sync::Arc<dyn translate::TranslateProviderTrait + Send + Sync>,
     pub name: String,
     pub rate_limit: translate::RateLimitPolicy,
@@ -192,7 +192,7 @@ pub(crate) struct ResolvedProvider {
 
 /// 从 DB 解析凭据并创建 provider 实例
 /// glossary/name_tagging 仅 AI 翻译使用，传统翻译传空/false
-pub(crate) fn resolve_provider(
+pub fn resolve_provider(
     db: &Database,
     provider: &str,
     model: Option<&str>,
