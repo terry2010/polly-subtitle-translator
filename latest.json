@@ -1,10 +1,10 @@
 {
   "version": "1.0.3",
-  "notes": "修复部分字幕特殊符号过多导致误判\n修复部分字幕在9b模型场景下概率性出现翻译丢句子",
-  "pub_date": "2026-07-07T15:22:07.785Z",
+  "notes": "Release v1.0.3",
+  "pub_date": "2026-07-07T15:28:35.826Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdHpsVGt4TnZKaFd2amluRkhCSXJnWFZEVm1naExZS2pnOXZPVFcxdEJJZkxidWNlRTBGa3VmYTF5T1d0OElUK0JBeXdyUUdjRFpMTWxiZXoxajFYRWdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNDM3NzIyCWZpbGU6QUktU3ViVHJhbnNfMS4wLjNfeDY0LXNldHVwLmV4ZQo3QmxBQU9DVFlZL0FUaTkvVGJWeXBiQzRZUEF6QkYrOUxPVGE3eGorSHAzNTFrYkthY1psVjIvSVZaTDhXUCt4dE9YaFQvcmJpK3ErQVFMemRBQ1BEQT09Cg==",
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdCtHSW5YN3h6WVJQUytlcktrYzJlV29zbTdOaHFYM29aWjFlK2h5alpjV0YxYzFsUy9Gd25RRmdQY1pyUXQvcnpHbnpaYjU1R3kwMVVPMzY0ZHM3MndNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNDM4MDQ2CWZpbGU6QUktU3ViVHJhbnNfMS4wLjNfeDY0LXNldHVwLmV4ZQpJKy9hY1p2RE5HK0pGZkZsTEFnRzlRSFFVdFlTZFdHSEM5MWQ0bkMveXBUQ0wzb0o4WCt4LzBJK09qQ0JlVENOY2psUVpoRW4wakI1WExWa0JsczVDdz09Cg==",
       "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/v1.0.3/AI-SubTrans_1.0.3_x64-setup.exe"
     }
   }
