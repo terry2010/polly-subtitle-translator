@@ -2784,7 +2784,7 @@ pub async fn retry_batch_task(
 pub async fn pause_batch_queue(
     batch_queue: State<'_, BatchQueue>,
 ) -> Result<(), IpcError> {
-    let _ = batch_queue.tx.try_send(batch::BatchCmd::Pause);
+    let _ = batch_queue.tx.try_send(batch::BatchCmd::Pause(Some("手动暂停".to_string())));
     Ok(())
 }
 

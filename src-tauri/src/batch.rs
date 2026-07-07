@@ -232,7 +232,7 @@ pub(crate) enum BatchCmd {
     ReorderTasks(Vec<String>),
     ClearQueue,
     UpdateConfig(BatchConfig),
-    Pause,
+    Pause(Option<String>),
     Resume,
     /// 扫描已有文件并检查（外挂/内嵌字幕），不需要翻译的标记 Skipped
     ScanExisting,
@@ -1343,6 +1343,35 @@ fn lang_class_name_to_code(name: &str) -> &'static str {
     }
 }
 
+/// 为字幕文件查找同目录下对应的视频文件路径
+/// 例如字幕 `Rick and Morty...TURG.eng.srt` → 视频 `Rick and Morty...TURG.mkv`
+fn find_video_for_subtitle(subtitle_path: &str) -> Option<String> {
+    let path = std::path::Path::new(subtitle_path);
+    let dir = path.parent()?;
+    let stem = path.file_stem()?.to_str()?; // e.g. "Rick and Morty...TURG.eng"
+
+    // 遍历目录中的视频文件，找到 stem 以视频 stem 开头的
+    // 视频 stem 应该是字幕 stem 去掉语言标记后的前缀
+    let video_exts = ["mkv", "mp4", "avi", "mov", "wmv", "flv", "ts", "m2ts"];
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut best_match: Option<(String, usize)> = None;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_file() { continue; }
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        if !video_exts.contains(&ext.as_str()) { continue; }
+        let vstem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        // 字幕 stem 必须以视频 stem 开头（如 "video.eng" starts with "video"）
+        if stem.starts_with(vstem) {
+            // 选最长的视频 stem（最精确匹配）
+            if best_match.as_ref().map_or(true, |(_, len)| vstem.len() > *len) {
+                best_match = Some((p.to_string_lossy().to_string(), vstem.len()));
+            }
+        }
+    }
+    best_match.map(|(p, _)| p)
+}
+
 /// 检查字幕文件是否需要翻译
 /// 通过读取字幕内容并检测主导语言来判断，而非依赖文件名
 fn check_subtitle_needs_translate(subtitle_path: &str, cfg: &BatchConfig) -> bool {
@@ -1756,12 +1785,15 @@ pub(crate) fn spawn_batch_worker(
                 Some(BatchCmd::UpdateConfig(new_config)) => {
                     *config.lock().unwrap() = new_config;
                 }
-                Some(BatchCmd::Pause) => {
+                Some(BatchCmd::Pause(reason)) => {
                     *paused.lock().unwrap() = true;
-                    let _ = app.emit(
-                        "batch-queue-paused",
-                        serde_json::json!({ "reason": "全局错误，队列已暂停" }),
-                    );
+                    // reason 为 None 时表示调用方已自行 emit 事件（如凭据错误）
+                    if let Some(r) = reason {
+                        let _ = app.emit(
+                            "batch-queue-paused",
+                            serde_json::json!({ "reason": r }),
+                        );
+                    }
                 }
                 Some(BatchCmd::Resume) => {
                     *paused.lock().unwrap() = false;
@@ -1841,8 +1873,31 @@ pub(crate) fn spawn_batch_worker(
 
                         // 先检查是否需要翻译，不需要则直接跳过（不创建任务、不显示在列表）
                         let skip_reason = if path_type == PathType::Subtitle {
-                            let need_translate = check_subtitle_needs_translate(&file_path, &cfg);
-                            if !need_translate {
+                            // 先检查同目录下是否已有目标语言或双语字幕（对应同一视频）
+                            let mut sibling_skip: Option<String> = None;
+                            if cfg.check_external {
+                                if let Some(video_path) = find_video_for_subtitle(&file_path) {
+                                    if let Some(existing) = find_external_subtitle(&video_path, &cfg.target_lang) {
+                                        if existing != file_path {
+                                            sibling_skip = Some(format!("已有外挂目标语言字幕: {}", existing));
+                                        }
+                                    }
+                                    if sibling_skip.is_none() {
+                                        for lang in &cfg.skip_langs {
+                                            if lang == &cfg.target_lang { continue; }
+                                            if let Some(existing) = find_external_subtitle(&video_path, lang) {
+                                                if existing != file_path {
+                                                    sibling_skip = Some(format!("已有外挂 {} 字幕，跳过: {}", lang, existing));
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(reason) = sibling_skip {
+                                Some(reason)
+                            } else if !check_subtitle_needs_translate(&file_path, &cfg) {
                                 Some(format!("字幕已是目标语言 {}", cfg.target_lang))
                             } else {
                                 None
@@ -2072,7 +2127,27 @@ async fn process_task(
         }
         } // end if let Some(ref probe)
     } else {
-        // Subtitle 类型：直接用原路径
+        // Subtitle 类型：先检查同目录下是否已有目标语言或双语字幕
+        if cfg.check_external {
+            if let Some(video_path) = find_video_for_subtitle(&task.video_path) {
+                if let Some(existing) = find_external_subtitle(&video_path, &cfg.target_lang) {
+                    if existing != task.video_path {
+                        return skip_task(&app, &tasks, &task,
+                            format!("已有外挂目标语言字幕: {}", existing), Some(db.inner()));
+                    }
+                }
+                for lang in &cfg.skip_langs {
+                    if lang == &cfg.target_lang { continue; }
+                    if let Some(existing) = find_external_subtitle(&video_path, lang) {
+                        if existing != task.video_path {
+                            return skip_task(&app, &tasks, &task,
+                                format!("已有外挂 {} 字幕，跳过: {}", lang, existing), Some(db.inner()));
+                        }
+                    }
+                }
+            }
+        }
+        // 直接用原路径
         task.subtitle_path = Some(task.video_path.clone());
     }
 
@@ -2150,11 +2225,33 @@ async fn process_task(
             let _ = app.emit("batch-queue-paused", serde_json::json!({
                 "reason": e.to_string()
             }));
-            // 发送 Pause 命令到 worker，真正暂停队列调度
+            // 发送 Pause 命令到 worker，真正暂停队列调度（reason=None 避免重复 emit）
             if let Some(bq) = app.try_state::<BatchQueue>() {
-                let _ = bq.tx.try_send(BatchCmd::Pause);
+                let _ = bq.tx.try_send(BatchCmd::Pause(None));
             }
-            return fail_task(&app, &tasks, &task, &e.to_string(), Some(db.inner()));
+            // 标记当前任务为 Failed，但不触发 check_queue_complete（队列已暂停，不应 emit "完成"）
+            let err_msg = e.to_string();
+            let mut failed_task = task.clone();
+            failed_task.status = BatchStatus::Failed(err_msg.clone());
+            failed_task.error = Some(err_msg.clone());
+            failed_task.finished_at = Some(now_ts());
+            {
+                let mut guard = tasks.lock().unwrap();
+                if let Some(t) = guard.iter_mut().find(|t| t.id == task.id) {
+                    *t = failed_task.clone();
+                }
+            }
+            let _ = db.upsert_batch_task(&failed_task);
+            let _ = app.emit(
+                "batch-file-error",
+                serde_json::json!({ "id": &task.id, "error": &err_msg }),
+            );
+            if let Some(tmp) = &task.subtitle_path {
+                if task.source_path_type == PathType::Video {
+                    let _ = std::fs::remove_file(tmp);
+                }
+            }
+            return;
         }
     };
 

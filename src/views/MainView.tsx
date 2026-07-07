@@ -688,7 +688,7 @@ export default function MainView() {
       translateStore.setServiceId(effectiveServiceId);
       if (effectiveModel) translateStore.setModel(effectiveModel);
 
-      // 4. 如果发生了引擎切换，提示用户
+      // 4. 如果发生了引擎切换，仅记录日志（初始化时不弹 toast，避免从设置返回时打扰用户）
       const hasChanged = effectiveProvider !== oldProvider || effectiveServiceId !== oldServiceId || effectiveModel !== oldModel;
       if (hasChanged) {
         const getProviderName = (provider: string, serviceId: string | null, model: string) => {
@@ -701,7 +701,7 @@ export default function MainView() {
         };
         const oldName = getProviderName(oldProvider, oldServiceId, oldModel);
         const newName = getProviderName(effectiveProvider, effectiveServiceId, effectiveModel);
-        toast.info(t("translate.engineSwitched", "上次使用的翻译引擎（{{oldProvider}}）已不可用，已自动切换为 {{newProvider}}", { oldProvider: oldName, newProvider: newName }));
+        console.info(`[MainView] 翻译引擎已切换: ${oldName} -> ${newName}`);
       }
     });
   }, []);
