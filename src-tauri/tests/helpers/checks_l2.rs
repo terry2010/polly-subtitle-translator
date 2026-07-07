@@ -13,6 +13,8 @@ pub fn run_l2_checks(original: &SubtitleFile, translated: &SubtitleFile, target_
     results.push(check_sound_effects(original, translated));
     results.push(check_name_consistency(translated));
     results.push(check_length_ratio(original, translated));
+    results.push(check_alignment(original, translated));
+    results.push(check_truncation(original, translated));
     results
 }
 
@@ -86,6 +88,9 @@ pub fn check_cjk(translated: &SubtitleFile) -> CheckResult {
                 // 排除音效标记 [xxx] 和音乐符号 ♪♪ 等（非文字内容不需要 CJK）
                 && !looks_like_sound_effect(&e.translated)
                 && !is_music_or_symbol_only(&e.translated)
+                // 排除含音乐符号的歌词/拟声词（如 "♪ Da-da da da ♪"）
+                // 9b 保持原样是正确行为，因为音乐拟声词无法翻译
+                && !has_music_symbols(&e.translated)
                 // 排除非英语原文（如拼写字母 G-O-R、祖鲁语歌词等，保持原样是正确行为）
                 && !is_non_english_source(&e.text)
             }
@@ -114,6 +119,13 @@ fn is_music_or_symbol_only(s: &str) -> bool {
         || "♪♬♫♩♭♮♯".contains(c)
         || matches!(c, '[' | ']' | '(' | ')' | '.' | '-' | '_' | '*')
     })
+}
+
+/// 判断文本是否包含音乐符号（♪♬♫♩ 等）
+/// 含音乐符号的条目是歌词/拟声词（如 "♪ Da-da da da ♪"），
+/// 9b 保持原样是正确行为，因为音乐拟声词无法翻译
+fn has_music_symbols(s: &str) -> bool {
+    s.chars().any(|c| "♪♬♫♩♭♮♯".contains(c))
 }
 
 // === SECTION 2 END ===
@@ -274,4 +286,188 @@ fn extract_name_tags(text: &str) -> Vec<(String, String)> {
         }
     }
     result
+}
+
+// === SECTION 4: L2.7 错位检测 + L2.8 截断检测 ===
+
+/// L2.7 译文错位检测（数字匹配启发式）
+/// 原理：提取原文和译文中的数字，如果译文[N]含有原文[N]没有的数字，
+/// 且这些"外来"数字出现在原文[N-1]或原文[N+1]中，标记为疑似错位。
+/// 同时要求原文[N]有数字不在译文中（双向不匹配才可疑）。
+pub fn check_alignment(original: &SubtitleFile, translated: &SubtitleFile) -> CheckResult {
+    let mut suspected = Vec::new();
+
+    for i in 0..translated.entries.len() {
+        let trans = &translated.entries[i];
+
+        // 跳过：failed、空译文、音效、音乐符号
+        if trans.failed || trans.translated.trim().is_empty() {
+            continue;
+        }
+        if looks_like_sound_effect(&trans.translated) || is_music_or_symbol_only(&trans.translated) {
+            continue;
+        }
+
+        // 提取译文和原文[N]的数字
+        let trans_numbers = extract_numbers(&trans.translated);
+        if trans_numbers.is_empty() {
+            continue;
+        }
+        if i >= original.entries.len() {
+            continue;
+        }
+        let orig_numbers = extract_numbers(&original.entries[i].text);
+        if orig_numbers.is_empty() {
+            continue;
+        }
+
+        // 双向不匹配：译文有外来数字 AND 原文有缺失数字
+        let trans_has_foreign = trans_numbers.iter().any(|t| !orig_numbers.contains(t));
+        let orig_has_missing = orig_numbers.iter().any(|o| !trans_numbers.contains(o));
+        if !trans_has_foreign || !orig_has_missing {
+            continue;
+        }
+
+        // 检查外来数字是否匹配邻居
+        let foreign_nums: Vec<u64> = trans_numbers.iter()
+            .filter(|t| !orig_numbers.contains(t))
+            .copied()
+            .collect();
+
+        let prev_match = if i > 0 && i - 1 < original.entries.len() {
+            let prev_numbers = extract_numbers(&original.entries[i - 1].text);
+            foreign_nums.iter().all(|t| prev_numbers.contains(t))
+        } else {
+            false
+        };
+
+        let next_match = if i + 1 < original.entries.len() {
+            let next_numbers = extract_numbers(&original.entries[i + 1].text);
+            foreign_nums.iter().all(|t| next_numbers.contains(t))
+        } else {
+            false
+        };
+
+        if prev_match || next_match {
+            let direction = if prev_match { "↑(N-1)" } else { "↓(N+1)" };
+            suspected.push((trans.index, direction));
+        }
+    }
+
+    if suspected.is_empty() {
+        CheckResult::pass("alignment_check", "无错位迹象")
+    } else {
+        CheckResult::fail(
+            "alignment_check",
+            &format!("{} 条疑似译文错位: {:?}", suspected.len(), &suspected[..suspected.len().min(5)]),
+            "translate.rs batch 翻译结果对齐逻辑",
+        )
+    }
+}
+
+/// L2.8 译文截断检测
+/// 三重信号：1) 原文有句末标点但译文没有 2) 严格长度比 < 0.3 3) 原文句子数 > 译文句子数
+pub fn check_truncation(original: &SubtitleFile, translated: &SubtitleFile) -> CheckResult {
+    let mut truncated = Vec::new();
+
+    for (orig, trans) in original.entries.iter().zip(&translated.entries) {
+        // 跳过：failed、空译文、音效、音乐符号、非英语原文
+        if trans.failed || trans.translated.trim().is_empty() {
+            continue;
+        }
+        if looks_like_sound_effect(&orig.text) || is_music_or_symbol_only(&orig.text) {
+            continue;
+        }
+        if is_non_english_source(&orig.text) {
+            continue;
+        }
+
+        let orig_text = orig.text.trim();
+        let trans_text = trans.translated.trim();
+        let mut flags: Vec<String> = Vec::new();
+
+        // 信号 1：原文以句末标点结尾，译文不以句末标点结尾
+        let orig_ends_punct = ends_with_sentence_punct(orig_text);
+        let trans_ends_punct = ends_with_sentence_punct(trans_text);
+        if orig_ends_punct && !trans_ends_punct {
+            flags.push("句末标点缺失".to_string());
+        }
+
+        // 信号 2：严格长度比 < 0.3（仅对原文 ≥ 10 字符检查，避免短句误报）
+        let orig_len = orig_text.chars().count().max(1);
+        let trans_len = trans_text.chars().count();
+        if orig_len >= 10 {
+            let ratio = trans_len as f64 / orig_len as f64;
+            if ratio < 0.3 {
+                flags.push(format!("长度比 {:.2}", ratio));
+            }
+        }
+
+        // 信号 3：原文句子数 > 译文句子数（原文至少 2 句）
+        let orig_sentences = count_sentences(orig_text);
+        let trans_sentences = count_sentences(trans_text);
+        if orig_sentences > trans_sentences && orig_sentences >= 2 {
+            flags.push(format!("句子数 {}→{}", orig_sentences, trans_sentences));
+        }
+
+        if !flags.is_empty() {
+            truncated.push((orig.index, flags.join(", ")));
+        }
+    }
+
+    if truncated.is_empty() {
+        CheckResult::pass("truncation_check", "无截断迹象")
+    } else {
+        CheckResult::warn(
+            "truncation_check",
+            &format!("{} 条疑似截断: {:?}", truncated.len(), &truncated[..truncated.len().min(5)]),
+            "translate.rs prompt 或 batch 翻译逻辑",
+        )
+    }
+}
+
+// === SECTION 4 END ===
+
+/// 从文本中提取所有数字（整数，至少 1 位）
+fn extract_numbers(s: &str) -> Vec<u64> {
+    let mut numbers = Vec::new();
+    let mut current = String::new();
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            current.push(c);
+        } else if !current.is_empty() {
+            if let Ok(n) = current.parse::<u64>() {
+                numbers.push(n);
+            }
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        if let Ok(n) = current.parse::<u64>() {
+            numbers.push(n);
+        }
+    }
+    numbers
+}
+
+/// 检查文本是否以句末标点结尾
+fn ends_with_sentence_punct(s: &str) -> bool {
+    let s = s.trim_end();
+    if s.is_empty() {
+        return false;
+    }
+    s.ends_with(|c: char| matches!(c, '.' | '!' | '?' | '。' | '！' | '？' | '；' | ';'))
+}
+
+/// 统计文本中的句子数（按句末标点分割）
+fn count_sentences(s: &str) -> usize {
+    let s = s.trim();
+    if s.is_empty() {
+        return 0;
+    }
+    let sentences: Vec<&str> = s.split(|c: char| matches!(c, '.' | '!' | '?' | '。' | '！' | '？'))
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    sentences.len().max(1)
 }
