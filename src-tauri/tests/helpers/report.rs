@@ -41,6 +41,8 @@ pub struct TestReport {
     pub timestamp: String,
     pub summary: Summary,
     pub fixtures: Vec<FixtureReport>,
+    /// 总用时（人类可读格式，如 "12分34秒"）
+    pub elapsed: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +74,7 @@ impl TestReport {
                 checks_failed: 0,
             },
             fixtures: Vec::new(),
+            elapsed: String::new(),
         }
     }
 
@@ -114,6 +117,9 @@ impl TestReport {
         let mut md = String::new();
         md.push_str(&format!("# E2E 测试报告\n\n"));
         md.push_str(&format!("**运行时间**: {}\n\n", self.timestamp));
+        if !self.elapsed.is_empty() {
+            md.push_str(&format!("**总用时**: {}\n\n", self.elapsed));
+        }
         md.push_str(&format!("**结果**: {} 通过 / {} 警告 / {} 失败\n\n", self.summary.passed, self.summary.warned, self.summary.failed));
         md.push_str("## 概览\n\n");
         md.push_str("| Fixture | 条目数 | 状态 | 检查项 (P/W/F) |\n");
@@ -191,6 +197,9 @@ impl TestReport {
         html.push_str("<div class=\"header\">\n");
         html.push_str(&format!("<h1>E2E 测试报告</h1>\n"));
         html.push_str(&format!("<p>运行时间: {}</p>\n", self.timestamp));
+        if !self.elapsed.is_empty() {
+            html.push_str(&format!("<p>总用时: {}</p>\n", self.elapsed));
+        }
         html.push_str("<div class=\"summary\">\n");
         html.push_str(&format!("<div class=\"stat pass\">{}<br><small>通过</small></div>\n", self.summary.passed));
         html.push_str(&format!("<div class=\"stat warn\">{}<br><small>警告</small></div>\n", self.summary.warned));

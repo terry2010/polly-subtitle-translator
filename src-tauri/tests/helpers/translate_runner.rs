@@ -1,10 +1,12 @@
-// 翻译执行器：调用 9b 模型翻译字幕
+// 翻译执行器：调用翻译引擎（9b AI 或传统翻译 API）翻译字幕
 use zimufan_lib::subtitle::{SubtitleFile, SubtitleEntry};
 use zimufan_lib::translate::{
     self, OpenAiProvider, TranslateProviderTrait, TranslateScheduler,
     ModelType, ExtractedName,
 };
 use zimufan_lib::db::Database;
+use zimufan_lib::ipc;
+use zimufan_lib::get_app_data_dir;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -37,6 +39,72 @@ pub fn create_test_db(cache_dir: &Path) -> Database {
 }
 
 // === SECTION 1 END ===
+
+/// 根据 TestConfig 创建翻译 provider 实例 + provider_name（用于缓存隔离）
+///
+/// 两种模式：
+/// 1. translate_provider == "openai" 且未指定 service_id：
+///    走默认 9b AI（LM Studio），直接用 OpenAiProvider 构造（向后兼容）
+/// 2. translate_provider == "openai" 且指定了 service_id（如 deepseek）：
+///    打开用户数据库，复用 resolve_provider 读取凭据
+/// 3. translate_provider == "baidu" / "deepl" / "google" 等：
+///    打开用户数据库，复用 resolve_provider 读取凭据
+///
+/// 返回 (provider_instance, provider_name)
+pub fn create_translate_provider(
+    cfg: &super::config::TestConfig,
+    glossary: Vec<(String, String)>,
+    name_tagging: bool,
+) -> (Arc<dyn TranslateProviderTrait + Send + Sync>, String) {
+    let provider_str = cfg.translate_provider.as_str();
+
+    // 模式 1：默认 9b AI（LM Studio），直接构造，不需要用户数据库
+    if provider_str == "openai" && cfg.service_id.is_none() {
+        let model_type = ModelType::from_model_id(&cfg.model_9b);
+        let provider = OpenAiProvider::with_client(
+            cfg.api_base.clone(),
+            cfg.model_9b.clone(),
+            model_type,
+            None,
+            reqwest::Client::new(),
+        )
+        .with_service_name("LM Studio".to_string())
+        .with_glossary(glossary)
+        .with_name_tagging(name_tagging);
+
+        let provider: Arc<dyn TranslateProviderTrait + Send + Sync> = Arc::new(provider);
+        let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
+        return (provider, provider_name);
+    }
+
+    // 模式 2/3：从用户数据库读取凭据
+    let user_db = open_user_database()
+        .expect("无法打开用户数据库，请先在软件中配置翻译引擎凭据");
+
+    let resolved = ipc::resolve_provider(
+        &user_db,
+        provider_str,
+        Some(&cfg.model_9b),
+        None,
+        cfg.service_id.as_deref(),
+        glossary,
+        name_tagging,
+    )
+    .expect("从用户数据库读取翻译引擎配置失败，请先在软件中配置该引擎");
+
+    eprintln!("  [翻译] 从用户数据库加载引擎: provider={}", provider_str);
+    (resolved.instance, resolved.name)
+}
+
+/// 打开用户数据库（与软件运行时使用的是同一个数据库）
+fn open_user_database() -> Option<Database> {
+    let app_data_dir = get_app_data_dir()?;
+    let db_path = app_data_dir.join("zimufan.db");
+    eprintln!("  [翻译] 打开用户数据库: {}", db_path.display());
+    let db = Database::open(&db_path).ok()?;
+    db.migrate().ok()?;
+    Some(db)
+}
 
 /// 构建人名提取 system prompt（复用 translate.rs 的逻辑）
 fn build_name_extraction_system_prompt(source_lang: &str, target_lang: &str) -> String {
@@ -131,8 +199,6 @@ pub async fn translate_with_9b(
     source_lang: &str,
     target_lang: &str,
 ) -> TranslationOutput {
-    let model_type = ModelType::from_model_id(&cfg.model_9b);
-
     // 人名预扫描
     let names = if name_precision {
         eprintln!("  [人名精译] 预扫描提取人名...");
@@ -145,20 +211,8 @@ pub async fn translate_with_9b(
         .map(|n| (n.english.clone(), n.chinese.clone()))
         .collect();
 
-    // 创建带 glossary 和 name_tagging 的 provider
-    let provider = OpenAiProvider::with_client(
-        cfg.api_base.clone(),
-        cfg.model_9b.clone(),
-        model_type,
-        None,
-        reqwest::Client::new(),
-    )
-    .with_service_name("LM Studio".to_string())
-    .with_glossary(glossary)
-    .with_name_tagging(name_precision);
-
-    let provider: Arc<dyn TranslateProviderTrait + Send + Sync> = Arc::new(provider);
-    let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
+    // 创建 provider（支持 9b AI 和传统翻译引擎）
+    let (provider, provider_name) = create_translate_provider(cfg, glossary, name_precision);
     eprintln!("  [翻译] provider_name={}, file_hash={:?}", provider_name, file.file_hash);
 
     // 创建 scheduler
@@ -222,8 +276,6 @@ pub async fn translate_with_9b_batched(
     source_lang: &str,
     target_lang: &str,
 ) -> TranslationOutput {
-    let model_type = ModelType::from_model_id(&cfg.model_9b);
-
     // 人名预扫描
     let names = if name_precision {
         eprintln!("  [人名精译] 预扫描提取人名...");
@@ -236,19 +288,7 @@ pub async fn translate_with_9b_batched(
         .map(|n| (n.english.clone(), n.chinese.clone()))
         .collect();
 
-    let provider = OpenAiProvider::with_client(
-        cfg.api_base.clone(),
-        cfg.model_9b.clone(),
-        model_type,
-        None,
-        reqwest::Client::new(),
-    )
-    .with_service_name("LM Studio".to_string())
-    .with_glossary(glossary)
-    .with_name_tagging(name_precision);
-
-    let provider: Arc<dyn TranslateProviderTrait + Send + Sync> = Arc::new(provider);
-    let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
+    let (provider, provider_name) = create_translate_provider(cfg, glossary, name_precision);
 
     let scheduler = TranslateScheduler::new(db, provider, provider_name)
         .with_file_hash(file.file_hash.clone());
@@ -385,6 +425,7 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
 use super::state::{TestState, BatchStatus, TranslationRecord, NameRecord};
 
 /// 阶段 0：专有名词预扫描
+/// 传统翻译引擎（baidu/deepl/google 等）不支持 prompt，跳过人名预扫描
 pub async fn stage_name_scan(
     state: &mut TestState,
     file: &SubtitleFile,
@@ -392,6 +433,14 @@ pub async fn stage_name_scan(
 ) {
     if state.names_status != BatchStatus::Pending {
         eprintln!("  [阶段0] 名词预扫描已完成，跳过（{} 个名词）", state.names.len());
+        return;
+    }
+
+    // 传统翻译引擎不支持人名预扫描（需要 LLM prompt 能力）
+    if cfg.translate_provider != "openai" {
+        eprintln!("\n  === 阶段 0：专有名词预扫描（跳过：{} 不支持 prompt） ===", cfg.translate_provider);
+        state.names_status = BatchStatus::Passed;
+        state.save().expect("保存状态失败");
         return;
     }
 
@@ -444,20 +493,8 @@ pub async fn stage_translate_batch(
         .map(|n| (n.english.clone(), n.chinese.clone()))
         .collect();
 
-    let model_type = ModelType::from_model_id(&cfg.model_9b);
-    let provider = OpenAiProvider::with_client(
-        cfg.api_base.clone(),
-        cfg.model_9b.clone(),
-        model_type,
-        None,
-        reqwest::Client::new(),
-    )
-    .with_service_name("LM Studio".to_string())
-    .with_glossary(glossary)
-    .with_name_tagging(state.name_precision);
-
-    let provider: Arc<dyn TranslateProviderTrait + Send + Sync> = Arc::new(provider);
-    let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
+    let (provider, provider_name) = create_translate_provider(cfg, glossary, state.name_precision);
+    let provider_name_for_l3 = provider_name.clone();
     let scheduler = TranslateScheduler::new(db, provider, provider_name)
         .with_file_hash(file.file_hash.clone());
 
@@ -570,14 +607,13 @@ pub async fn stage_translate_batch(
 
     // L3 持久化往返验证（每批次都检查）
     eprintln!("  [L3验证] 开始持久化往返验证批次 {}...", batch_num);
-    let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
     let l3_results = super::checks_l3::check_batch_l3(
         file,
         &translated_file,
         db,
         &state.source_lang,
         &state.target_lang,
-        &provider_name,
+        &provider_name_for_l3,
         &file.file_hash,
         batch_start,
         batch_end,

@@ -39,6 +39,36 @@ function looksLikeSoundEffect(s: string): boolean {
   return false;
 }
 
+/// 判断是否为纯音乐符号/特殊符号（如 ♪♪、♬♬ 等，无文字内容）
+/// 与 tests/helpers/checks_l2.rs 的 is_music_or_symbol_only 保持一致
+function isMusicOrSymbolOnly(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  return [...t].every((c) =>
+    /\s/.test(c)
+    || "♪♬♫♩♭♮♯".includes(c)
+    || "[]().-_*".includes(c)
+  );
+}
+
+/// 判断文本是否包含音乐符号（♪♬♫♩ 等）
+/// 含音乐符号的条目是歌词/拟声词，保持原样是正确行为
+/// 与 tests/helpers/checks_l2.rs 的 has_music_symbols 保持一致
+function hasMusicSymbols(s: string): boolean {
+  return [...s].some((c) => "♪♬♫♩♭♮♯".includes(c));
+}
+
+/// 判断原文是否为非英语内容（如拼写字母 G-O-R、祖鲁语歌词等）
+/// 与 tests/helpers/checks_l2.rs 的 is_non_english_source 保持一致：
+/// 如果原文不含至少 3 个英语单词（≥2 字母），视为非英语内容，保持原样是正确行为
+function isNonEnglishSource(s: string): boolean {
+  const wordCount = s.split(/\s+/).filter((w) => {
+    const cleaned = [...w].filter((c) => /[a-zA-Z]/.test(c)).join("");
+    return cleaned.length >= 2;
+  }).length;
+  return wordCount < 3;
+}
+
 function formatTimecode(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const millis = ms % 1000;
@@ -616,11 +646,25 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           const hasCjk = (s: string) => /[一-鿿]/.test(s);
           // "未翻译"判定：译文为空、译文=原文、目标语言是中文但译文无 CJK（且原文也无 CJK）、
           // 或音效标记类型不一致（如 "you need every week." → "[碰撞声持续]"，AI 错位翻译）
-          const isUntranslated = (e: typeof file.entries[0]) =>
-            !e.translated
-            || e.translated.trim() === e.text.trim()
-            || (targetLang.startsWith("zh") && !hasCjk(e.translated) && !hasCjk(e.text))
-            || looksLikeSoundEffect(e.text) !== looksLikeSoundEffect(e.translated);
+          // 排除规则（与 tests/helpers/checks_l2.rs 的 L2 检查一致）：
+          //   - 纯音乐符号（♪♪、♬♬）：保持原样是正确行为
+          //   - 音效标记（[music]、[phone buzzing]）：保持原样是正确行为
+          //   - 含音乐符号的歌词/拟声词（♪ Da-da da da ♪）：无法翻译，保持原样正确
+          //   - 非英语原文（拼写字母 G-O-R、祖鲁语歌词等）：保持原样是正确行为
+          const isUntranslated = (e: typeof file.entries[0]) => {
+            // 排除：纯音乐符号、音效标记、非英语原文 — 这些保持原样不是错误
+            if (isMusicOrSymbolOnly(e.text) || looksLikeSoundEffect(e.text) || isNonEnglishSource(e.text)) {
+              return false;
+            }
+            // 排除：译文含音乐符号（歌词/拟声词，无法翻译）
+            if (hasMusicSymbols(e.translated)) {
+              return false;
+            }
+            return !e.translated
+              || e.translated.trim() === e.text.trim()
+              || (targetLang.startsWith("zh") && !hasCjk(e.translated) && !hasCjk(e.text))
+              || looksLikeSoundEffect(e.text) !== looksLikeSoundEffect(e.translated);
+          };
           const translatedCount = file.entries.filter((e) => e.translated && !e.failed && !isUntranslated(e)).length;
           const cacheCount = file.entries.filter((e) => e.from_cache).length;
           const failedCount = file.entries.filter((e) => e.failed).length;

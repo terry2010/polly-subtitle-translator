@@ -255,6 +255,7 @@ async fn run_state_machine(
 
 #[tokio::test]
 async fn e2e_test_run() {
+    let start_time = std::time::Instant::now();
     let cfg = parse_test_config();
     println!("E2E 配置: tier={:?}, fixture={:?}, name_precision={:?}", cfg.tier, cfg.fixture_name, cfg.name_precision);
 
@@ -290,14 +291,23 @@ async fn e2e_test_run() {
     }
 
     // 保存报告
+    let elapsed = start_time.elapsed();
+    let elapsed_secs = elapsed.as_secs();
+    let elapsed_str = if elapsed_secs >= 60 {
+        format!("{}分{}秒", elapsed_secs / 60, elapsed_secs % 60)
+    } else {
+        format!("{}秒", elapsed_secs)
+    };
+    report.elapsed = elapsed_str.clone();
     if let Err(e) = report.save(&out_dir) {
         eprintln!("保存报告失败: {:?}", e);
     }
     println!("\n报告已保存到: {}", out_dir.display());
+    println!("\n总用时: {}", elapsed_str);
     println!("\n{}", report.to_markdown());
 
     let fail_count = report.summary.checks_failed;
     if fail_count > 0 {
-        panic!("E2E 测试失败: {} 项检查失败", fail_count);
+        panic!("E2E 测试失败: {} 项检查失败（总用时: {}）", fail_count, elapsed_str);
     }
 }

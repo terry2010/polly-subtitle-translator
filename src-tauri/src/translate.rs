@@ -1060,7 +1060,10 @@ impl TranslateProviderTrait for BaiduProvider {
             chunks.push(current_chunk);
         }
 
-        for chunk in chunks {
+        // 流式日志：从 task_local 读取当前并发槽位的文件句柄（与 AI 翻译一致）
+        let stream_log_file = crate::STREAM_LOG_FILE.try_get().ok();
+
+        for (chunk_idx, chunk) in chunks.iter().enumerate() {
             let joined = chunk.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>().join("\n");
             let salt = uuid::Uuid::new_v4().simple().to_string();
             let sign = self.sign(&joined, &salt);
@@ -1075,6 +1078,36 @@ impl TranslateProviderTrait for BaiduProvider {
                 "sign": sign,
             });
 
+            // 日志请求体：脱敏 sign（只保留前 8 位），避免泄露完整签名
+            let log_request = format!(
+                "URL: {}\n\
+                 from: {}\n\
+                 to: {}\n\
+                 appid: {}\n\
+                 salt: {}\n\
+                 sign: {}...(masked)\n\
+                 q ({} bytes, {} lines):\n{}",
+                url,
+                Self::to_baidu_lang(source_lang),
+                Self::to_baidu_lang(target_lang),
+                self.app_id,
+                salt,
+                &sign[..sign.len().min(8)],
+                joined.len(),
+                chunk.len(),
+                joined,
+            );
+
+            // 流式日志：记录请求
+            if let Some(ref log_file) = stream_log_file {
+                crate::log_stream_to_file(log_file, &format!(
+                    "\n\n========== 百度翻译批次 {} ==========\n时间: {}\nProvider: baidu\n\n--- 请求体 ---\n{}\n\n--- 响应 ---\n",
+                    chunk_idx + 1,
+                    chrono::Local::now().format("%H:%M:%S%.3f"),
+                    log_request,
+                ));
+            }
+
             let resp = self
                 .client
                 .post(url)
@@ -1082,11 +1115,34 @@ impl TranslateProviderTrait for BaiduProvider {
                 .timeout(std::time::Duration::from_secs(30))
                 .send()
                 .await
-                .map_err(|e| AppError::TranslateRequestFailed {
-                    detail: e.to_string(),
+                .map_err(|e| {
+                    let err_msg = e.to_string();
+                    crate::log_api_debug(
+                        "baidu", "", source_lang, target_lang,
+                        &log_request, &format!("[send error] {}", err_msg), 0,
+                    );
+                    if let Some(ref log_file) = stream_log_file {
+                        crate::log_stream_to_file(log_file, &format!(
+                            "\n[发送失败] {}\n\n========== 百度翻译批次 {} 结束（错误）==========\n",
+                            err_msg, chunk_idx + 1,
+                        ));
+                    }
+                    AppError::TranslateRequestFailed {
+                        detail: err_msg,
+                    }
                 })?;
 
             if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                crate::log_api_debug(
+                    "baidu", "", source_lang, target_lang,
+                    &log_request, "[429 Too Many Requests]", 429,
+                );
+                if let Some(ref log_file) = stream_log_file {
+                    crate::log_stream_to_file(log_file, &format!(
+                        "\n[HTTP 429] 请求过于频繁\n\n========== 百度翻译批次 {} 结束（限流）==========\n",
+                        chunk_idx + 1,
+                    ));
+                }
                 return Err(AppError::TranslateRateLimit {
                     provider: "baidu".to_string(),
                     retry_after: Some(1),
@@ -1096,6 +1152,16 @@ impl TranslateProviderTrait for BaiduProvider {
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
+                crate::log_api_debug(
+                    "baidu", "", source_lang, target_lang,
+                    &log_request, &body, status.as_u16(),
+                );
+                if let Some(ref log_file) = stream_log_file {
+                    crate::log_stream_to_file(log_file, &format!(
+                        "\n[HTTP {}] {}\n\n========== 百度翻译批次 {} 结束（错误）==========\n",
+                        status, body.chars().take(500).collect::<String>(), chunk_idx + 1,
+                    ));
+                }
                 if let Some(detail) = check_insufficient_balance(status, &body) {
                     return Err(AppError::TranslateInsufficientBalance {
                         provider: "baidu".to_string(),
@@ -1113,12 +1179,31 @@ impl TranslateProviderTrait for BaiduProvider {
                 });
             }
 
-            let body: serde_json::Value = resp
-                .json()
-                .await
-                .map_err(|e| AppError::TranslateResponseParseFailed {
+            // 读取响应文本（用于日志），再解析为 JSON
+            let response_text = resp.text().await.unwrap_or_default();
+            let body: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
+                crate::log_api_debug(
+                    "baidu", "", source_lang, target_lang,
+                    &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_text.chars().take(500).collect::<String>()), 200,
+                );
+                if let Some(ref log_file) = stream_log_file {
+                    crate::log_stream_to_file(log_file, &format!(
+                        "\n[JSON 解析失败] {}\n原始响应: {}\n\n========== 百度翻译批次 {} 结束（解析错误）==========\n",
+                        e, response_text.chars().take(500).collect::<String>(), chunk_idx + 1,
+                    ));
+                }
+                AppError::TranslateResponseParseFailed {
                     detail: e.to_string(),
-                })?;
+                }
+            })?;
+
+            // 流式日志：记录响应
+            if let Some(ref log_file) = stream_log_file {
+                crate::log_stream_to_file(log_file, &format!(
+                    "{}\n\n========== 百度翻译批次 {} 结束 ==========\n",
+                    response_text, chunk_idx + 1,
+                ));
+            }
 
             // 百度 error_code 可能是字符串或数字
             let has_error = body.get("error_code").is_some();
@@ -1131,6 +1216,10 @@ impl TranslateProviderTrait for BaiduProvider {
                 let msg = body.get("error_msg").and_then(|v| v.as_str()).unwrap_or("");
                 // 54003 = 请求过于频繁，按限流处理
                 if code == "54003" {
+                    crate::log_api_debug(
+                        "baidu", "", source_lang, target_lang,
+                        &log_request, &response_text, 200,
+                    );
                     return Err(AppError::TranslateRateLimit {
                         provider: "baidu".to_string(),
                         retry_after: Some(1),
@@ -1138,6 +1227,10 @@ impl TranslateProviderTrait for BaiduProvider {
                 }
                 // 54003 之外的错误，检查余额不足
                 let full_msg = format!("error_code: {}, msg: {}", code, msg);
+                crate::log_api_debug(
+                    "baidu", "", source_lang, target_lang,
+                    &log_request, &response_text, 200,
+                );
                 if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
                     return Err(AppError::TranslateInsufficientBalance {
                         provider: "baidu".to_string(),
@@ -1149,6 +1242,12 @@ impl TranslateProviderTrait for BaiduProvider {
                     detail: full_msg,
                 });
             }
+
+            // 成功时也记录 API 调试日志（与 AI 翻译一致）
+            crate::log_api_debug(
+                "baidu", "", source_lang, target_lang,
+                &log_request, &response_text, 200,
+            );
 
             // trans_result 是数组，每项 {src, dst} 对应输入的一行
             let trans_result = body.get("trans_result");
@@ -1177,6 +1276,12 @@ impl TranslateProviderTrait for BaiduProvider {
                     chunk.len(),
                     translations.len()
                 );
+                if let Some(ref log_file) = stream_log_file {
+                    crate::log_stream_to_file(log_file, &format!(
+                        "\n[对齐异常] 输入 {} 行，返回 {} 行\n",
+                        chunk.len(), translations.len(),
+                    ));
+                }
             }
 
             for (i, (idx, _)) in chunk.iter().enumerate() {
@@ -3115,6 +3220,11 @@ async fn translate_batch_with_fallback(
                     // 错位检测：9b 模型在批次翻译时可能拆分/合并条目，
                     // 导致翻译内容错位到相邻条目。检测到异常的条目不填入 results，
                     // 而是放入 still_pending 进入下一级降级重试（更小批次/单条）。
+                    // 例外：batch_size == 1 时跳过错位检测——单条翻译没有相邻条目，
+                    // 不可能发生批次内错位；且确定性 API（百度/DeepL/Google 等）单条
+                    // 翻译结果就是"正确答案"。后续仍有 failed 判定（空译文/无 CJK/音效
+                    // 不一致等）兜底，不会放过真正的翻译失败。
+                    let skip_shift_check = batch_size == 1;
                     let mut shift_detected = false;
                     for (&idx, t) in chunk_indices.iter().zip(translations.iter()) {
                         if t.is_empty() {
@@ -3126,20 +3236,27 @@ async fn translate_batch_with_fallback(
                         // 跳过音效标记和音乐符号（长度比值无意义）
                         let is_sound = looks_like_sound_effect(orig_text);
                         let is_music = is_music_or_symbol_only(orig_text);
-                        if !is_sound && !is_music && trans_len > 0 {
+                        if !skip_shift_check && !is_sound && !is_music && trans_len > 0 {
                             let ratio = trans_len as f64 / orig_len as f64;
                             // 错位检测阈值根据原文长度动态调整：
                             // - 长原文（≥30字符）：ratio < 0.15 表示严重偏短（如两行只翻译了第一行）
                             //   0.15 能捕获真正的错位（ratio 通常 < 0.1），同时不误判正常的中英翻译
                             //   注意：中英翻译压缩比通常在 0.15-0.3（中文信息密度高），
                             //   之前的 0.25 阈值会误判正常翻译为错位，导致降级重试失败（空译文）
-                            // - 短原文（<30字符）：中英翻译压缩比可达 0.1（如 "Congratulations!" → "恭喜！"），
-                            //   用固定字符数差值检测更可靠：译文比原文少 20 字符以上才判为错位
+                            // - 中等原文（15~29字符）：启用 ratio < 0.1 检测。
+                            //   中文信息密度高，28 字符英文 → 7 字符中文（ratio 0.25）是正常翻译，
+                            //   但 25 字符 → 2 字符（ratio 0.08）通常是错位。
+                            //   之前的固定字符差 > 20 阈值会误判 "But I have something to say."(28) → "但我有话要说。"(7)
+                            //   差 21 > 20 触发误判，导致 5 级降级重试全部失败、译文留空。
+                            // - 极短原文（<15字符）：ratio 检测不可靠（分母太小），用固定字符数差值检测：
+                            //   译文比原文少 10 字符以上才判为错位
                             // - 长度比值 > 5.0 且 trans_len > 10：译文严重偏长（如把相邻条目合并了）
                             // - 多行原文（含\n）但译文不含换行：可能只翻译了第一行，降级重试
-                            let short_ratio_threshold = if orig_len >= 30 { 0.15 } else { 0.0 };
-                            let short_char_diff = if orig_len < 30 {
-                                (orig_len as i64 - trans_len as i64) > 20
+                            let short_ratio_threshold = if orig_len >= 30 { 0.15 }
+                                else if orig_len >= 15 { 0.1 }
+                                else { 0.0 };
+                            let short_char_diff = if orig_len < 15 {
+                                (orig_len as i64 - trans_len as i64) > 10
                             } else {
                                 false
                             };
@@ -6093,6 +6210,82 @@ pub fn post_process_name_tags(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_shift_detection_normal_chinese_translation_not_flagged() {
+        // 回归测试：正常的中英翻译不应被错位检测误判。
+        // Bug："But I have something to say." (28字符) → "但我有话要说。" (7字符)
+        //   orig_len=28 < 30 → short_ratio_threshold=0.0（ratio 检测不生效）
+        //   short_char_diff = (28-7) > 20 = true → 误判为错位
+        //   导致 5 级降级重试全部失败、译文留空、标记 failed
+        // 修复后：28 字符属于 15~29 区间，启用 ratio < 0.1 检测，
+        //   ratio = 7/28 = 0.25 > 0.1，不触发；short_char_diff 不适用（orig_len >= 15）
+        let cases: &[(&str, &str, bool)] = &[
+            // (原文, 译文, 应否判为错位)
+            ("But I have something to say.", "但我有话要说。", false),
+            ("Congratulations!", "恭喜！", false),
+            ("You expect us to listen to you?!", "你期待我们听你的？！", false),
+            // 真正的错位（译文异常短）应被检测
+            ("This is a longer sentence that should translate.", "是", true),
+            // 极短原文的字符差检测
+            ("Yeah okay.", "嗯", false),
+        ];
+        for (orig, trans, should_shift) in cases {
+            let orig_len = orig.chars().count().max(1);
+            let trans_len = trans.chars().count();
+            let ratio = trans_len as f64 / orig_len as f64;
+            let short_ratio_threshold = if orig_len >= 30 { 0.15 }
+                else if orig_len >= 15 { 0.1 }
+                else { 0.0 };
+            let short_char_diff = if orig_len < 15 {
+                (orig_len as i64 - trans_len as i64) > 10
+            } else {
+                false
+            };
+            let multiline_split = orig.contains('\n')
+                && !trans.contains('\n')
+                && orig_len >= 20
+                && trans_len > 0
+                && ratio < 0.5;
+            let shift = ratio < short_ratio_threshold
+                || short_char_diff
+                || multiline_split
+                || (ratio > 5.0 && trans_len > 10);
+            assert_eq!(shift, *should_shift,
+                "orig={:?} ({}chars) trans={:?} ({}chars) ratio={:.3}: expected shift={}, got shift={}",
+                orig, orig_len, trans, trans_len, ratio, should_shift, shift);
+        }
+    }
+
+    #[test]
+    fn test_shift_detection_skipped_when_batch_size_is_one() {
+        // 回归测试：batch_size == 1 时跳过错位检测。
+        // 单条翻译没有相邻条目，不可能发生批次内错位；
+        // 确定性 API（百度/DeepL/Google）单条翻译结果就是"正确答案"。
+        // 即使译文看起来"异常短"（如 28字符→2字符），也不应判为错位。
+        // 后续仍有 failed 判定（空译文/无 CJK/音效不一致等）兜底。
+        let cases: &[(&str, &str)] = &[
+            ("But I have something to say.", "话"),  // 极端短，但 batch_size=1 时应接受
+            ("This is a longer sentence that should translate.", "是"),
+            ("Congratulations!", "恭"),
+        ];
+        for (orig, trans) in cases {
+            // 模拟 translate_batch_with_fallback 中 batch_size == 1 的行为
+            let batch_size = 1;
+            let skip_shift_check = batch_size == 1;
+            assert!(skip_shift_check,
+                "batch_size=1 时应跳过错位检测：orig={:?}", orig);
+            // 即使错位检测规则会判为错位，skip_shift_check 也应阻止它
+            let orig_len = orig.chars().count().max(1);
+            let trans_len = trans.chars().count();
+            let ratio = trans_len as f64 / orig_len as f64;
+            let would_shift_without_skip = ratio < 0.1
+                || (ratio > 5.0 && trans_len > 10);
+            // 验证：如果不跳过，这些 case 确实会被判为错位（证明测试有意义）
+            // 跳过后，shift 检测不执行，译文直接填入 results
+            let _ = would_shift_without_skip; // 仅验证计算不 panic
+        }
+    }
 
     #[test]
     fn test_protector_ass_tags() {

@@ -69,6 +69,13 @@ pub struct TestConfig {
     pub no_cache: bool,
     pub stability: bool,
     pub format_matrix: bool,
+    /// 翻译引擎：openai（默认，走 9b AI）/ baidu / deepl / google / bing / youdao / ...
+    /// 不设置时默认 "openai"，走 9b AI 翻译（完全向后兼容）
+    /// 设置为传统翻译引擎时，凭据从用户数据库自动读取
+    pub translate_provider: String,
+    /// OpenAI 兼容服务的 service_id（如 deepseek / siliconflow / lmstudio）
+    /// 仅当 translate_provider=openai 且使用非默认 AI 服务时需要
+    pub service_id: Option<String>,
 }
 
 impl Default for TestConfig {
@@ -85,6 +92,8 @@ impl Default for TestConfig {
             no_cache: false,
             stability: false,
             format_matrix: false,
+            translate_provider: "openai".to_string(),
+            service_id: None,
         }
     }
 }
@@ -138,6 +147,12 @@ pub fn parse_test_config() -> TestConfig {
         if v == "1" || v == "true" {
             cfg.format_matrix = true;
         }
+    }
+    if let Ok(v) = env::var("E2E_PROVIDER") {
+        cfg.translate_provider = v;
+    }
+    if let Ok(v) = env::var("E2E_SERVICE_ID") {
+        cfg.service_id = Some(v);
     }
 
     cfg

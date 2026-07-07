@@ -368,7 +368,7 @@ pub fn log_prompt_fail(
 /// - Windows: %APPDATA%\com.zimufan.ai-subtrans
 /// - macOS:   ~/Library/Application Support/com.zimufan.ai-subtrans
 /// - Linux:   $XDG_CONFIG_HOME/com.zimufan.ai-subtrans 或 ~/.config/com.zimufan.ai-subtrans
-fn get_app_data_dir() -> Option<std::path::PathBuf> {
+pub fn get_app_data_dir() -> Option<std::path::PathBuf> {
     // Windows: %APPDATA%
     #[cfg(windows)]
     {
