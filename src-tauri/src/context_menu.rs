@@ -144,6 +144,106 @@ pub fn is_subtitle_context_menu_registered() -> bool {
     is_registered_for_extensions(SUBTITLE_EXTENSIONS)
 }
 
+/// 注册文件夹右键菜单「AI-SubTrans 批量翻译」（Windows）
+/// 在文件夹上右键 → 添加该文件夹到批量翻译监视
+/// 注册到两个位置：
+///   1. Directory\shell（右键具体文件夹，%1 传入文件夹路径）
+///   2. Directory\Background\shell（右键文件夹空白处，%V 传入当前目录路径）
+#[cfg(target_os = "windows")]
+pub fn register_folder_context_menu(exe_path: &str) -> Result<(), AppError> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let menu_label = "AI-SubTrans 批量翻译";
+    let icon_value = format!("\"{}\",0", exe_path);
+
+    // 1. 注册到 Directory\shell（文件夹本身右键，%1 = 文件夹路径）
+    let base_dir = "Software\\Classes\\Directory\\shell\\zimufan_batch";
+    let (shell_key, _) = hkcu
+        .create_subkey(base_dir)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("create key '{}': {}", base_dir, e),
+        })?;
+    shell_key
+        .set_value("", &menu_label)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("set default value '{}': {}", base_dir, e),
+        })?;
+    shell_key
+        .set_value("Icon", &icon_value)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("set Icon '{}': {}", base_dir, e),
+        })?;
+
+    let command_dir = format!("{}\\command", base_dir);
+    let command_value_dir = format!("\"{}\" --mode=watch \"%1\"", exe_path);
+    let (cmd_key, _) = hkcu
+        .create_subkey(&command_dir)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("create key '{}': {}", command_dir, e),
+        })?;
+    cmd_key
+        .set_value("", &command_value_dir)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("set command value '{}': {}", command_dir, e),
+        })?;
+
+    // 2. 注册到 Directory\Background\shell（右键文件夹空白处，%V = 当前目录路径）
+    let base_bg = "Software\\Classes\\Directory\\Background\\shell\\zimufan_batch";
+    let (bg_key, _) = hkcu
+        .create_subkey(base_bg)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("create key '{}': {}", base_bg, e),
+        })?;
+    bg_key
+        .set_value("", &menu_label)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("set default value '{}': {}", base_bg, e),
+        })?;
+    bg_key
+        .set_value("Icon", &icon_value)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("set Icon '{}': {}", base_bg, e),
+        })?;
+
+    let command_bg = format!("{}\\command", base_bg);
+    let command_value_bg = format!("\"{}\" --mode=watch \"%V\"", exe_path);
+    let (cmd_bg_key, _) = hkcu
+        .create_subkey(&command_bg)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("create key '{}': {}", command_bg, e),
+        })?;
+    cmd_bg_key
+        .set_value("", &command_value_bg)
+        .map_err(|e| AppError::SystemContextMenuRegisterFailed {
+            detail: format!("set command value '{}': {}", command_bg, e),
+        })?;
+
+    Ok(())
+}
+
+/// 注销文件夹右键菜单（Windows）
+#[cfg(target_os = "windows")]
+pub fn unregister_folder_context_menu() -> Result<(), AppError> {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    // 删除 Directory\shell\zimufan_batch
+    let base_dir = "Software\\Classes\\Directory\\shell\\zimufan_batch";
+    let _ = hkcu.delete_subkey_all(base_dir);
+    // 删除 Directory\Background\shell\zimufan_batch
+    let base_bg = "Software\\Classes\\Directory\\Background\\shell\\zimufan_batch";
+    hkcu.delete_subkey_all(base_bg).map_err(|e| {
+        AppError::SystemContextMenuUnregisterFailed {
+            detail: format!("delete key '{}': {}", base_bg, e),
+        }
+    })
+}
+
+/// 检查文件夹右键菜单是否已注册（Windows）
+#[cfg(target_os = "windows")]
+pub fn is_folder_context_menu_registered() -> bool {
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let base = "Software\\Classes\\Directory\\shell\\zimufan_batch";
+    hkcu.open_subkey(base).is_ok()
+}
+
 // === SECTION 3 END ===
 
 // ===== 非 Windows 平台的 stub 实现 =====
@@ -175,6 +275,21 @@ pub fn is_video_context_menu_registered() -> bool {
 
 #[cfg(not(target_os = "windows"))]
 pub fn is_subtitle_context_menu_registered() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn register_folder_context_menu(_exe_path: &str) -> Result<(), AppError> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn unregister_folder_context_menu() -> Result<(), AppError> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn is_folder_context_menu_registered() -> bool {
     false
 }
 

@@ -156,8 +156,9 @@ const LIBMPV_ARCHIVE_NAME: &str = "libmpv.tar.gz";
 /// GitHub Releases API（zhongfly/mpv-winbuild，GPL build 的 libmpv）
 /// GPL build 功能完整，含 D3D11/GPU 渲染器和 DXVA2/D3D11VA 硬件解码。
 /// 资产命名：mpv-dev-x86_64-日期-git-哈希.7z
+/// 注意：最新 release 可能只有 aarch64 包，所以用 releases 列表 API 遍历查找
 #[cfg(windows)]
-const LIBMPV_RELEASES_API: &str = "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest";
+const LIBMPV_RELEASES_API: &str = "https://api.github.com/repos/zhongfly/mpv-winbuild/releases?per_page=10";
 /// macOS libmpv 下载源（media-kit/libmpv-darwin-build，预编译 dylib）
 /// 按 arch 分支：arm64 / x86_64，video-full 包含完整编码器
 #[cfg(target_os = "macos")]
@@ -226,18 +227,22 @@ pub fn get_libmpv_path(app_data_dir: &Path) -> Option<std::path::PathBuf> {
     if dylib_path.exists() { Some(dylib_path) } else { None }
 }
 
-/// 从 GitHub Releases JSON 中解析最新 mpv-dev-x86_64-*.7z 的下载 URL（排除 lgpl/v3/aarch64）
-/// JSON 中 assets 数组每项含 name 与 browser_download_url 字段
+/// 从 GitHub Releases JSON 中解析 mpv-dev-x86_64-*.7z 的下载 URL
+/// 遍历最近多个 release，找到第一个包含 x86_64 包的 release
+/// 排除 lgpl（缺渲染器）、v3（需要 AVX2，兼容性窄）和 aarch64
 #[cfg(windows)]
 fn parse_latest_dev_url(releases_json: &str) -> Option<String> {
     let parsed: serde_json::Value = serde_json::from_str(releases_json).ok()?;
-    let assets = parsed.get("assets")?.as_array()?;
-    for asset in assets {
-        let name = asset.get("name")?.as_str()?;
-        // 匹配 mpv-dev-x86_64-*.7z，排除 lgpl（缺渲染器）、v3（需要 AVX2，兼容性窄）和 aarch64
-        if name.starts_with("mpv-dev-x86_64-") && name.ends_with(".7z") && !name.contains("v3") && !name.contains("lgpl") {
-            let url = asset.get("browser_download_url")?.as_str()?;
-            return Some(url.to_string());
+    // releases 列表 API 返回数组，每个元素含 assets 数组
+    let releases = parsed.as_array()?;
+    for release in releases {
+        let assets = release.get("assets")?.as_array()?;
+        for asset in assets {
+            let name = asset.get("name")?.as_str()?;
+            if name.starts_with("mpv-dev-x86_64-") && name.ends_with(".7z") && !name.contains("v3") && !name.contains("lgpl") {
+                let url = asset.get("browser_download_url")?.as_str()?;
+                return Some(url.to_string());
+            }
         }
     }
     None

@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
 import { setWindowSizeInitialized } from "./MainView";
-import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X, Star, Plus, Bug, Terminal, FolderOpen, FileText } from "lucide-react";
+import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X, Star, Plus, Bug, Terminal, FolderOpen, FileText, Layers } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { SERVICES, ServiceDef, matchesSearch, getServiceById } from "../lib/services";
 import { Button } from "../components/ui/button";
@@ -24,7 +24,10 @@ import type { PromptFailLogEntry } from "../lib/ipc-types";
 import { warn } from "../lib/logger";
 import { cn } from "../lib/utils";
 
-type SettingsTab = "general" | "translate" | "player" | "advanced" | "developer" | "about";
+// 批量翻译页面懒加载（仅开发者模式进入 batch tab 时才加载）
+const BatchView = lazy(() => import("./BatchView"));
+
+type SettingsTab = "general" | "translate" | "player" | "advanced" | "developer" | "batch" | "about";
 
 export default function SettingsView() {
   const { t } = useTranslation();
@@ -111,6 +114,7 @@ export default function SettingsView() {
     { key: "player", label: t("settings.player"), icon: <Film className="h-4 w-4" /> },
     { key: "advanced", label: t("settings.advanced"), icon: <Wrench className="h-4 w-4" /> },
     ...(devMode ? [{ key: "developer" as SettingsTab, label: t("settings.developer", "开发者选项"), icon: <Bug className="h-4 w-4" /> }] : []),
+    ...(devMode ? [{ key: "batch" as SettingsTab, label: "批量翻译", icon: <Layers className="h-4 w-4" /> }] : []),
     { key: "about", label: t("settings.about"), icon: <Info className="h-4 w-4" /> },
   ];
 
@@ -153,18 +157,22 @@ export default function SettingsView() {
 
         {/* 正文卡片 — 所有标签统一位置 */}
         <div className="flex-1 overflow-auto p-6">
-          <div className="mx-auto max-w-2xl">
-            {activeTab === "general" && (
-              <GeneralSettings theme={theme} setTheme={setTheme} language={language} setLanguage={setLanguage} />
-            )}
-            {activeTab === "translate" && (
-              <TranslateApiSettings listContainer={apiListContainer} />
-            )}
-            {activeTab === "player" && <PlayerSettings />}
-            {activeTab === "advanced" && <AdvancedSettings />}
-            {activeTab === "developer" && devMode && <DeveloperSettings />}
-            {activeTab === "about" && <AboutSettings />}
-          </div>
+          {activeTab === "batch" && devMode ? (
+            <BatchSettingsContent />
+          ) : (
+            <div className="mx-auto max-w-2xl">
+              {activeTab === "general" && (
+                <GeneralSettings theme={theme} setTheme={setTheme} language={language} setLanguage={setLanguage} />
+              )}
+              {activeTab === "translate" && (
+                <TranslateApiSettings listContainer={apiListContainer} />
+              )}
+              {activeTab === "player" && <PlayerSettings />}
+              {activeTab === "advanced" && <AdvancedSettings />}
+              {activeTab === "developer" && devMode && <DeveloperSettings />}
+              {activeTab === "about" && <AboutSettings />}
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -172,6 +180,17 @@ export default function SettingsView() {
 }
 
 // === SECTION 1 END ===
+
+// === 批量翻译设置（嵌入 BatchView，仅开发者模式可见）===
+function BatchSettingsContent() {
+  return (
+    <Suspense fallback={<div className="text-center text-muted-foreground py-8">加载中...</div>}>
+      <BatchView embedded />
+    </Suspense>
+  );
+}
+
+// === SECTION 1.1 END ===
 
 // === 通用设置 ===
 function GeneralSettings({ theme, setTheme, language, setLanguage }: {
@@ -1789,10 +1808,12 @@ function ContextMenuSettings() {
   const { t } = useTranslation();
   const [videoRegistered, setVideoRegistered] = useState(false);
   const [subtitleRegistered, setSubtitleRegistered] = useState(false);
+  const [folderRegistered, setFolderRegistered] = useState(false);
 
   const refresh = useCallback(() => {
     api.isVideoMenuRegistered().then(setVideoRegistered).catch(() => {});
     api.isSubtitleMenuRegistered().then(setSubtitleRegistered).catch(() => {});
+    api.isFolderMenuRegistered().then(setFolderRegistered).catch(() => {});
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
@@ -1849,6 +1870,27 @@ function ContextMenuSettings() {
           }}
         >
           {subtitleRegistered ? t("settings.unregister", "注销") : t("settings.register", "注册")}
+        </Button>
+      </div>
+
+      <div className="border-t pt-3 flex items-center justify-between">
+        <div>
+          <p className="text-sm font-medium">文件夹右键菜单</p>
+          <p className="text-xs text-muted-foreground">右键文件夹添加"批量翻译"选项，自动监视该目录</p>
+        </div>
+        <Button
+          size="sm"
+          variant={folderRegistered ? "destructive" : "secondary"}
+          onClick={async () => {
+            if (folderRegistered) {
+              await api.unregisterFolderMenu();
+            } else {
+              await api.registerFolderMenu(await getExePath());
+            }
+            refresh();
+          }}
+        >
+          {folderRegistered ? t("settings.unregister", "注销") : t("settings.register", "注册")}
         </Button>
       </div>
     </div>

@@ -658,6 +658,14 @@ export default function MainView() {
             api.setConfig("translate_provider", "openai").catch(() => {});
             api.setConfig("translate_openai_service_id", firstAi.id).catch(() => {});
             api.setConfig("translate_current_model", effectiveModel).catch(() => {});
+          } else {
+            // 没有任何引擎已配置：清空 provider，让 Select 显示 placeholder
+            effectiveProvider = "";
+            effectiveServiceId = null;
+            effectiveModel = "";
+            api.setConfig("translate_provider", "").catch(() => {});
+            api.setConfig("translate_openai_service_id", "").catch(() => {});
+            api.setConfig("translate_current_model", "").catch(() => {});
           }
         }
       } else if (effectiveProvider === "openai" && effectiveServiceId && !currentSelectedModels.includes(effectiveModel || "")) {
@@ -1141,7 +1149,7 @@ export default function MainView() {
             {t("app.dragHint")} · mkv mp4 avi mov / srt ass vtt
           </p>
           <div className="flex gap-4 w-[368px]">
-            <div className="w-44" />
+            <div className="w-44 flex justify-start" />
             <div className="w-44 flex justify-end">
               <Button variant="ghost" size="sm" onClick={() => navigate("/settings")}>
                 <SettingsIcon className="mr-1 h-4 w-4" />
@@ -1414,7 +1422,7 @@ export default function MainView() {
                 <Select
                   value={translateStore.provider === "openai" && translateStore.model
                     ? encodeAiSelectValue(translateStore.serviceId || "openai", translateStore.model)
-                    : translateStore.provider === "openai" ? "" : translateStore.provider}
+                    : translateStore.provider === "openai" ? "" : (translateStore.provider || undefined)}
                   onValueChange={(val) => {
                     if (val === "__add_more__") {
                       navigate("/settings?tab=translate");
@@ -1446,17 +1454,17 @@ export default function MainView() {
                   }}
                 >
                   <SelectTrigger className="h-8 text-xs flex-1 overflow-hidden">
-                    <SelectValue className="truncate min-w-0" />
+                    <SelectValue placeholder={t("translate.noEngineAvailable", "无可用引擎")} className="truncate min-w-0 text-muted-foreground" />
                   </SelectTrigger>
                   <SelectContent>
                     {/* 传统引擎：只显示已配置或当前选中的 */}
-                    {(providerConfigured["baidu"] || translateStore.provider === "baidu") && (
+                    {providerConfigured["baidu"] && (
                       <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
                     )}
-                    {(providerConfigured["bing"] || translateStore.provider === "bing") && (
+                    {providerConfigured["bing"] && (
                       <SelectItem value="bing">Bing</SelectItem>
                     )}
-                    {(providerConfigured["google"] || translateStore.provider === "google") && (
+                    {providerConfigured["google"] && (
                       <SelectItem value="google">Google</SelectItem>
                     )}
                     {/* AI 模型：遍历所有已配置的 AI 服务 */}
@@ -1513,7 +1521,8 @@ export default function MainView() {
                   size="sm"
                   className="w-full"
                   onClick={handleTranslateAndMerge}
-                  disabled={!subtitleStore.file}
+                  disabled={!subtitleStore.file || !translateStore.provider}
+                  title={!translateStore.provider ? t("translate.noEngineAvailable", "未配置翻译引擎") : undefined}
                 >
                   {t("translate.translate")}
                 </Button>
