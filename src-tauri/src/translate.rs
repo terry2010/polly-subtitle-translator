@@ -540,6 +540,11 @@ pub trait TranslateProviderTrait: Send + Sync {
     ) -> Result<String, AppError> {
         Err(AppError::TranslateNotConfigured)
     }
+
+    /// 返回服务名称（用于定制 prompt 等场景）
+    fn service_name(&self) -> &str {
+        "generic"
+    }
 }
 
 /// 语言信息
@@ -2106,10 +2111,7 @@ impl OpenAiProvider {
             "temperature": 0.3,
             "stream": true,
         });
-        // Qwen3 系列关闭 thinking 模式，避免 reasoning 内容干扰 JSON 解析并节省时间
-        // 但 "nothink" 版本本身已禁用 thinking，不支持 chat_template_kwargs 参数，
-        // 强行添加会导致 LM Studio 流式响应返回空内容。
-        // Qwen3 系列关闭 thinking 模式，避免 reasoning 内容干扰 JSON 解析并节省时间
+        // Qwen3 关闭 thinking 模式，避免 reasoning 内容干扰 JSON 解析并节省时间
         // 但 "nothink" 版本本身已禁用 thinking，不支持 chat_template_kwargs 参数，
         // 强行添加会导致 LM Studio 流式响应返回空内容。
         if self.model_type == ModelType::Qwen3 && !self.model.to_lowercase().contains("nothink") {
@@ -2117,8 +2119,16 @@ impl OpenAiProvider {
                 "enable_thinking": false
             });
         }
-        let timeout_secs = if self.is_local_url() { 1800 } else { 120 };
-        let chunk_timeout_secs = if self.is_local_url() { 300 } else { 60 };
+        // 智谱 GLM 关闭 thinking 模式，使用正确的参数格式
+        let is_zhipu = self.service_name.contains("智谱") || self.service_name.contains("GLM") || self.service_name.contains("zhipu");
+        if is_zhipu {
+            request_body["thinking"] = serde_json::json!({
+                "type": "disabled"
+            });
+        }
+        // 智谱 GLM 响应较慢，使用更长的超时
+        let timeout_secs = if self.is_local_url() { 1800 } else if is_zhipu { 180 } else { 120 };
+        let chunk_timeout_secs = if self.is_local_url() { 300 } else if is_zhipu { 60 } else { 60 };
         let mut req = self
             .client
             .post(&url)
@@ -2428,6 +2438,16 @@ impl TranslateProviderTrait for OpenAiProvider {
         user_prompt: &str,
     ) -> Result<String, AppError> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
+        
+        // 根据服务商定制 stop 序列
+        let stop_sequences = if self.service_name.contains("智谱") || self.service_name.contains("GLM") || self.service_name.contains("zhipu") {
+            // 智谱 GLM 限制最多 4 个
+            vec!["\n\n", "\nNote:", "\nLet's", "\nHowever"]
+        } else {
+            // 默认：使用 6 个
+            vec!["\n\n", "\nNote:", "\nLet's", "\nHowever", "\nBut ", "\nAlso"]
+        };
+        
         let mut request_body = serde_json::json!({
             "model": self.model,
             "messages": [
@@ -2436,11 +2456,7 @@ impl TranslateProviderTrait for OpenAiProvider {
             ],
             "temperature": 0,
             "stream": true,
-            // stop 序列：JSON 格式下只需少量兜底
-            "stop": [
-                "\n\n", "\nNote:", "\nLet's", "\nHowever", "\nBut ", "\nAlso",
-                "\n\nNote:", "\n\nLet's", "\n\nHowever", "\n\nBut ",
-            ],
+            "stop": stop_sequences,
         });
         // response_format: json_object 并非所有 OpenAI 兼容 API 都支持
         // 已知支持：OpenAI、DeepSeek、通义千问
@@ -2449,13 +2465,24 @@ impl TranslateProviderTrait for OpenAiProvider {
         if !self.is_local_url() {
             request_body["response_format"] = serde_json::json!({ "type": "json_object" });
         }
+        // Qwen3 关闭 thinking 模式，避免 reasoning 内容干扰 JSON 解析并节省时间
+        // 但 "nothink" 版本本身已禁用 thinking，不支持 chat_template_kwargs 参数，
+        // 强行添加会导致 LM Studio 流式响应返回空内容。
         if self.model_type == ModelType::Qwen3 && !self.model.to_lowercase().contains("nothink") {
             request_body["chat_template_kwargs"] = serde_json::json!({
                 "enable_thinking": false
             });
         }
-        let timeout_secs = if self.is_local_url() { 1800 } else { 120 };
-        let chunk_timeout_secs = if self.is_local_url() { 300 } else { 60 };
+        // 智谱 GLM 关闭 thinking 模式，使用正确的参数格式
+        let is_zhipu = self.service_name.contains("智谱") || self.service_name.contains("GLM") || self.service_name.contains("zhipu");
+        if is_zhipu {
+            request_body["thinking"] = serde_json::json!({
+                "type": "disabled"
+            });
+        }
+        // 智谱 GLM 响应较慢，使用更长的超时
+        let timeout_secs = if self.is_local_url() { 1800 } else if is_zhipu { 180 } else { 120 };
+        let chunk_timeout_secs = if self.is_local_url() { 300 } else if is_zhipu { 60 } else { 60 };
         let mut req = self
             .client
             .post(&url)
@@ -2634,6 +2661,10 @@ impl TranslateProviderTrait for OpenAiProvider {
 
         Ok(full_content)
     }
+
+    fn service_name(&self) -> &str {
+        &self.service_name
+    }
 }
 
 // === SECTION 5.5 END ===
@@ -2644,6 +2675,7 @@ pub struct TranslateScheduler<'a> {
     db: &'a Database,
     provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
     provider_name: String,
+    model: std::sync::Arc<String>,
     /// 代际计数器（全局共享）
     cancel_counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// 本任务的代际号，counter != my_gen 表示被取消
@@ -2660,11 +2692,13 @@ impl<'a> TranslateScheduler<'a> {
         db: &'a Database,
         provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
         provider_name: String,
+        model: String,
     ) -> Self {
         Self {
             db,
             provider,
             provider_name,
+            model: std::sync::Arc::new(model),
             cancel_counter: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             my_gen: 0,
             concurrency: 1,
@@ -2677,6 +2711,7 @@ impl<'a> TranslateScheduler<'a> {
         db: &'a Database,
         provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
         provider_name: String,
+        model: String,
         cancel_counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
         my_gen: u64,
     ) -> Self {
@@ -2684,6 +2719,7 @@ impl<'a> TranslateScheduler<'a> {
             db,
             provider,
             provider_name,
+            model: std::sync::Arc::new(model),
             cancel_counter,
             my_gen,
             concurrency: 1,
@@ -3054,22 +3090,22 @@ impl<'a> TranslateScheduler<'a> {
         }
 
         // 2. 分批翻译（带重试），并发度由 self.concurrency 控制
-        // 策略：长条目按 30 条一批提高效率；短条目（<30 字节）单独按 5 条一批，
+        // 策略：长条目按模型配置的批次大小提高效率；短条目（<30 字节）单独按 5 条一批，
         // 避免 AI 把短句和相邻长句合并翻译导致整条批次偏移。
-        const LONG_BATCH_SIZE: usize = 30;
-        const SHORT_BATCH_SIZE: usize = 5;
-        const SHORT_TEXT_THRESHOLD: usize = 30;
+        let (long_batch_size, _) = get_model_batch_sizes(&*self.model);
+        let short_batch_size = 5;
+        let short_text_threshold = 30;
         if !to_translate.is_empty() {
             let (short_entries, long_entries): (
                 Vec<(usize, String, String, PlaceholderProtector)>,
                 Vec<(usize, String, String, PlaceholderProtector)>,
-            ) = to_translate.into_iter().partition(|(_, _, t, _)| t.len() < SHORT_TEXT_THRESHOLD);
+            ) = to_translate.into_iter().partition(|(_, _, t, _)| t.len() < short_text_threshold);
             let mut batches: Vec<Vec<(usize, String, String, PlaceholderProtector)>> = Vec::new();
-            batches.extend(long_entries.chunks(LONG_BATCH_SIZE).map(|c| c.to_vec()));
-            batches.extend(short_entries.chunks(SHORT_BATCH_SIZE).map(|c| c.to_vec()));
+            batches.extend(long_entries.chunks(long_batch_size).map(|c| c.to_vec()));
+            batches.extend(short_entries.chunks(short_batch_size).map(|c| c.to_vec()));
             let total_batches = batches.len();
             let concurrency = self.concurrency.max(1);
-            tracing::info!("翻译并发度: {}，共 {} 批", concurrency, total_batches);
+            tracing::info!("翻译并发度: {}，共 {} 批，长条目批次大小: {}", concurrency, total_batches, long_batch_size);
 
             // 并发调用 API：用 Semaphore 控制并发数，JoinSet 收集结果
             let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
@@ -3087,6 +3123,7 @@ impl<'a> TranslateScheduler<'a> {
                 let source = source_lang.to_string();
                 let target = target_lang.to_string();
                 let provider = provider.clone();
+                let model = (*self.model).clone();
                 let cancel_counter = cancel_counter.clone();
                 let semaphore = semaphore.clone();
                 let stream_log_slots = stream_log_slots.clone();
@@ -3111,6 +3148,7 @@ impl<'a> TranslateScheduler<'a> {
                             &texts,
                             &source,
                             &target,
+                            &model,
                             &cancel_counter,
                             my_gen,
                         ).await
@@ -3351,8 +3389,33 @@ async fn translate_with_retry_provider(
         Err(last_error.unwrap_or(AppError::TranslateRetriesExhausted))
 }
 
+/// 获取模型的批次大小配置
+/// 返回 (initial_batch_size, fallback_sizes)
+/// initial_batch_size: 首次尝试的批次大小
+/// fallback_sizes: 降级时的批次大小列表
+fn get_model_batch_sizes(model: &str) -> (usize, Vec<usize>) {
+    const DEFAULT_BATCH_SIZES: [usize; 5] = [30, 10, 5, 3, 1];
+    
+    // 按模型名称匹配（优先级最高）
+    let model_lower = model.to_lowercase();
+    if model_lower.contains("glm-4.7-flash") || model_lower.contains("glm-4-7-flash") {
+        return (30, vec![30, 10, 5, 3, 1]);
+    }
+    if model_lower.contains("glm-4.5") || model_lower.contains("glm-4-5") {
+        return (100, vec![100, 30, 10, 5, 3, 1]);
+    }
+    
+    // 按 API 来源匹配（智谱 GLM 官方 API）
+    if model_lower.starts_with("glm-") {
+        return (150, vec![150, 30, 10, 5, 3, 1]);
+    }
+    
+    // 默认配置
+    (30, DEFAULT_BATCH_SIZES.to_vec())
+}
+
 /// 批次降级翻译：对齐失败时自动缩小批次重试（迭代实现，无递归）
-/// 顺序：30 -> 10 -> 5 -> 3 -> 1
+/// 顺序：根据模型配置动态决定，默认 30 -> 10 -> 5 -> 3 -> 1
 /// 每一级只重试仍然失败的条目，已成功的不重试
 /// 返回 Vec<String>，失败的条目用空字符串占位（长度始终等于输入）
 async fn translate_batch_with_fallback(
@@ -3360,16 +3423,17 @@ async fn translate_batch_with_fallback(
     texts: &[String],
     source_lang: &str,
     target_lang: &str,
+    model: &str,
     cancel_counter: &std::sync::Arc<std::sync::atomic::AtomicU64>,
     my_gen: u64,
 ) -> Vec<String> {
-    const BATCH_SIZES: [usize; 5] = [30, 10, 5, 3, 1];
+    let (_, batch_sizes) = get_model_batch_sizes(model);
 
     // 结果数组，初始全空；pending 记录尚未翻译成功的索引
     let mut results: Vec<String> = vec![String::new(); texts.len()];
     let mut pending: Vec<usize> = (0..texts.len()).collect();
 
-    for &batch_size in &BATCH_SIZES {
+    for &batch_size in &batch_sizes {
         if pending.is_empty() {
             break;
         }
@@ -5512,9 +5576,34 @@ struct SegmentNameResult {
 }
 
 /// 构建人名提取的 system prompt
-fn build_name_extraction_system_prompt(source_lang: &str, target_lang: &str) -> String {
+fn build_name_extraction_system_prompt(source_lang: &str, target_lang: &str, service_name: &str) -> String {
     let src = lang_full_name(source_lang);
     let tgt = lang_full_name(target_lang);
+
+    // 智谱 GLM 使用更简洁的 prompt，避免响应慢
+    if service_name.contains("智谱") || service_name.contains("GLM") || service_name.contains("zhipu") {
+        return format!(
+            "从{src}字幕中提取专有名词并翻译为{tgt}。\n\
+             只提取：人名、地名、品牌名、影视作品名、动物品种名。\n\
+             不提取：农作物、普通动物、颜色、月份、季节、单位、天气、数字、日期、形容词、动词、普通名词。\n\
+             不确定的不要提取。\n\
+             必须将每个名字翻译为{tgt}，不要输出英文。\n\n\
+             输出 JSON 数组，每个元素为 {{\"en\": \"EnglishName\", \"zh\": \"{tgt}Translation\"}}。\n\
+             品牌名（全大写或包含数字）格式：zh = \"EnglishName（中文翻译）\"，请将\"中文翻译\"替换为实际的中文翻译。\n\n\
+             示例：\n\
+             [\n\
+               {{\"en\": \"Jeremy\", \"zh\": \"杰里米\"}},\n\
+               {{\"en\": \"Endgame\", \"zh\": \"终结者\"}},\n\
+               {{\"en\": \"Skylark\", \"zh\": \"云雀\"}},\n\
+               {{\"en\": \"GS4\", \"zh\": \"GS4（农业系统4）\"}},\n\
+               {{\"en\": \"Countryfile\", \"zh\": \"乡村档案\"}}\n\
+             ]\n\n\
+             只输出 JSON 数组，不要输出其他文字。",
+            src = src, tgt = tgt
+        );
+    }
+
+    // 默认 prompt（英文）
     format!(
         "Extract proper nouns from {src} subtitles and translate each to {tgt}.\n\
          ONLY extract: person names, place/farm/field names, brand/product names, movie/TV/song/band titles, named animals, bird species.\n\
@@ -5522,7 +5611,7 @@ fn build_name_extraction_system_prompt(source_lang: &str, target_lang: &str) -> 
          If unsure, do NOT include it.\n\
          You MUST translate every name to {tgt}. Never output English as the translation.\n\n\
          Output a JSON array. Each element is {{\"en\": \"EnglishName\", \"zh\": \"{tgt}Translation\"}}.\n\
-         For brand names (all-caps or containing numbers), zh = \"EnglishName（中文翻译）\".\n\n\
+         For brand names (all-caps or containing numbers), zh = \"EnglishName（中文翻译）\" - replace \"中文翻译\" with actual Chinese translation.\n\n\
          Example:\n\
          [\n\
            {{\"en\": \"Jeremy\", \"zh\": \"杰里米\"}},\n\
@@ -5803,6 +5892,15 @@ pub fn parse_name_extraction_response(content: &str) -> Vec<ExtractedName> {
                             .split('/')
                             .map(|s| s.trim().trim_matches('"').trim().to_string())
                             .filter(|s| !s.is_empty())
+                            .filter(|s| !s.contains("中文翻译") && !s.contains("ChineseTranslation"))
+                            // 清理括号注释：`AgBot（农业机器人）` → `农业机器人`
+                            .map(|s| {
+                                if let Some(chinese) = extract_chinese_from_parenthetical(&s) {
+                                    chinese
+                                } else {
+                                    s
+                                }
+                            })
                             .collect();
                         if !zh_candidates.is_empty() {
                             names.push(ExtractedName {
@@ -5952,28 +6050,9 @@ pub fn parse_name_extraction_response(content: &str) -> Vec<ExtractedName> {
             .trim();
         // 判断是否为品牌名格式：`EnglishName → EnglishName（中文翻译）`
         // 只有括号前部分和英文名完全相同（不区分大小写）时才视为品牌名格式。
-        // 不用 is_pure_ascii 判断，因为 `Endgame → Endgame（终结者）` 这种动物名
-        // 括号前也是纯 ASCII，但它不是品牌名，应该只取括号内中文。
-        // 真正区分品牌名的特征是：英文原名本身在译文中保留（如 AgBot、CornHub），
-        // 而人名/动物名/作品名应该直接翻译为中文。
-        // 启发式判断：英文名全大写或含数字（GS4、TB）→ 品牌名；否则 → 直接翻译
-        let is_brand_name = en.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == ' ')
-            && en.chars().any(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-        let is_brand_format = zh_before_paren.eq_ignore_ascii_case(en) && is_brand_name;
-        let zh_candidates: Vec<String> = if is_brand_format {
-            if let Some(chinese) = extract_chinese_from_parenthetical(zh_raw) {
-                // 品牌名格式：按 `/` 拆分括号内的中文候选，每个都包装成 `英文（中文）`
-                chinese
-                    .split('/')
-                    .map(|s| s.trim().trim_matches('"').trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .map(|s| format!("{}（{}）", en, s))
-                    .collect()
-            } else {
-                vec![zh_before_paren.to_string()]
-            }
-        } else if zh_before_paren.eq_ignore_ascii_case(en) {
-            // 非品牌名但括号前=英文名（如 Endgame → Endgame（终结者））：只取括号内中文
+        // 所有专有名词都只显示中文译文，不保留原文
+        let zh_candidates: Vec<String> = if zh_before_paren.eq_ignore_ascii_case(en) {
+            // 括号前=英文名（如 Endgame → Endgame（终结者））：只取括号内中文
             if let Some(chinese) = extract_chinese_from_parenthetical(zh_raw) {
                 chinese
                     .split('/')
@@ -6071,6 +6150,7 @@ pub async fn extract_names_from_subtitles(
     my_gen: u64,
     app_handle: Option<tauri::AppHandle>,
     user_concurrency: usize,
+    rate_limit: RateLimitPolicy,
 ) -> Result<Vec<ExtractedName>, AppError> {
     if texts.is_empty() {
         return Ok(Vec::new());
@@ -6113,8 +6193,11 @@ pub async fn extract_names_from_subtitles(
         }));
     }
 
-    // 并发扫描各段，并发数受用户配置控制（本地模型如 LM Studio 可能只支持 1 并发）
-    let concurrency = segments.len().min(user_concurrency.max(1));
+    // 并发扫描各段，并发数受用户配置和限流策略控制
+    let concurrency = match rate_limit {
+        RateLimitPolicy::Qps(_) => 1,
+        RateLimitPolicy::Concurrency(max_n) => segments.len().min(user_concurrency.max(1).min(max_n)),
+    };
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
     let mut join_set = tokio::task::JoinSet::new();
     let segments_len = segments.len();
@@ -6125,6 +6208,14 @@ pub async fn extract_names_from_subtitles(
 
     // 进度计数器
     let completed_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+    // 请求间隔（Qps 模式下为 1/N 秒，Concurrency 模式下为 500ms）
+    let request_interval = rate_limit.min_interval();
+    let delay_ms = if request_interval.is_zero() {
+        500  // Concurrency 模式：500ms 间隔
+    } else {
+        request_interval.as_millis() as u64
+    };
 
     for (idx, segment) in segments.iter().enumerate() {
         let segment = segment.clone();
@@ -6139,9 +6230,9 @@ pub async fn extract_names_from_subtitles(
         let completed_count = completed_count.clone();
         let app_handle = app_handle.clone();
         // 本地模型（如 LM Studio）的 KV cache 可能在连续请求间被污染，
-        // 导致后续请求输出质量下降。每段请求间隔 500ms 启动，给引擎时间清理缓存。
+        // 导致后续请求输出质量下降。每段请求间隔启动，给引擎时间清理缓存。
         if idx > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
         join_set.spawn(async move {
             let _permit = semaphore.acquire_owned().await.unwrap();
@@ -6158,7 +6249,7 @@ pub async fn extract_names_from_subtitles(
             let stream_log_file = stream_log_slots[slot_idx].clone();
 
             // 用 provider 的 extract_names_raw 方法发送自定义 prompt 请求
-            let system_prompt = build_name_extraction_system_prompt(&source, &target);
+            let system_prompt = build_name_extraction_system_prompt(&source, &target, provider.service_name());
             let user_prompt = build_name_extraction_user_prompt(&segment);
 
             // 用 task_local 传递日志文件句柄，extract_names_raw 中读取

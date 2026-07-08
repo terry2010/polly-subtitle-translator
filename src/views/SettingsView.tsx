@@ -469,6 +469,13 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     setLoadingModels(true);
     setModelDropdownOpen(false);
     try {
+      // 如果 API Key 是掩码显示，从数据库重新加载真实值
+      let actualKey = keyForFetch;
+      if (!actualKey && currentService?.requiresApiKey) {
+        const providerKey = currentService.category === "ai" ? `openai_${currentService.id}` : currentService.id;
+        const loaded = await api.getCredential(providerKey, "secret", "自动加载凭据").catch(() => null);
+        actualKey = loaded ?? undefined;
+      }
       const candidateUrls: string[] = [];
       const normalized = trimmedUrl.replace(/\/$/, "");
       if (normalized.includes("/v1")) {
@@ -488,7 +495,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       for (const url of uniqueUrls) {
         try {
           const models = await Promise.race([
-            api.listOpenaiModels(url, keyForFetch),
+            api.listOpenaiModels(url, actualKey),
             timeoutPromise,
           ]);
           if (models.length > 0) {
@@ -514,7 +521,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     } catch { /* 静默 */ } finally {
       setLoadingModels(false);
     }
-  }, [currentService, autoDetectModelTypeStr]);
+  }, [currentService, autoDetectModelTypeStr, api]);
 
   // 选中服务变化时加载配置
   useEffect(() => {
@@ -791,6 +798,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
 
   // AI：手动刷新模型列表
   const handleRefreshModels = useCallback(async () => {
+    if (!currentService) return;
     const trimmedUrl = baseUrl.trim();
     if (!trimmedUrl) {
       toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
@@ -803,7 +811,13 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     setLoadingModels(true);
     setModelDropdownOpen(false);
     try {
-      const actualSecret = secretKey === "••••••••" ? undefined : secretKey;
+      // 如果 API Key 是掩码显示，从数据库重新加载真实值
+      let actualSecret = secretKey === "••••••••" ? undefined : secretKey;
+      if (!actualSecret && currentService?.requiresApiKey) {
+        const providerKey = currentService.category === "ai" ? `openai_${currentService.id}` : currentService.id;
+        const loaded = await api.getCredential(providerKey, "secret", "刷新模型加载凭据").catch(() => null);
+        actualSecret = loaded ?? undefined;
+      }
       const candidateUrls: string[] = [];
       const normalized = trimmedUrl.replace(/\/$/, "");
       if (normalized.includes("/v1")) {
@@ -857,7 +871,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     } finally {
       setLoadingModels(false);
     }
-  }, [baseUrl, secretKey, model, t]);
+  }, [baseUrl, secretKey, model, t, currentService, api]);
 
   const handleBaseUrlBlur = useCallback(() => {
     const trimmedUrl = baseUrl.trim();

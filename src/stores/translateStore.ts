@@ -32,6 +32,10 @@ interface TranslateState {
   lastProgressTime: number; // 上次进度更新时间戳，用于 EMA 速度计算
   speed: number;            // EMA 速度（字符/秒）
   eta: number;              // 剩余时间（秒），-1=计算中
+  // 最后一次翻译统计（用于开发模式显示）
+  lastTranslateTime: number;    // 最后一次翻译耗时（毫秒）
+  lastTranslateChars: number;   // 最后一次翻译字数
+  lastTranslateTokens: number | null; // 最后一次翻译 token 数（仅 AI 翻译）
   // 人名精译
   glossary: [string, string][]; // 译名表 [(EnglishName, ChineseTranslation)]，传给翻译 API
   extractingNames: boolean;     // 是否正在预扫描提取人名
@@ -82,6 +86,9 @@ export const useTranslateStore = create<TranslateState>()(
       lastProgressTime: 0,
       speed: 0,
       eta: -1,
+      lastTranslateTime: 0,
+      lastTranslateChars: 0,
+      lastTranslateTokens: null,
       glossary: [],
       extractingNames: false,
       glossaryDialogOpen: false,
@@ -215,13 +222,23 @@ export const useTranslateStore = create<TranslateState>()(
           const result = await api.translateSubtitle(entries, sourceLang, targetLang, provider, model || undefined, modelType || undefined, serviceId || undefined, skipCache, glossary, nameTagging, fileHash);
           const endTime = performance.now();
           const totalMs = endTime - startTime;
-          set({ translating: false, progress: entries.length, result });
-
+          
           // 计算提交和返回的文字数
           const inputChars = entries.reduce((sum, e) => sum + e.text.length, 0);
           const outputChars = result.translations.reduce((sum, t) => sum + t.translated.length, 0);
           const totalSec = totalMs / 1000;
           const avgSpeed = totalSec > 0 ? (inputChars / totalSec).toFixed(1) : "0";
+
+          // 记录最后一次翻译统计（用于开发模式显示）
+          const totalTokens = result.token_usage?.total_tokens || null;
+          set({ 
+            translating: false, 
+            progress: entries.length, 
+            result,
+            lastTranslateTime: totalMs,
+            lastTranslateChars: inputChars,
+            lastTranslateTokens: totalTokens
+          });
 
           // 格式化时间戳
           const fmtTime = (ms: number) => {
@@ -257,8 +274,19 @@ export const useTranslateStore = create<TranslateState>()(
 
       cancelTranslate: async () => {
         try {
+          const state = get();
+          const endTime = performance.now();
+          const totalMs = state.startTime > 0 ? endTime - state.startTime : 0;
+          const inputChars = state.totalChars;
+          // 取消时无法获取准确的 token 数，设为 null
+          
           await api.cancelTranslate();
-          set({ translating: false });
+          set({ 
+            translating: false,
+            lastTranslateTime: totalMs,
+            lastTranslateChars: inputChars,
+            lastTranslateTokens: null
+          });
         } catch (e: any) {
           error("取消翻译失败:", e);
           toast.error(formatIpcError(e));
