@@ -153,11 +153,17 @@ git push origin v1.0.1
 # 3. GitHub Actions 自动触发，约 20-30 分钟完成
 ```
 
-**方式三：gh CLI 触发（命令行）**
+**方式三：gh CLI 触发（命令行，最方便）**
 
 ```bash
-gh workflow run release.yml -f version=1.0.1 -f notes="修复内容1
+gh workflow run release.yml --repo terry2010/polly-subtitle-translator -f version=1.0.1 -f notes="修复内容1
 修复内容2"
+```
+
+查看构建进度：
+```bash
+gh run list --repo terry2010/polly-subtitle-translator --limit 3
+gh run view <run-id> --repo terry2010/polly-subtitle-translator
 ```
 
 #### 工作流执行过程
