@@ -1,11 +1,11 @@
 {
-  "version": "1.0.1-nightly.20260706-125201",
-  "notes": "nightly 版本号直接写入 tauri.conf.json + 关于页动态版本号",
-  "pub_date": "2026-07-06T12:57:15.943Z",
+  "version": "1.0.5-nightly.20260708-180811",
+  "notes": "接入 GLM，针对免费的 GLM 4.7 flash 做了单独微调",
+  "pub_date": "2026-07-08T18:13:59.423Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdHdtRElIcEpINmJ4Y3NJT3lid0Q2V3gweFM0WlZaTmtKTjJCNWRoZjlMUXM1Y0pFVVRmVjVENVI3dUo4VndLNFAvWGJyQTMxNDRZTWxBaXVKWUc1V3c0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzMzQyNTk4CWZpbGU6QUktU3ViVHJhbnNfMS4wLjEtbmlnaHRseS4yMDI2MDcwNi0xMjUyMDFfeDY0LXNldHVwLmV4ZQppUXBzYmFXR2FHMzgwSHA0YjE2YW1aNlJKVllyTy9RekxDbFhPMXZRdWE5aGFJVHdDdUVUUTZDQWZBM29KSXM5Nzg3ek5GbXlxNzZQSGxLbzJIbUVBZz09Cg==",
-      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/nightly-1.0.1-20260706-125201/AI-SubTrans_1.0.1-nightly.20260706-125201_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdC9uVG1Ud0JtbGx0dVlpOEw2SU5VS1RXNCt6ZUprbWRpM3Z4R3k3VUNMZUxtSHJhdFN1VDhoMlZEV0FUMjBBU29Ra0FtNkdHUGNlTTRTUmsrNXFFTVFNPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNTM0MzkyCWZpbGU6QUktU3ViVHJhbnNfMS4wLjUtbmlnaHRseS4yMDI2MDcwOC0xODA4MTFfeDY0LXNldHVwLmV4ZQpNWU9wQVFiVG1KMTJXUDQ4byttd1BCQ1RoNXNpOTg5NnpXWFpKNTQvVDh3V1NaK0xtQWdSN0lNY0hFWkpvcDZPODRtY3gwaWU0c281dGhYNFM1WXZEQT09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/nightly-1.0.5-20260708-180811/AI-SubTrans_1.0.5-nightly.20260708-180811_x64-setup.exe"
     }
   }
 }
