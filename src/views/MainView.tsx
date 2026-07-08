@@ -163,6 +163,7 @@ export default function MainView() {
   const subtitleStore = useSubtitleStore();
   const translateStore = useTranslateStore();
   const namePrecisionEnabled = useDevModeStore((s) => s.namePrecisionEnabled);
+  const devModeEnabled = useDevModeStore((s) => s.devMode);
   // 人名精译状态从 translateStore 读取（跨路由保持）
   const nameExtracting = useTranslateStore((s) => s.extractingNames);
   const glossaryDialogOpen = useTranslateStore((s) => s.glossaryDialogOpen);
@@ -1238,7 +1239,15 @@ export default function MainView() {
                       return (
                       <button
                         key={stream.index}
-                        onClick={() => { selectSubtitleStream(stream); setSelectedImportedPath(null); }}
+                        onClick={() => {
+                          selectSubtitleStream(stream);
+                          setSelectedImportedPath(null);
+                          // 如果该流已在缓存中，加载到字幕编辑器
+                          if (extractCacheRef.current.has(stream.index)) {
+                            const cachedFile = extractCacheRef.current.get(stream.index);
+                            subtitleStore.setFile(cachedFile);
+                          }
+                        }}
                         className={`w-full text-left rounded px-2 py-1.5 text-xs transition-colors flex items-center gap-2 ${
                           selectedSubtitleStream?.index === stream.index
                             ? "bg-primary text-primary-foreground"
@@ -1528,6 +1537,23 @@ export default function MainView() {
                 </Button>
               )}
 
+              {/* 开发模式：翻译统计 */}
+              {devModeEnabled && translateStore.lastTranslateTime > 0 && (
+                <div className="text-[10px] text-muted-foreground space-y-0.5 py-1 border-t border-border/50 pt-2">
+                  <div>
+                    耗时: {(translateStore.lastTranslateTime / 1000).toFixed(2)}秒
+                  </div>
+                  <div>
+                    字数: {translateStore.lastTranslateChars.toLocaleString()}
+                  </div>
+                  {translateStore.lastTranslateTokens && (
+                    <div>
+                      Token: {translateStore.lastTranslateTokens.toLocaleString()}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* 专有名词精译：提取后自动翻译开关（仅 AI 引擎 + 精译启用 + 已点击翻译 + 未在翻译/提取中时显示） */}
               {autoTranslateLoaded && translateClicked && namePrecisionEnabled && translateStore.provider === "openai" && !translateStore.translating && !translateStore.extractingNames && !glossaryDialogOpen && (
                 <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none py-0.5">
@@ -1574,6 +1600,23 @@ export default function MainView() {
                     <span>{translateStore.extractNamesSpeed > 0 ? `${translateStore.extractNamesSpeed.toFixed(1)} 段/秒` : "计算中..."}</span>
                     <span>{translateStore.extractNamesEta > 0 ? `剩余 ${formatEta(translateStore.extractNamesEta)}` : ""}</span>
                   </div>
+                  {/* 提取后自动翻译 checkbox */}
+                  {autoTranslateLoaded && (
+                    <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none py-0.5">
+                      <input
+                        type="checkbox"
+                        checked={autoTranslateAfterExtract}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setAutoTranslateAfterExtract(checked);
+                          autoTranslateAfterExtractRef.current = checked;
+                          api.setConfig("auto_translate_after_extract", String(checked)).catch(() => {});
+                        }}
+                        className="h-3.5 w-3.5 rounded border-gray-300 accent-primary flex-shrink-0"
+                      />
+                      <span>{t("translate.autoTranslateAfterExtract", "提取完毕后自动翻译字幕")}</span>
+                    </label>
+                  )}
                 </div>
               )}
 
@@ -1647,6 +1690,13 @@ export default function MainView() {
           onGlossaryChange={(g) => translateStore.setGlossaryDraft(g)}
           autoTranslating={glossaryAutoModeRef.current}
           translateDone={glossaryAutoModeRef.current && glossaryTranslateDone}
+          showAutoTranslateCheckbox={true}
+          autoTranslateAfterExtract={autoTranslateAfterExtract}
+          onAutoTranslateChange={(checked) => {
+            setAutoTranslateAfterExtract(checked);
+            autoTranslateAfterExtractRef.current = checked;
+            api.setConfig("auto_translate_after_extract", String(checked)).catch(() => {});
+          }}
           onConfirm={() => {
             glossaryConfirmedRef.current = true;
             translateStore.setGlossaryDialogOpen(false);

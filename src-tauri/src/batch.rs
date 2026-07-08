@@ -2264,8 +2264,9 @@ async fn process_task(
 
     let provider_name = build_provider_name(&cfg);
     let file_hash = subtitle::compute_subtitle_hash(&subtitle_file.entries);
+    let model_for_scheduler = cfg.model.clone().unwrap_or_default();
 
-    let scheduler = translate::TranslateScheduler::new(db.inner(), resolved.instance, provider_name)
+    let scheduler = translate::TranslateScheduler::new(db.inner(), resolved.instance, provider_name, model_for_scheduler)
         .with_file_hash(file_hash)
         .with_concurrency_and_rate_limit(cfg.entry_concurrency, get_rate_limit(&cfg.provider));
 

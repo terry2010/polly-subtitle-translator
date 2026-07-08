@@ -683,6 +683,7 @@ pub async fn translate_subtitle(
         &db,
         prov_instance,
         provider_name,
+        model.clone().unwrap_or_default(),
         cancel_token.inner().clone(),
         my_gen,
     )
@@ -860,12 +861,14 @@ pub async fn extract_names(
     // 人名预扫描使用与翻译阶段相同的最终并发数（QPS 上限/全局并发数取最小）
     let final_concurrency = resolve_translation_concurrency(&db, &prov, &service_id)?;
     tracing::info!("人名预扫描并发度: {}", final_concurrency);
+    let rate_limit = prov.rate_limit_policy();
     let result = translate::extract_names_from_subtitles(
         prov_instance, &texts, &source_lang, &target_lang, max_input_tokens,
         cancel_token.inner().clone(),
         my_gen,
         Some(app_handle),
         final_concurrency,
+        rate_limit,
     ).await.map_err(to_ipc_err)?;
 
     let elapsed = extract_start.elapsed();
@@ -904,11 +907,13 @@ pub async fn get_cached_translations(
 
     // 获取凭据（缓存查询不需要凭据，但需要 provider_name）
     let provider_name_log = provider_name.clone();
+    let model_for_scheduler = model.clone().unwrap_or_default();
     let scheduler = translate::TranslateScheduler::new(
         &db,
         std::sync::Arc::new(translate::BaiduProvider::new(String::new(), String::new()))
             as std::sync::Arc<dyn translate::TranslateProviderTrait + Send + Sync>,
         provider_name,
+        model_for_scheduler,
     )
     .with_file_hash(file_hash);
 

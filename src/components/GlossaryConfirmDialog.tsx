@@ -19,6 +19,23 @@ interface GlossaryConfirmDialogProps {
   autoTranslating?: boolean;
   /// 翻译已完成：确认按钮变为禁用的"字幕翻译已完成"
   translateDone?: boolean;
+  /// 是否显示"提取后自动翻译" checkbox
+  showAutoTranslateCheckbox?: boolean;
+  /// "提取后自动翻译"的当前值
+  autoTranslateAfterExtract?: boolean;
+  /// "提取后自动翻译"变更回调
+  onAutoTranslateChange?: (checked: boolean) => void;
+}
+
+interface GlossaryConfirmDialogProps {
+  glossary: GlossaryEntry[];
+  onGlossaryChange: (g: GlossaryEntry[]) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  /// 自动翻译模式：翻译已在后台进行，确认按钮变为"确认"仅关闭弹窗
+  autoTranslating?: boolean;
+  /// 翻译已完成：确认按钮变为禁用的"字幕翻译已完成"
+  translateDone?: boolean;
 }
 
 export function GlossaryConfirmDialog({
@@ -28,6 +45,9 @@ export function GlossaryConfirmDialog({
   onCancel,
   autoTranslating = false,
   translateDone = false,
+  showAutoTranslateCheckbox = false,
+  autoTranslateAfterExtract = false,
+  onAutoTranslateChange,
 }: GlossaryConfirmDialogProps) {
   const { t } = useTranslation();
   const [localGlossary, setLocalGlossary] = useState<GlossaryEntry[]>(glossary);
@@ -107,6 +127,20 @@ export function GlossaryConfirmDialog({
         <p className="text-sm text-muted-foreground -mt-2">
           {t("translate.glossaryDesc", "AI 已从字幕中提取以下人名及建议译名。请检查并修改，确认后将用于所有翻译批次保证一致性。")}
         </p>
+        {showAutoTranslateCheckbox && (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none py-2">
+            <input
+              type="checkbox"
+              checked={autoTranslateAfterExtract}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                onAutoTranslateChange?.(checked);
+              }}
+              className="h-3.5 w-3.5 rounded border-gray-300 accent-primary flex-shrink-0"
+            />
+            <span>{t("translate.autoTranslateAfterExtract", "提取完毕后自动翻译字幕")}</span>
+          </label>
+        )}
         <div className="flex-1 overflow-y-auto space-y-2 min-h-[200px]">
           <div className="flex gap-2 text-xs font-medium text-muted-foreground px-1">
             <span className="w-[40%]">{t("translate.glossaryEnglish", "英文名")}</span>
