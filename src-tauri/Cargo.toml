@@ -1,6 +1,6 @@
 [package]
 name = "zimufan"
-version = "1.0.4"
+version = "1.0.5"
 description = "AI Subtitle Translation & Editor"
 authors = ["terry"]
 edition = "2021"
