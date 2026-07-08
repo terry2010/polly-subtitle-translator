@@ -162,6 +162,7 @@ export default function BatchView({ embedded = false }: { embedded?: boolean }) 
     done: store.tasks.filter((t) => typeof t.status === "string" && t.status === "Done").length,
     failed: store.tasks.filter((t) => typeof t.status === "object" && "Failed" in t.status).length,
     skipped: store.tasks.filter((t) => typeof t.status === "object" && "Skipped" in t.status).length,
+    cancelled: store.tasks.filter((t) => typeof t.status === "string" && t.status === "Cancelled").length,
   };
 
   return (
@@ -254,6 +255,7 @@ export default function BatchView({ embedded = false }: { embedded?: boolean }) 
               <span className="text-green-500">完成: {stats.done}</span>
               <span className="text-orange-500">跳过: {stats.skipped}</span>
               <span className="text-red-500">失败: {stats.failed}</span>
+              {stats.cancelled > 0 && <span className="text-muted-foreground">取消: {stats.cancelled}</span>}
             </div>
 
             {store.isPaused && (
@@ -524,8 +526,8 @@ function FolderWatchSection() {
       }
     );
     return () => {
-      unlistenProgress.then((fn) => fn());
-      unlistenDone.then((fn) => fn());
+      unlistenProgress.then((fn) => fn()).catch(() => {});
+      unlistenDone.then((fn) => fn()).catch(() => {});
     };
   }, []);
 

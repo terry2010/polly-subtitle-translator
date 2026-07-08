@@ -1361,8 +1361,15 @@ fn find_video_for_subtitle(subtitle_path: &str) -> Option<String> {
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
         if !video_exts.contains(&ext.as_str()) { continue; }
         let vstem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        // 字幕 stem 必须以视频 stem 开头（如 "video.eng" starts with "video"）
+        // 字幕 stem 必须以视频 stem 开头，且紧跟分隔符（. - 空格）或完全相等
+        // 避免字幕 "video.eng" 误匹配视频 "videox.mkv"（stem "videox"）
         if stem.starts_with(vstem) {
+            let remaining = &stem[vstem.len()..];
+            let is_valid = remaining.is_empty()
+                || remaining.starts_with('.')
+                || remaining.starts_with('-')
+                || remaining.starts_with(' ');
+            if !is_valid { continue; }
             // 选最长的视频 stem（最精确匹配）
             if best_match.as_ref().map_or(true, |(_, len)| vstem.len() > *len) {
                 best_match = Some((p.to_string_lossy().to_string(), vstem.len()));

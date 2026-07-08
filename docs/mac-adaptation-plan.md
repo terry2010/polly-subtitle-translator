@@ -182,7 +182,7 @@ Mac 没有注册表式右键菜单，等价方案：
 2. **Mac 坐标系**：Mac NSView 坐标原点在左下角，Windows 在左上角（本次因播放器用 stub，此风险降级）。
 3. **keyring 在 Mac 上的行为**：keyring 3 支持 macOS Keychain，但需确认访问权限和钥匙串弹窗体验。
 4. **Tauri 单实例在 Mac 上的行为**：`tauri-plugin-single-instance` 在 Mac 上通过 IPC 文件锁实现，需验证 argv 转发。
-5. **libmpv/FFmpeg 的 GPL 许可证**：Mac 构建源需确认许可证与项目 GPL-2.0+ 兼容。
+5. **libmpv/FFmpeg 的许可证**：Mac 构建源需确认许可证（FFmpeg GPL-2.0+、libmpv LGPL-2.1+）与项目 Apache-2.0 兼容（子进程调用/运行时 dlopen 不构成链接，不传染主程序）。
 
 ---
 

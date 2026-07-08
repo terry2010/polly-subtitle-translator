@@ -1,4 +1,5 @@
 /src-tauri/target/
+/src-tauri/bin/
 node_modules
 
 # IDE / 工具配置（个人本地）
@@ -27,6 +28,9 @@ node_modules
 /src-tauri/tests/cache/
 /src-tauri/tests/output/
 /src-tauri/tests/state/
+
+# 第三方代码（subfinder，仅用于参考，不随项目分发）
+docs/第三方代码/
 
 # 但保留 fixture（例外）
 !/src-tauri/tests/fixtures/*.ass

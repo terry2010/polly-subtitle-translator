@@ -1,8 +1,8 @@
 // libmpv 播放器模块
 // 负责下载、检测 libmpv.dll，动态加载并内嵌播放视频。
 // 对应需求文档 §2.2 方案 B（原生子窗口嵌入）：libmpv 创建子窗口，通过 wid 嵌入 Tauri 主窗口。
-// 下载源：zhongfly/mpv-winbuild 的 GPL build，功能完整（含 D3D11/GPU 渲染、DXVA2 硬件解码）。
-// 下载源：zhongfly/mpv-winbuild 的 LGPL build（-Dgpl=false），许可证 LGPLv2.1+，允许闭源应用动态链接。
+// 下载源：zhongfly/mpv-winbuild 的 LGPL build（-Dgpl=false），许可证 LGPLv2.1+，允许闭源/宽松协议应用动态链接。
+// 运行时通过 libloading dlopen 加载，不构成编译期链接，不传染主程序许可证。
 
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
@@ -153,8 +153,8 @@ const LIBMPV_DLL_NAME: &str = "libmpv.dll";
 const LIBMPV_DYLIB_NAME: &str = "libmpv.dylib";
 #[cfg(target_os = "macos")]
 const LIBMPV_ARCHIVE_NAME: &str = "libmpv.tar.gz";
-/// GitHub Releases API（zhongfly/mpv-winbuild，GPL build 的 libmpv）
-/// GPL build 功能完整，含 D3D11/GPU 渲染器和 DXVA2/D3D11VA 硬件解码。
+/// GitHub Releases API（zhongfly/mpv-winbuild，LGPL build 的 libmpv）
+/// LGPL build（-Dgpl=false）许可证 LGPLv2.1+，允许闭源/宽松协议应用动态链接。
 /// 资产命名：mpv-dev-x86_64-日期-git-哈希.7z
 /// 注意：最新 release 可能只有 aarch64 包，所以用 releases 列表 API 遍历查找
 #[cfg(windows)]
@@ -1689,7 +1689,7 @@ impl Player {
             set_option(&api, mpv, "input-default-bindings", "no")?;
             // 硬件解码
             set_option(&api, mpv, "hwdec", "auto")?;
-            // 设置 vo 为 gpu（GPL 版支持完整 GPU 渲染，wid 模式下用 d3d11 后端）
+            // 设置 vo 为 gpu（LGPL build 支持完整 GPU 渲染，wid 模式下用 d3d11 后端）
             set_option(&api, mpv, "vo", "gpu")?;
             // 初始化
             tracing::info!("Player::new: 调用 mpv_initialize");
