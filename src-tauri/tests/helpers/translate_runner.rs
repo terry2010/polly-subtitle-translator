@@ -356,10 +356,27 @@ pub async fn translate_with_9b_batched(
                 truncate_chars(trans_text, 30).replace('\n', " "),
                 if te.failed { " [FAILED]" } else { "" });
         }
+
+        // 打印该批失败条目的详情
+        let batch_fails: Vec<_> = result.translations.iter().filter(|t| t.failed).collect();
+        if !batch_fails.is_empty() {
+            eprintln!("  [批次 {} 翻译失败详情] 共 {} 条:", batch_num, batch_fails.len());
+            for te in batch_fails {
+                eprintln!("    #{} [FAILED]: 原文={:?} → 译文={:?}",
+                    te.index,
+                    te.original.replace('\n', "\\n"),
+                    te.translated.replace('\n', "\\n"));
+            }
+        }
     }
 
     eprintln!("\n  [批次翻译] 全部完成: {} 条, 失败 {} 条, 缓存 {} 条, token {}",
         total, total_failed, total_cached, total_tokens);
+
+    // 汇总打印所有失败条目
+    if total_failed > 0 {
+        eprintln!("  [全部翻译失败详情] 共 {} 条:", total_failed);
+    }
 
     TranslationOutput {
         file: translated_file,
@@ -534,6 +551,17 @@ pub async fn stage_translate_batch(
 
     eprintln!("  [9b翻译] 完成: {} 成功, {} 失败, {} 缓存, {} token",
         result.translations.len() - batch_failed, batch_failed, batch_cached, batch_tokens);
+
+    // 打印所有失败条目的详情
+    if batch_failed > 0 {
+        eprintln!("  [翻译失败详情] 共 {} 条:", batch_failed);
+        for te in result.translations.iter().filter(|t| t.failed) {
+            eprintln!("    #{} [FAILED]: 原文={:?} → 译文={:?}",
+                te.index,
+                te.original.replace('\n', "\\n"),
+                te.translated.replace('\n', "\\n"));
+        }
+    }
 
     // 更新批次状态
     {

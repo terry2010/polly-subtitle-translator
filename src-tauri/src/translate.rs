@@ -85,6 +85,28 @@ pub(crate) fn has_english_word(s: &str, min_len: usize) -> bool {
     max_run >= min_len
 }
 
+/// 检测多行原文中非音效行是否在译文中丢失
+/// 例如原文 "from our mothers!\n[ Mup crying ]" → 译文 "[Mup 哭泣]"
+/// 原文有非音效行 "from our mothers!"，但译文只有音效标记，说明非音效行被丢失
+pub(crate) fn has_lost_non_sound_lines(orig: &str, trans: &str) -> bool {
+    // 原文必须是多行
+    if !orig.contains('\n') {
+        return false;
+    }
+    // 译文必须是音效标记（只翻译了音效部分）
+    if !looks_like_sound_effect(trans) {
+        return false;
+    }
+    // 原文中必须存在至少一行非音效、非音乐符号的实质内容
+    let has_non_sound_line = orig.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty()
+            && !looks_like_sound_effect(trimmed)
+            && !is_music_or_symbol_only(trimmed)
+    });
+    has_non_sound_line
+}
+
 /// 剥离 markdown 代码块包裹（```json ... ``` 或 ``` ... ```）
 /// 如果内容被代码块包裹，返回代码块内部内容；否则原样返回
 fn strip_markdown_code_fence(s: &str) -> String {
@@ -3236,6 +3258,22 @@ async fn translate_batch_with_fallback(
                         // 跳过音效标记和音乐符号（长度比值无意义）
                         let is_sound = looks_like_sound_effect(orig_text);
                         let is_music = is_music_or_symbol_only(orig_text);
+                        // 单条翻译时也检测"非音效行丢失"：
+                        // 多行原文含非音效行，但译文只是音效标记（如 "from our mothers!\n[ Mup crying ]" → "[Mup 哭泣]"）
+                        // 这种情况即使单条翻译也需要重试，因为非音效行被丢失了
+                        let lost_non_sound = skip_shift_check
+                            && !is_sound
+                            && !is_music
+                            && trans_len > 0
+                            && has_lost_non_sound_lines(orig_text, t);
+                        if lost_non_sound {
+                            tracing::warn!(
+                                "单条翻译非音效行丢失：idx={} 原文含非音效行但译文仅为音效标记，标记为待重试",
+                                idx
+                            );
+                            shift_detected = true;
+                            continue; // 不填入 results，进入 still_pending
+                        }
                         if !skip_shift_check && !is_sound && !is_music && trans_len > 0 {
                             let ratio = trans_len as f64 / orig_len as f64;
                             // 错位检测阈值根据原文长度动态调整：
@@ -6255,6 +6293,40 @@ mod tests {
                 "orig={:?} ({}chars) trans={:?} ({}chars) ratio={:.3}: expected shift={}, got shift={}",
                 orig, orig_len, trans, trans_len, ratio, should_shift, shift);
         }
+    }
+
+    #[test]
+    fn test_has_lost_non_sound_lines() {
+        // 多行原文含非音效行，译文只是音效标记 → 应检测到丢失
+        assert!(has_lost_non_sound_lines(
+            "from our mothers!\n[ Mup crying ]",
+            "[Mup 哭泣]"
+        ));
+        // 多行原文含非音效行，译文完整翻译了所有行 → 不应检测到丢失
+        assert!(!has_lost_non_sound_lines(
+            "from our mothers!\n[ Mup crying ]",
+            "从我们母亲的身体里！\n[Mup 哭泣]"
+        ));
+        // 单行原文（非多行）→ 不应检测到丢失
+        assert!(!has_lost_non_sound_lines(
+            "[ Mup crying ]",
+            "[Mup 哭泣]"
+        ));
+        // 多行原文全是音效行 → 不应检测到丢失（没有非音效行可丢失）
+        assert!(!has_lost_non_sound_lines(
+            "[ birds chirping ]\n[ wind blowing ]",
+            "[鸟儿鸣叫]\n[风声]"
+        ));
+        // 多行原文含非音效行，译文不是音效标记 → 不应检测到丢失
+        assert!(!has_lost_non_sound_lines(
+            "Hello world\n[ sound ]",
+            "你好世界\n[声音]"
+        ));
+        // 多行原文含非音效行，译文是音效标记但内容更丰富 → 应检测到丢失
+        assert!(has_lost_non_sound_lines(
+            "Some dialogue here\n[ music playing ]",
+            "[音乐播放中]"
+        ));
     }
 
     #[test]

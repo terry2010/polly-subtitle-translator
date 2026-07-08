@@ -26,6 +26,7 @@ node_modules
 # E2E 测试缓存和输出（不入库）
 /src-tauri/tests/cache/
 /src-tauri/tests/output/
+/src-tauri/tests/state/
 
 # 但保留 fixture（例外）
 !/src-tauri/tests/fixtures/*.ass

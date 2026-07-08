@@ -169,11 +169,25 @@ async fn run_state_machine(
         }
 
         // 翻译统计
+        let failed_entries: Vec<(usize, String, String)> = state.batches.iter()
+            .flat_map(|b| b.translations.iter()
+                .filter(|t| t.failed)
+                .map(|t| (t.index, t.original.replace('\n', "\\n"), t.translated.replace('\n', "\\n"))))
+            .collect();
+        let fail_detail = if failed_entries.is_empty() {
+            format!("失败 {} 条, 缓存 {} 条, token {}", state.total_failed, state.total_cached, state.total_tokens)
+        } else {
+            let entries_str = failed_entries.iter()
+                .map(|(idx, orig, trans)| format!("#{}: {:?} → {:?}", idx, orig, trans))
+                .collect::<Vec<_>>()
+                .join("; ");
+            format!("失败 {} 条, 缓存 {} 条, token {} | 详情: {}", state.total_failed, state.total_cached, state.total_tokens, entries_str)
+        };
         checks.push(CheckReport {
             name: format!("{}translate_failures", prefix),
             tier: "L2".to_string(),
             status: if state.total_failed == 0 { "pass" } else { "warn" }.to_string(),
-            detail: format!("失败 {} 条, 缓存 {} 条, token {}", state.total_failed, state.total_cached, state.total_tokens),
+            detail: fail_detail,
             source_hint: Some("translate.rs translate_batch_with_fallback".to_string()),
         });
 
