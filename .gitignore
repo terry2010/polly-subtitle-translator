@@ -32,6 +32,16 @@ node_modules
 # 第三方代码（subfinder，仅用于参考，不随项目分发）
 docs/第三方代码/
 
+# 临时检查输出文件
+check_*.txt
+src-tauri/check_*.txt
+
+# 临时日志和测试文件
+*.log
+log*.log
+source.txt
+translated.txt
+
 # 但保留 fixture（例外）
 !/src-tauri/tests/fixtures/*.ass
 !/src-tauri/tests/fixtures/*.vtt
