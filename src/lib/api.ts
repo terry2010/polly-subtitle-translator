@@ -164,7 +164,7 @@ export const api = {
   testTranslateConnection: (
     provider: string,
     appId?: string,
-    secretKey?: string,
+    secretKey?: string | null,
     region?: string,
     baseUrl?: string,
     model?: string,

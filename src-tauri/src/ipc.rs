@@ -1049,9 +1049,24 @@ pub async fn list_openai_models(
             .with_args(serde_json::json!({ "detail": format!("HTTP {}: {}", status, body) })));
     }
 
-    let body: serde_json::Value = resp.json().await.map_err(|e| {
+    let body_text = resp.text().await.map_err(|e| {
         IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
             .with_args(serde_json::json!({ "detail": e.to_string() }))
+    })?;
+
+    // 开发模式：记录模型列表响应到 api_debug 目录
+    if crate::is_dev_mode() {
+        crate::log_api_debug(
+            "openai", "list_models", "", "",
+            &format!("GET {}/models", base_url.trim_end_matches('/')),
+            &body_text,
+            status.as_u16(),
+        );
+    }
+
+    let body: serde_json::Value = serde_json::from_str(&body_text).map_err(|e| {
+        IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": format!("JSON 解析失败: {}", e) }))
     })?;
 
     // OpenAI 标准响应：{ object: "list", data: [{ id, ... }] }
@@ -1063,6 +1078,10 @@ pub async fn list_openai_models(
                 .collect()
         })
         .unwrap_or_default();
+
+    if crate::is_dev_mode() {
+        tracing::info!("[list_openai_models] 解析出的模型列表: {:?}", models);
+    }
 
     if models.is_empty() {
         return Err(IpcError::new("openai.noModels", Severity::Recoverable));

@@ -500,6 +500,10 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       }
       if (!successUrl) return;
       if (successUrl !== trimmedUrl) setBaseUrl(successUrl);
+      // 智谱 GLM：认证成功后，强制添加 glm-4.7-flash 到模型列表第一个位置
+      if (currentService?.id === "zhipu" && !allModels.includes("glm-4.7-flash")) {
+        allModels.unshift("glm-4.7-flash");
+      }
       setModelList(allModels);
       lastAutoFetchUrlRef.current = successUrl;
       setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
@@ -510,7 +514,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     } catch { /* 静默 */ } finally {
       setLoadingModels(false);
     }
-  }, []);
+  }, [currentService, autoDetectModelTypeStr]);
 
   // 选中服务变化时加载配置
   useEffect(() => {
@@ -695,7 +699,13 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     setTesting(true);
     setTestResult(null);
     try {
-      const actualSecret = secretKey === "••••••••" ? undefined : secretKey;
+      // 如果 API Key 是掩码显示，从数据库重新加载真实值
+      let actualSecret: string | undefined = secretKey === "••••••••" ? undefined : secretKey;
+      if (!actualSecret && currentService.requiresApiKey) {
+        const providerKey = currentService.category === "ai" ? `openai_${sid}` : sid;
+        const loaded = await api.getCredential(providerKey, "secret", "测试连接加载凭据").catch(() => null);
+        actualSecret = loaded ?? undefined;
+      }
       const provider = currentService.category === "ai" ? "openai" : sid;
       const serviceId = currentService.category === "ai" ? sid : undefined;
       const result = await api.testTranslateConnection(
@@ -833,6 +843,10 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         return;
       }
       if (successUrl !== trimmedUrl) setBaseUrl(successUrl);
+      // 智谱 GLM：认证成功后，强制添加 glm-4.7-flash 到模型列表第一个位置
+      if (currentService?.id === "zhipu" && !allModels.includes("glm-4.7-flash")) {
+        allModels.unshift("glm-4.7-flash");
+      }
       setModelList(allModels);
       lastAutoFetchUrlRef.current = successUrl;
       setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
