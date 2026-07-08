@@ -230,40 +230,75 @@ pub fn check_length_ratio(original: &SubtitleFile, translated: &SubtitleFile) ->
 
 // === SECTION 3 END ===
 
-/// 检查字符串是否含 CJK 字符
+/// 检查字符串是否含 CJK 字符（与 translate.rs 的 has_cjk 一致）
+/// 只检测 CJK 统一表意文字（U+4E00–U+9FFF），不含扩展 A 区
 fn has_cjk_chars(s: &str) -> bool {
     s.chars().any(|c| {
         let code = c as u32;
-        (0x4E00..=0x9FFF).contains(&code) || (0x3400..=0x4DBF).contains(&code)
+        (0x4E00..=0x9FFF).contains(&code)
     })
 }
 
 /// 检查原文是否为非英语内容（如拼写字母 G-O-R、祖鲁语歌词等）
 /// 与 translate.rs 的 has_english_word(text, 3) 判定一致：
-/// 如果原文不含至少 3 个英语单词，视为非英语内容，保持原样是正确行为
+/// 如果原文不含连续 3 个以上英文字母组成的 run，视为非英语内容，保持原样是正确行为
 fn is_non_english_source(s: &str) -> bool {
-    let word_count = s.split_whitespace()
-        .filter(|w| {
-            let cleaned: String = w.chars().filter(|c| c.is_ascii_alphabetic()).collect();
-            cleaned.len() >= 2
-        })
-        .count();
-    word_count < 3
+    !has_english_word(s, 3)
 }
 
-/// 检查是否像音效标记（[xxx] 或 (xxx)）
+/// 检查文本是否包含至少 min_len 个连续英文字母组成的 run
+/// 与 translate.rs 的 has_english_word 完全一致
+fn has_english_word(s: &str, min_len: usize) -> bool {
+    let mut max_run = 0usize;
+    for c in s.chars() {
+        if c.is_ascii_alphabetic() {
+            max_run += 1;
+        } else {
+            if max_run >= min_len {
+                return true;
+            }
+            max_run = 0;
+        }
+    }
+    max_run >= min_len
+}
+
+/// 检查是否像音效标记（与 translate.rs 的 looks_like_sound_effect 一致）
+/// 先去掉 ASS 定位/样式标签（如 {\an8}），再检测 [xxx] 包裹或 [Name] [xxx] 嵌套
 fn looks_like_sound_effect(s: &str) -> bool {
-    let s = s.trim();
+    let stripped = strip_ass_tags(s);
+    let s = stripped.trim();
     if s.is_empty() {
         return false;
     }
     if s.starts_with('[') && s.ends_with(']') {
         return true;
     }
-    if s.starts_with('(') && s.ends_with(')') {
-        return true;
+    // 去掉 [Name] 前缀后，剩余部分仍被 [] 包裹
+    let re = regex::Regex::new(r"^\s*\[[^\]]+\]\s*(.*)$").unwrap();
+    if let Some(caps) = re.captures(s) {
+        let rest = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+        if !rest.is_empty() && rest.starts_with('[') && rest.ends_with(']') {
+            return true;
+        }
     }
     false
+}
+
+/// 去掉 ASS 覆盖标签（{...} 包裹的部分，如 {\an8}、{\b1}、{\pos(x,y)} 等）
+/// 与 translate.rs 的 strip_ass_tags 一致
+fn strip_ass_tags(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_brace = false;
+    for c in s.chars() {
+        match c {
+            '{' => in_brace = true,
+            '}' => in_brace = false,
+            _ if !in_brace => result.push(c),
+            _ => {}
+        }
+    }
+    result
 }
 
 /// 从文本中提取 <name=En>Zh</name> 标签

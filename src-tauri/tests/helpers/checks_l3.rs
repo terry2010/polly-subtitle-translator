@@ -56,8 +56,58 @@ fn strip_ass_tags(s: &str) -> String {
     result
 }
 
+/// 判断是否为纯音乐符号/特殊符号（如 ♪♪、♬♬ 等，无文字内容）
+/// 与 translate.rs 的 is_music_or_symbol_only 一致
+fn is_music_or_symbol_only(s: &str) -> bool {
+    let s = s.trim();
+    if s.is_empty() {
+        return false;
+    }
+    s.chars().all(|c| {
+        c.is_whitespace()
+            || "♪♬♫♩♭♮♯".contains(c)
+            || matches!(c, '[' | ']' | '(' | ')' | '.' | '-' | '_' | '*')
+    })
+}
+
+/// 判断文本是否包含音乐符号（♪♬♫♩ 等）
+/// 与前端 hasMusicSymbols 一致
+fn has_music_symbols(s: &str) -> bool {
+    s.chars().any(|c| "♪♬♫♩♭♮♯".contains(c))
+}
+
+/// 检查文本是否包含至少 min_len 个连续英文字母组成的 run
+/// 与 translate.rs 的 has_english_word 一致
+fn has_english_word(s: &str, min_len: usize) -> bool {
+    let mut max_run = 0usize;
+    for c in s.chars() {
+        if c.is_ascii_alphabetic() {
+            max_run += 1;
+        } else {
+            if max_run >= min_len {
+                return true;
+            }
+            max_run = 0;
+        }
+    }
+    max_run >= min_len
+}
+
 /// "未翻译"判定（与前端 isUntranslated 一致）
+/// 排除规则（与前端 SubtitlePreviewPanel.tsx 的 isUntranslated 一致）：
+///   - 纯音乐符号（♪♪、♬♬）：保持原样是正确行为
+///   - 音效标记（[music]、[phone buzzing]）：保持原样是正确行为
+///   - 非英语原文（拼写字母 G-O-R、祖鲁语歌词等）：保持原样是正确行为
+///   - 译文含音乐符号（歌词/拟声词，无法翻译）：保持原样是正确行为
 fn is_untranslated(e: &SubtitleEntry, target_lang: &str) -> bool {
+    // 排除：纯音乐符号、音效标记、非英语原文 — 这些保持原样不是错误
+    if is_music_or_symbol_only(&e.text) || looks_like_sound_effect(&e.text) || !has_english_word(&e.text, 3) {
+        return false;
+    }
+    // 排除：译文含音乐符号（歌词/拟声词，无法翻译）
+    if has_music_symbols(&e.translated) {
+        return false;
+    }
     e.translated.trim().is_empty()
         || e.translated.trim() == e.text.trim()
         || (target_lang.starts_with("zh") && !has_cjk(&e.translated) && !has_cjk(&e.text))

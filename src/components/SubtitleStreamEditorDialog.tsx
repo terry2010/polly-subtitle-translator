@@ -29,7 +29,6 @@ import { Input } from "./ui/input";
 import { api } from "../lib/api";
 import { error } from "../lib/logger";
 import { save } from "@tauri-apps/plugin-dialog";
-import { withPlayerHidden } from "../lib/utils";
 import type { SubtitleStream, SubtitleStreamEdit } from "../lib/ipc-types";
 
 interface SubtitleStreamEditorDialogProps {
@@ -218,14 +217,16 @@ export function SubtitleStreamEditorDialog({
       const baseName = videoPath.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "");
       const langSuffix = item.language.trim() || item.title.trim() || `stream${item.originalIndex}`;
       const defaultName = `${baseName}.${langSuffix}.srt`;
-      const outputPath = await withPlayerHidden(() => save({
+      // 弹层的 useEffect 已隐藏播放器，无需 withPlayerHidden
+      // （withPlayerHidden 的 finally 会 playerShow，导致播放器遮盖弹层）
+      const outputPath = await save({
         defaultPath: defaultName,
         filters: [
           { name: "SRT", extensions: ["srt"] },
           { name: "ASS", extensions: ["ass"] },
           { name: "VTT", extensions: ["vtt"] },
         ],
-      }));
+      });
       if (!outputPath) return; // 用户取消
 
       await api.extractSubtitle(videoPath, item.originalIndex, outputPath);
@@ -261,10 +262,11 @@ export function SubtitleStreamEditorDialog({
         const sep = videoPath.includes("\\") ? "\\" : "/";
         const videoDir = videoPath.split(/[\\/]/).slice(0, -1).join(sep);
         const defaultOutput = `${videoDir}${videoDir ? sep : ""}${baseName}.edited.mkv`;
-        outputPath = await withPlayerHidden(() => save({
+        // 弹层的 useEffect 已隐藏播放器，无需 withPlayerHidden
+        outputPath = await save({
           defaultPath: defaultOutput,
           filters: [{ name: "MKV", extensions: ["mkv"] }],
-        }));
+        });
         if (!outputPath) {
           // 用户取消
           return;

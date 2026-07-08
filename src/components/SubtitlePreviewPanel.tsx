@@ -59,14 +59,19 @@ function hasMusicSymbols(s: string): boolean {
 }
 
 /// 判断原文是否为非英语内容（如拼写字母 G-O-R、祖鲁语歌词等）
-/// 与 tests/helpers/checks_l2.rs 的 is_non_english_source 保持一致：
-/// 如果原文不含至少 3 个英语单词（≥2 字母），视为非英语内容，保持原样是正确行为
+/// 与 translate.rs 的 has_english_word(text, 3) 判定一致：
+/// 如果原文不含连续 3 个以上英文字母组成的 run，视为非英语内容，保持原样是正确行为
 function isNonEnglishSource(s: string): boolean {
-  const wordCount = s.split(/\s+/).filter((w) => {
-    const cleaned = [...w].filter((c) => /[a-zA-Z]/.test(c)).join("");
-    return cleaned.length >= 2;
-  }).length;
-  return wordCount < 3;
+  let maxRun = 0;
+  for (const c of s) {
+    if (/[a-zA-Z]/.test(c)) {
+      maxRun++;
+    } else {
+      if (maxRun >= 3) return false;
+      maxRun = 0;
+    }
+  }
+  return maxRun < 3;
 }
 
 function formatTimecode(ms: number): string {

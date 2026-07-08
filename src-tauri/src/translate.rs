@@ -68,6 +68,12 @@ pub(crate) fn is_music_or_symbol_only(s: &str) -> bool {
     })
 }
 
+/// 判断文本是否包含音乐符号（♪♬♫♩ 等）
+/// 含音乐符号的译文是歌词/拟声词，无法翻译，保持原样是正确行为
+pub(crate) fn has_music_symbols(s: &str) -> bool {
+    s.chars().any(|c| "♪♬♫♩♭♮♯".contains(c))
+}
+
 /// 检查文本是否包含至少 min_len 个连续英文字母组成的单词
 /// 用于区分英语内容和非英语内容（如拼写字母 "G-O-R..."、祖鲁语歌词等）
 pub(crate) fn has_english_word(s: &str, min_len: usize) -> bool {
@@ -259,6 +265,53 @@ pub enum TranslateProvider {
     Volcengine,
     Aliyun,
     Amazon,
+}
+
+/// 占位符保护策略（不同翻译引擎/模型对标签的处理能力不同）
+///
+/// 测试数据（保留率）：
+/// | 策略 | 百度 | 9b 模型 | DeepL | Google | Bing |
+/// |------|------|---------|-------|--------|------|
+/// | PrivateUse | 100% | 0% | - | - | - |
+/// | XmlTags | 90% | 93% | - | - | - |
+/// | DirectHtml | 80% | 88% | 原生 | 原生 | 原生 |
+/// | CurlyBraces | 63% | 87% | - | - | - |
+/// | SquareBrackets | 36% | 80% | - | - | - |
+///
+/// 默认策略（按引擎）：
+/// - baidu/youdao/caiyun/niutrans/tencent/volcengine/aliyun/amazon: PrivateUse（传统引擎，不可见字符保留率高）
+/// - openai（AI 模型）: XmlTags（9b 模型对 XML 标签保留率 93%，远优于私用区 0%）
+/// - deepl/google/bing: DirectHtml（原生支持 HTML 标签处理）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlaceholderStrategy {
+    /// 私用区字符 U+E000~U+E0FF（现有方案，传统引擎最优）
+    PrivateUse,
+    /// XML 标签 <x1></x1>（AI 模型最优，通用性好）
+    XmlTags,
+    /// 直接发送 HTML 标签（DeepL/Google/Bing 原生支持）
+    DirectHtml,
+    /// 花括号数字 {1}{/1}
+    CurlyBraces,
+    /// 方括号数字 [1][/1]
+    SquareBrackets,
+}
+
+impl PlaceholderStrategy {
+    /// 根据翻译引擎名称返回默认占位符策略
+    /// provider_name 可能是 "baidu"、"deepl" 或 "openai-lmstudio-xxx" 等复合名称
+    pub fn for_provider(provider_name: &str) -> Self {
+        // DeepL/Google/Bing：原生支持 HTML 标签处理
+        if provider_name == "deepl" || provider_name == "google" || provider_name == "bing" {
+            return PlaceholderStrategy::DirectHtml;
+        }
+        // OpenAI 兼容（AI 模型）：provider_name 以 "openai" 开头
+        // 包括 "openai"、"openai-lmstudio-xxx"、"openai-deepseek-xxx" 等
+        if provider_name.starts_with("openai") {
+            return PlaceholderStrategy::XmlTags;
+        }
+        // 传统翻译引擎（百度/有道/彩云/小牛/腾讯/火山/阿里/亚马逊）：私用区字符保留率最高
+        PlaceholderStrategy::PrivateUse
+    }
 }
 
 impl TranslateProvider {
@@ -583,6 +636,8 @@ const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
                  - Return a JSON array of objects: [{\"n\": 1, \"t\": \"<translation1>\"}, {\"n\": 2, \"t\": \"<translation2>\"}]\n\
                  - Each object contains the input line number \"n\" and the translation \"t\".\n\
                  - Preserve special Unicode characters (like \u{E001}) exactly as-is.\n\
+                 - Tags like <x0>, </x0>, <x1>, </x1> are formatting markers. KEEP the tags themselves unchanged, but TRANSLATE the text content between them into {tgt}.\n\
+                 - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
                  - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
                  - The output array must contain exactly the same number of objects as the input lines.\n\
                  - Do not add explanations, notes, or any extra text outside the JSON.\n\n\
@@ -602,6 +657,8 @@ const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
                  - Return a JSON array of objects: [{\"n\": 1, \"t\": \"<translation1>\"}, {\"n\": 2, \"t\": \"<translation2>\"}]\n\
                  - Each object contains the input line number \"n\" and the translation \"t\".\n\
                  - Preserve all special characters and placeholders unchanged.\n\
+                 - Tags like <x0>, </x0>, <x1>, </x1> are formatting markers. KEEP the tags themselves unchanged, but TRANSLATE the text content between them into {tgt}.\n\
+                 - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
                  - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
                  - The output array must contain exactly the same number of objects as the input lines.\n\
                  - Do not add any extra text outside the JSON.\n\n\
@@ -621,6 +678,8 @@ const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
                  - Return a JSON array of objects: [{\"n\": 1, \"t\": \"<translation1>\"}, {\"n\": 2, \"t\": \"<translation2>\"}]\n\
                  - Each object contains the input line number \"n\" and the translation \"t\".\n\
                  - Preserve special Unicode characters exactly as-is.\n\
+                 - Tags like <x0>, </x0>, <x1>, </x1> are formatting markers. KEEP the tags themselves unchanged, but TRANSLATE the text content between them into {tgt}.\n\
+                 - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
                  - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
                  - The output array must contain exactly the same number of objects as the input lines.\n\
                  - Do not add any extra text outside the JSON.\n\n\
@@ -702,14 +761,22 @@ fn is_html_subtitle_tag(tag: &str) -> bool {
 /// 占位符保护器
 #[derive(Clone)]
 pub struct PlaceholderProtector {
-    /// 占位符映射表：占位符字符 -> 原始文本
-    placeholders: Vec<(char, String)>,
+    /// 占位符映射表：占位符字符串 -> 原始文本
+    placeholders: Vec<(String, String)>,
+    /// 占位符策略
+    strategy: PlaceholderStrategy,
 }
 
 impl PlaceholderProtector {
     pub fn new() -> Self {
+        Self::with_strategy(PlaceholderStrategy::PrivateUse)
+    }
+
+    /// 使用指定策略创建保护器
+    pub fn with_strategy(strategy: PlaceholderStrategy) -> Self {
         Self {
             placeholders: Vec::new(),
+            strategy,
         }
     }
 
@@ -724,7 +791,7 @@ impl PlaceholderProtector {
                 if let Some(end) = remaining.find('}') {
                     let tag = &remaining[..=end];
                     let placeholder = self.add_placeholder(tag);
-                    result.push(placeholder);
+                    result.push_str(&placeholder);
                     remaining = &remaining[end + 1..];
                     continue;
                 }
@@ -737,8 +804,15 @@ impl PlaceholderProtector {
                     // 保护常见 HTML 字幕标签（含闭合标签），不保护普通 < > 符号
                     // 不再限制标签长度，支持 <span>/<div> 等任意标签
                     if is_html_subtitle_tag(tag) {
+                        // DirectHtml 策略：HTML 标签不保护，直接发送给引擎
+                        // 引擎原生支持 HTML 标签处理（DeepL/Google/Bing）
+                        if self.strategy == PlaceholderStrategy::DirectHtml {
+                            result.push_str(tag);
+                            remaining = &remaining[end + 1..];
+                            continue;
+                        }
                         let placeholder = self.add_placeholder(tag);
-                        result.push(placeholder);
+                        result.push_str(&placeholder);
                         remaining = &remaining[end + 1..];
                         continue;
                     }
@@ -749,7 +823,7 @@ impl PlaceholderProtector {
             if remaining.starts_with("\\N") || remaining.starts_with("\\n") {
                 let tag = &remaining[..2];
                 let placeholder = self.add_placeholder(tag);
-                result.push(placeholder);
+                result.push_str(&placeholder);
                 remaining = &remaining[2..];
                 continue;
             }
@@ -758,7 +832,7 @@ impl PlaceholderProtector {
             // 替换成占位符而非保留原样，避免 9b 模型把多行条目拆成多条翻译导致错位
             if remaining.starts_with('\n') {
                 let placeholder = self.add_placeholder("\n");
-                result.push(placeholder);
+                result.push_str(&placeholder);
                 remaining = &remaining[1..];
                 continue;
             }
@@ -774,27 +848,73 @@ impl PlaceholderProtector {
 
     /// 回填占位符，将翻译后的文本中的占位符替换回原始内容
     pub fn restore(&self, text: &str) -> String {
-        let mut result = String::with_capacity(text.len());
-        for ch in text.chars() {
-            if let Some((_, original)) = self.placeholders.iter().find(|(p, _)| *p == ch) {
-                result.push_str(original);
-            } else {
-                result.push(ch);
-            }
+        let mut result = text.to_string();
+        // 按占位符长度降序替换，避免短占位符是长占位符的前缀导致误替换
+        let mut sorted = self.placeholders.iter().collect::<Vec<_>>();
+        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        for (placeholder, original) in &sorted {
+            result = result.replace(placeholder, original);
         }
         result
     }
 
-    /// 添加占位符映射
-    fn add_placeholder(&mut self, original: &str) -> char {
+    /// 添加占位符映射，返回占位符字符串
+    fn add_placeholder(&mut self, original: &str) -> String {
         let index = self.placeholders.len();
-        if index >= 256 {
-            // 超过 256 个占位符，使用兜底方案：直接保留原文
-            tracing::warn!("占位符超过 256 个上限，直接保留原文");
-            return '\u{E0FF}';
-        }
-        let placeholder = char::from_u32(PLACEHOLDER_BASE + index as u32).unwrap_or('\u{E0FF}');
-        self.placeholders.push((placeholder, original.to_string()));
+        let placeholder = match self.strategy {
+            PlaceholderStrategy::PrivateUse => {
+                if index >= 256 {
+                    tracing::warn!("占位符超过 256 个上限，直接保留原文");
+                    return original.to_string();
+                }
+                char::from_u32(PLACEHOLDER_BASE + index as u32)
+                    .unwrap_or('\u{E0FF}')
+                    .to_string()
+            }
+            PlaceholderStrategy::XmlTags => {
+                // <xN></xN> 形式：每个标签用唯一编号（全局 index）
+                // restore 按精确字符串匹配，不需要开/闭标签编号配对
+                if original.starts_with("</") {
+                    format!("</x{}>", index)
+                } else if original.starts_with('<') {
+                    format!("<x{}>", index)
+                } else {
+                    // 换行符等非标签内容
+                    format!("<x{}/>", index)
+                }
+            }
+            PlaceholderStrategy::DirectHtml => {
+                // HTML 标签不保护（在 protect 中已处理），这里只处理 ASS 标签和换行符
+                // 用私用区字符保护 ASS 标签和换行符
+                if index >= 256 {
+                    return original.to_string();
+                }
+                char::from_u32(PLACEHOLDER_BASE + index as u32)
+                    .unwrap_or('\u{E0FF}')
+                    .to_string()
+            }
+            PlaceholderStrategy::CurlyBraces => {
+                // {N}{/N} 形式：每个标签用唯一编号
+                if original.starts_with("</") {
+                    format!("{{/{}}}", index)
+                } else if original.starts_with('<') {
+                    format!("{{{}}}", index)
+                } else {
+                    format!("{{n{}}}", index)
+                }
+            }
+            PlaceholderStrategy::SquareBrackets => {
+                // [N][/N] 形式：每个标签用唯一编号
+                if original.starts_with("</") {
+                    format!("[/{}]", index)
+                } else if original.starts_with('<') {
+                    format!("[{}]", index)
+                } else {
+                    format!("[n{}]", index)
+                }
+            }
+        };
+        self.placeholders.push((placeholder.clone(), original.to_string()));
         placeholder
     }
 
@@ -809,26 +929,44 @@ impl PlaceholderProtector {
     ///    此方法检测丢失的前缀 ASS 标签并加回译文开头。
     /// 2. 9b 模型可能多输出未注册的占位符字符（如重复、错位），
     ///    restore() 只能替换已注册的占位符，无法清除多余字符。
-    ///    此方法清除所有残留的 U+E000~U+E0FF 字符，避免污染译文导致 failed 误判。
+    ///    此方法清除所有残留的占位符字符，避免污染译文导致 failed 误判。
     pub fn restore_with_ass_recovery(&self, text: &str, original_text: &str) -> String {
         let restored = self.restore(text);
         let recovered = recover_lost_ass_prefix_tags(&restored, original_text);
-        strip_remaining_placeholders(&recovered)
+        strip_remaining_placeholders(&recovered, self.strategy)
+    }
+
+    /// 获取当前策略
+    pub fn strategy(&self) -> PlaceholderStrategy {
+        self.strategy
     }
 }
 
-/// 清除译文中残留的占位符字符（U+E000~U+E0FF）
-/// 9b 模型有时会多输出未注册的占位符字符（如重复、错位），
-/// 这些字符无法被 restore() 替换回原始内容，会污染译文。
-fn strip_remaining_placeholders(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    for ch in s.chars() {
-        // U+E000 ~ U+E0FF 是 PlaceholderProtector 使用的私有区字符
-        if !('\u{E000}'..='\u{E0FF}').contains(&ch) {
-            result.push(ch);
+/// 清除译文中残留的占位符
+/// 9b 模型有时会多输出未注册的占位符（如重复、错位），
+/// 这些占位符无法被 restore() 替换回原始内容，会污染译文。
+fn strip_remaining_placeholders(s: &str, strategy: PlaceholderStrategy) -> String {
+    match strategy {
+        // 私用区字符和 DirectHtml（ASS 标签用私用区）：清除 U+E000~U+E0FF
+        PlaceholderStrategy::PrivateUse | PlaceholderStrategy::DirectHtml => {
+            s.chars().filter(|&ch| !('\u{E000}'..='\u{E0FF}').contains(&ch)).collect()
+        }
+        // XML 标签：清除残留的 <xN>、</xN>、<xN/>
+        PlaceholderStrategy::XmlTags => {
+            let re = regex::Regex::new(r"</?x\d+/??>").unwrap();
+            re.replace_all(s, "").to_string()
+        }
+        // 花括号：清除残留的 {N}、{/N}、{nN}
+        PlaceholderStrategy::CurlyBraces => {
+            let re = regex::Regex::new(r"\{/?\d+\}|\{n\d+\}").unwrap();
+            re.replace_all(s, "").to_string()
+        }
+        // 方括号：清除残留的 [N]、[/N]、[nN]
+        PlaceholderStrategy::SquareBrackets => {
+            let re = regex::Regex::new(r"\[/?\d+\]|\[n\d+\]").unwrap();
+            re.replace_all(s, "").to_string()
         }
     }
-    result
 }
 
 /// 清理译文中泄漏的 JSON 格式语法
@@ -2645,6 +2783,7 @@ impl<'a> TranslateScheduler<'a> {
                     && !has_cjk(&entry.text)
                     && !is_music_or_sfx
                     && !is_non_english
+                    && !has_music_symbols(&cached)
                 {
                     // 译文无 CJK（AI 未实际翻译成中文）：翻译时应跳过重新翻译，
                     // 但恢复时（get_cached_entries）仍返回缓存，保证译文一致。
@@ -2771,7 +2910,7 @@ impl<'a> TranslateScheduler<'a> {
                     let is_non_english = !has_english_word(&entry.text, 3);
                     let bad_cache = (looks_like_sound_effect(&entry.text) != looks_like_sound_effect(&cached))
                         || (!is_music_or_sfx && !is_non_english && cached.trim() == entry.text.trim())
-                        || (target_lang.starts_with("zh") && !has_cjk(&cached) && !has_cjk(&entry.text) && !is_music_or_sfx && !is_non_english);
+                        || (target_lang.starts_with("zh") && !has_cjk(&cached) && !has_cjk(&entry.text) && !is_music_or_sfx && !is_non_english && !has_music_symbols(&cached));
                     if !bad_cache {
                         let te = TranslateEntry {
                             index: entry.index,
@@ -2799,8 +2938,9 @@ impl<'a> TranslateScheduler<'a> {
                 }
             }
 
-            // 占位符保护
-            let mut protector = PlaceholderProtector::new();
+            // 占位符保护（按引擎类型选择策略）
+            let strategy = PlaceholderStrategy::for_provider(&self.provider_name);
+            let mut protector = PlaceholderProtector::with_strategy(strategy);
             let protected_text = protector.protect(&entry.text);
 
             // 分段（如果超过 API 上限）：按句号二次切分，逐段翻译后拼接
@@ -2828,7 +2968,14 @@ impl<'a> TranslateScheduler<'a> {
                 }
 
                 let restored = protector.restore_with_ass_recovery(&combined, &entry.text);
-                // 翻译失败判定
+                // 翻译失败判定（与批次模式 translate_entries_full 的 failed 判定一致）
+                // 非英语内容（如拼写字母 "G-O-R..."、祖鲁语歌词等）保持原样是正确行为
+                let is_non_english = !has_english_word(&entry.text, 3);
+                // 音乐符号/音效标记保持原样是正确行为
+                let is_music_or_sfx = is_music_or_symbol_only(&entry.text)
+                    || looks_like_sound_effect(&entry.text);
+                // 译文含音乐符号（歌词/拟声词，无法翻译）：不算无 CJK 失败
+                let trans_has_music = has_music_symbols(&restored);
                 let same_as_orig = restored.trim() == entry.text.trim();
                 let no_cjk = target_lang.starts_with("zh")
                     && !has_cjk(&restored)
@@ -2843,7 +2990,14 @@ impl<'a> TranslateScheduler<'a> {
                     let ratio = trans_len as f64 / orig_len as f64;
                     ratio > 5.0 && trans_len > 10
                 };
-                if !restored.is_empty() && !any_failed && !same_as_orig && !no_cjk && !sound_mismatch && !length_ratio_abnormal {
+                // failed 判定：与批次模式一致，排除非英语/音乐/音效内容
+                let failed = any_failed
+                    || combined.is_empty()
+                    || (!is_non_english && !is_music_or_sfx && same_as_orig)
+                    || (no_cjk && !is_non_english && !is_music_or_sfx && !trans_has_music)
+                    || sound_mismatch
+                    || length_ratio_abnormal;
+                if !restored.is_empty() && !failed {
                     let cache_key = translate_cache_key(
                         &entry.text,
                         source_lang,
@@ -2859,7 +3013,7 @@ impl<'a> TranslateScheduler<'a> {
                         target_lang,
                         &self.provider_name,
                     );
-                } else if !restored.is_empty() && (any_failed || same_as_orig || sound_mismatch || no_cjk || length_ratio_abnormal) {
+                } else if !restored.is_empty() && failed {
                     // 所有 failed 条目（译文非空）写入缓存，保证 get_cached_entries 恢复时译文一致。
                     // translate_entries_full 的 bad_cache 检查会跳过坏缓存重新翻译，
                     // 但恢复时 get_cached_entries 返回它们（标记 failed），前端视为未翻译，用户可重新翻译。
@@ -2885,7 +3039,7 @@ impl<'a> TranslateScheduler<'a> {
                     original: entry.text.clone(),
                     translated: restored,
                     from_cache: false,
-                    failed: any_failed || combined.is_empty() || same_as_orig || no_cjk || sound_mismatch || length_ratio_abnormal,
+                    failed,
                 };
                 if let Some(ref cb) = on_entry_done {
                     cb(&te);
@@ -3038,13 +3192,17 @@ impl<'a> TranslateScheduler<'a> {
                     let is_music_or_sfx = is_music_or_symbol_only(orig_text)
                         || looks_like_sound_effect(orig_text);
 
+                    // 译文含音乐符号（歌词/拟声词，无法翻译）：不算无 CJK 失败
+                    let trans_has_music = has_music_symbols(&restored);
+
                     let failed = restored.is_empty()
                         || (!is_non_english && !is_music_or_sfx && restored.trim() == orig_text.trim())
                         || (target_lang.starts_with("zh")
                             && !has_cjk(&restored)
                             && !has_cjk(orig_text)
                             && !is_non_english
-                            && !is_music_or_sfx)
+                            && !is_music_or_sfx
+                            && !trans_has_music)
                         || sound_mismatch
                         || batch_count_mismatch
                         || length_ratio_abnormal;
@@ -6387,7 +6545,7 @@ mod tests {
         // 模拟 9b 模型丢弃占位符字符的情况
         let mut p = PlaceholderProtector::new();
         let input = r"{\an8}[phone buzzing] Oh, Greater Whitethroat!";
-        let protected = p.protect(input);
+        let _protected = p.protect(input);
         // 9b 模型翻译后丢弃了占位符（模拟：翻译结果中不含占位符字符）
         let fake_translation = "哦，是白喉林莺！";
         // 普通 restore 会丢失 {\an8}
@@ -6425,7 +6583,7 @@ mod tests {
         // 9b 模型多输出未注册的占位符字符
         let mut p = PlaceholderProtector::new();
         let input = r"{\an8}[phone buzzing]";
-        let protected = p.protect(input);
+        let _protected = p.protect(input);
         // 9b 返回时多了一个 \ue001（未注册的占位符）
         let fake = format!("\u{E000}\u{E001}[手机震动]");
         let restored = p.restore_with_ass_recovery(&fake, input);
@@ -6434,6 +6592,102 @@ mod tests {
         assert!(!restored.contains('\u{E000}'));
         assert!(restored.starts_with("{\\an8}"));
         assert!(restored.contains("[手机震动]"));
+    }
+
+    #[test]
+    fn test_placeholder_strategy_xml_tags() {
+        // XML 标签策略：HTML 标签被替换为 <xN></xN> 形式
+        let mut p = PlaceholderProtector::with_strategy(PlaceholderStrategy::XmlTags);
+        let input = "It is <i>you</i> playing <i>ball</i>";
+        let protected = p.protect(input);
+        // 4 个标签：index 0=<i>, 1=</i>, 2=<i>, 3=</i>
+        assert!(protected.contains("<x0>"));
+        assert!(protected.contains("</x1>"));
+        assert!(protected.contains("<x2>"));
+        assert!(protected.contains("</x3>"));
+        // 不应包含原始 <i> 标签
+        assert!(!protected.contains("<i>"));
+        // 回填
+        let fake_trans = "<x0>你</x1>在打<x2>球</x3>";
+        let restored = p.restore(fake_trans);
+        assert_eq!(restored, "<i>你</i>在打<i>球</i>");
+    }
+
+    #[test]
+    fn test_placeholder_strategy_direct_html() {
+        // DirectHtml 策略：HTML 标签直接保留，不替换为占位符
+        let mut p = PlaceholderProtector::with_strategy(PlaceholderStrategy::DirectHtml);
+        let input = "It is <i>you</i> playing <i>ball</i>";
+        let protected = p.protect(input);
+        // HTML 标签应直接保留
+        assert!(protected.contains("<i>"));
+        assert!(protected.contains("</i>"));
+        assert_eq!(protected, input);
+        // 回填不需要替换 HTML 标签（因为没有被保护）
+        let fake_trans = "这是<i>你</i>在打<i>球</i>";
+        let restored = p.restore(fake_trans);
+        assert_eq!(restored, fake_trans);
+    }
+
+    #[test]
+    fn test_placeholder_strategy_curly_braces() {
+        // 花括号策略：HTML 标签被替换为 {N}{/N} 形式
+        let mut p = PlaceholderProtector::with_strategy(PlaceholderStrategy::CurlyBraces);
+        let input = "It is <i>you</i> playing <i>ball</i>";
+        let protected = p.protect(input);
+        // 4 个标签：index 0=<i>, 1=</i>, 2=<i>, 3=</i>
+        assert!(protected.contains("{0}"));
+        assert!(protected.contains("{/1}"));
+        assert!(!protected.contains("<i>"));
+        let fake_trans = "{0}你{/1}在打{2}球{/3}";
+        let restored = p.restore(fake_trans);
+        assert_eq!(restored, "<i>你</i>在打<i>球</i>");
+    }
+
+    #[test]
+    fn test_placeholder_strategy_for_provider() {
+        // 传统引擎 → PrivateUse
+        assert_eq!(PlaceholderStrategy::for_provider("baidu"), PlaceholderStrategy::PrivateUse);
+        assert_eq!(PlaceholderStrategy::for_provider("youdao"), PlaceholderStrategy::PrivateUse);
+        assert_eq!(PlaceholderStrategy::for_provider("tencent"), PlaceholderStrategy::PrivateUse);
+        // AI 模型 → XmlTags（包括复合 provider_name）
+        assert_eq!(PlaceholderStrategy::for_provider("openai"), PlaceholderStrategy::XmlTags);
+        assert_eq!(PlaceholderStrategy::for_provider("openai-lmstudio-qwen3.5-9b"), PlaceholderStrategy::XmlTags);
+        assert_eq!(PlaceholderStrategy::for_provider("openai-deepseek-deepseek-v4"), PlaceholderStrategy::XmlTags);
+        assert_eq!(PlaceholderStrategy::for_provider("openai-siliconflow-qwen-72b"), PlaceholderStrategy::XmlTags);
+        // 原生 HTML 支持 → DirectHtml
+        assert_eq!(PlaceholderStrategy::for_provider("deepl"), PlaceholderStrategy::DirectHtml);
+        assert_eq!(PlaceholderStrategy::for_provider("google"), PlaceholderStrategy::DirectHtml);
+        assert_eq!(PlaceholderStrategy::for_provider("bing"), PlaceholderStrategy::DirectHtml);
+    }
+
+    #[test]
+    fn test_placeholder_xml_tags_with_newline() {
+        // XML 标签策略：换行符也被保护
+        let mut p = PlaceholderProtector::with_strategy(PlaceholderStrategy::XmlTags);
+        let input = "line1\nline2";
+        let protected = p.protect(input);
+        // 换行符应被替换为 <xN/> 形式
+        assert!(!protected.contains('\n'));
+        assert!(protected.contains("<x"));
+        let fake_trans = "第一行<x0/>第二行";
+        let restored = p.restore(fake_trans);
+        assert_eq!(restored, "第一行\n第二行");
+    }
+
+    #[test]
+    fn test_placeholder_xml_tags_strip_remaining() {
+        // XML 标签策略：清除残留的 <xN> 占位符
+        let mut p = PlaceholderProtector::with_strategy(PlaceholderStrategy::XmlTags);
+        let input = "<i>hello</i>";
+        let _protected = p.protect(input);
+        // 模拟 9b 模型多输出了未注册的 <x99>
+        // index 0=<i>, 1=</i>
+        let fake = "<x99>你好<x0>";
+        let restored = p.restore_with_ass_recovery(fake, input);
+        // <x99> 应被清除，<x0> 应被回填为 <i>
+        assert!(!restored.contains("<x99>"));
+        assert_eq!(restored, "你好<i>");
     }
 
     #[test]
