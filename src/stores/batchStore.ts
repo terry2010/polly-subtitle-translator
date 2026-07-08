@@ -437,6 +437,15 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         if (!appId) {
           config.provider = "";
         }
+      } else if (config.provider === "openai" && config.service_id) {
+        // AI 服务：检查 service_id 对应的配置是否仍存在
+        const baseUrl = await api.getConfig(`translate_openai_${config.service_id}_base_url`).catch(() => null);
+        const selectedModels = await api.getConfig(`translate_openai_${config.service_id}_selected_models`).catch(() => null);
+        if (!baseUrl || !selectedModels) {
+          config.provider = "";
+          config.service_id = null;
+          config.model = null;
+        }
       }
       set({ config, isWatching: config.watch_paths.length > 0 });
     } catch {

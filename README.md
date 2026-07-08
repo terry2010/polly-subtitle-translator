@@ -6,7 +6,7 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2-blue)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-1.89+-orange)](https://www.rust-lang.org)
 [![React](https://img.shields.io/badge/React-18-61dafb)](https://react.dev)
-[![License](https://img.shields.io/badge/License-GPL--2.0+-blue)](./LICENSE)
+[![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
 ---
 
@@ -836,11 +836,11 @@ npm run publish:dry 1.0.1 "测试内容"
 
 ## 许可证
 
-本项目拟采用 **GPL-2.0+** 协议（与 FFmpeg 含 libass 后的 GPL-2.0+ 整体兼容，避免 LGPL 动态链接合规复杂度）。
+本项目采用 **Apache-2.0** 协议。主程序通过子进程调用 FFmpeg、运行时 dlopen 加载 libmpv（LGPL 构建），均不构成链接关系，因此主程序不受 GPL/LGPL 传染，可选择任意 OSI 批准的宽松协议。
 
-- 软件开源协议：GPL-2.0+
-- libmpv：LGPL-2.1+（下载的 GPL 构建含 GPL 组件）
-- FFmpeg：含 libass 后为 GPL-2.0+
+- 软件开源协议：Apache-2.0
+- libmpv：LGPL-2.1+（运行时 dlopen 动态加载，LGPL 构建允许闭源/宽松协议应用使用）
+- FFmpeg：GPL-2.0+（子进程调用，独立程序，不传染主程序；分发需遵守 GPL 分发义务）
 
 许可证兼容性详细分析见 [`docs/license-compatibility.md`](./docs/license-compatibility.md)。
 
