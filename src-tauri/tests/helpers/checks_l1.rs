@@ -1,5 +1,5 @@
 // L1 结构断言：条目数、时间轴、占位符、格式往返、字幕平移、跨格式转换
-use zimufan_lib::subtitle::{self, SubtitleEntry, SubtitleFile, SubtitleFormat};
+use zimufan_lib::subtitle::{self, SubtitleFile, SubtitleFormat};
 
 /// 单个检查结果
 #[derive(Debug, Clone)]

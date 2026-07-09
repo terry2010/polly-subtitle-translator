@@ -120,7 +120,10 @@ pub fn parse_test_config() -> TestConfig {
         cfg.fixture_file = Some(v);
     }
     if let Ok(v) = env::var("E2E_MODEL_9B") {
+        eprintln!("  [配置] E2E_MODEL_9B 环境变量: {}", v);
         cfg.model_9b = v;
+    } else {
+        eprintln!("  [配置] E2E_MODEL_9B 环境变量未设置，使用默认值: {}", cfg.model_9b);
     }
     if let Ok(v) = env::var("E2E_MODEL_27B") {
         cfg.model_27b = v;

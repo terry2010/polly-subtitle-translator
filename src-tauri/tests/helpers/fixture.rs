@@ -6,6 +6,7 @@ use super::config::TestConfig;
 
 /// Fixture 元数据
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Fixture {
     pub name: String,
     pub file: String,
@@ -45,6 +46,7 @@ impl Fixture {
     }
 
     /// 读取原始文件内容
+    #[allow(dead_code)]
     pub fn read_raw(&self) -> String {
         std::fs::read_to_string(self.path())
             .unwrap_or_else(|e| panic!("读取 fixture {} 失败: {:?}", self.name, e))

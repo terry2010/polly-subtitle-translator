@@ -133,8 +133,44 @@ pub async fn judge_batch(
                                 results.push(JudgeResult { index, verdict, reason, suggestion });
                             }
                         } else {
-                            let preview = json_content.replace('\n', "\\n");
-                            eprintln!("  [27b judge] 批次 {}-{} JSON 解析失败: {:.500}", start + 1, end, preview);
+                            // 最终兜底：用正则提取所有完整的判定对象
+                            // 处理 27b 模型输出被截断导致 JSON 不完整的情况
+                            // 支持两种格式：
+                            //   1. 数组元素格式：{"index": N, "verdict": "pass", "reason": "...", ...}
+                            //   2. 对象 key 格式："N": {"verdict": "pass", "reason": "...", ...}
+                            let re_array = regex::Regex::new(
+                                r#"\{\s*"index"\s*:\s*(\d+)\s*,\s*"verdict"\s*:\s*"(\w+)"\s*(?:,\s*"reason"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|null))?\s*(?:,\s*"suggestion"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|null))?\s*\}"#
+                            ).unwrap();
+                            let matches: Vec<_> = re_array.captures_iter(&json_content).collect();
+                            if !matches.is_empty() {
+                                eprintln!("  [27b judge] 批次 {}-{} 使用正则兜底提取 {} 条结果（数组格式）", start + 1, end, matches.len());
+                                for cap in matches {
+                                    let index = cap[1].parse::<usize>().unwrap_or(0);
+                                    let verdict = cap[2].to_string();
+                                    let reason = cap.get(3).map(|m| m.as_str().to_string());
+                                    let suggestion = cap.get(4).map(|m| m.as_str().to_string());
+                                    results.push(JudgeResult { index, verdict, reason, suggestion });
+                                }
+                            } else {
+                                // 尝试对象 key 格式："N": {"verdict": "pass", ...}
+                                let re_obj = regex::Regex::new(
+                                    r#""(\d+)"\s*:\s*\{\s*"verdict"\s*:\s*"(\w+)"\s*(?:,\s*"reason"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|null))?\s*(?:,\s*"suggestion"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|null))?\s*\}"#
+                                ).unwrap();
+                                let obj_matches: Vec<_> = re_obj.captures_iter(&json_content).collect();
+                                if !obj_matches.is_empty() {
+                                    eprintln!("  [27b judge] 批次 {}-{} 使用正则兜底提取 {} 条结果（对象格式）", start + 1, end, obj_matches.len());
+                                    for cap in obj_matches {
+                                        let index = cap[1].parse::<usize>().unwrap_or(0);
+                                        let verdict = cap[2].to_string();
+                                        let reason = cap.get(3).map(|m| m.as_str().to_string());
+                                        let suggestion = cap.get(4).map(|m| m.as_str().to_string());
+                                        results.push(JudgeResult { index, verdict, reason, suggestion });
+                                    }
+                                } else {
+                                    let preview = json_content.replace('\n', "\\n");
+                                    eprintln!("  [27b judge] 批次 {}-{} JSON 解析失败: {:.500}", start + 1, end, preview);
+                                }
+                            }
                         }
                     }
                 }
@@ -176,6 +212,7 @@ fn strip_code_fence(s: &str) -> String {
 // === SECTION 2 END ===
 
 /// 对整个字幕运行 27b 判断
+#[allow(dead_code)]
 pub async fn judge_full(
     original: &SubtitleFile,
     translated: &SubtitleFile,
@@ -202,6 +239,7 @@ pub async fn judge_full(
 }
 
 /// 汇总判断结果
+#[allow(dead_code)]
 pub fn summarize_judge(results: &[BatchJudgeResult]) -> (usize, usize, usize) {
     let mut pass = 0;
     let mut fail = 0;
