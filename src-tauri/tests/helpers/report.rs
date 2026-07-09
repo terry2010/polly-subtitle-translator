@@ -1,8 +1,6 @@
 // 报告生成：JSON + Markdown
-use super::checks_l1::{CheckResult, CheckStatus};
-use super::fixture::Fixture;
+use super::checks_l1::CheckResult;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// 单个 fixture 的测试结果
 #[derive(Debug, Clone, Serialize, Deserialize)]

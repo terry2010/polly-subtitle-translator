@@ -1,11 +1,12 @@
 // 翻译执行器：调用翻译引擎（9b AI 或传统翻译 API）翻译字幕
-use zimufan_lib::subtitle::{SubtitleFile, SubtitleEntry};
+use zimufan_lib::subtitle::SubtitleFile;
 use zimufan_lib::translate::{
     self, OpenAiProvider, TranslateProviderTrait, TranslateScheduler,
     ModelType, ExtractedName,
 };
 use zimufan_lib::db::Database;
 use zimufan_lib::ipc;
+use zimufan_lib::config;
 use zimufan_lib::get_app_data_dir;
 use std::path::Path;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ pub enum BatchResult {
 }
 
 /// 翻译结果
+#[allow(dead_code)]
 pub struct TranslationOutput {
     pub file: SubtitleFile,
     pub failed_count: usize,
@@ -55,7 +57,7 @@ pub fn create_translate_provider(
     cfg: &super::config::TestConfig,
     glossary: Vec<(String, String)>,
     name_tagging: bool,
-) -> (Arc<dyn TranslateProviderTrait + Send + Sync>, String) {
+) -> (Arc<dyn TranslateProviderTrait + Send + Sync>, String, translate::RateLimitPolicy) {
     let provider_str = cfg.translate_provider.as_str();
 
     // 模式 1：默认 9b AI（LM Studio），直接构造，不需要用户数据库
@@ -74,13 +76,53 @@ pub fn create_translate_provider(
 
         let provider: Arc<dyn TranslateProviderTrait + Send + Sync> = Arc::new(provider);
         let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
-        return (provider, provider_name);
+        return (provider, provider_name, translate::RateLimitPolicy::Concurrency(1));
     }
 
     // 模式 2/3：从用户数据库读取凭据
     let user_db = open_user_database()
         .expect("无法打开用户数据库，请先在软件中配置翻译引擎凭据");
 
+    // 测试环境：手动读取凭据并构造 provider，强制使用环境变量中的模型
+    if provider_str == "openai" && cfg.service_id.is_some() {
+        let sid = cfg.service_id.as_deref().unwrap();
+        let base_url_key = format!("translate_openai_{}_base_url", sid);
+        let base_url = user_db.get_config(&base_url_key)
+            .expect("无法读取 base_url")
+            .expect("base_url 为空");
+
+        let keyring_provider = format!("openai_{}", sid);
+        let secret = config::CredentialStore::load(&user_db, &keyring_provider, "secret", "翻译字幕")
+            .expect("无法读取 API key");
+
+        // 读取 QPS 配置（支持小数，如 0.5 = 每 2 秒 1 个请求）
+        let qps_key = format!("translate_openai_{}_qps", sid);
+        let qps = user_db.get_config(&qps_key)
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(1.0); // 默认 QPS=1.0
+
+        let model_type = ModelType::from_model_id(&cfg.model_9b);
+        let provider = OpenAiProvider::with_client(
+            base_url,
+            cfg.model_9b.clone(),
+            model_type,
+            Some(secret),
+            reqwest::Client::new(),
+        )
+        .with_service_name(format!("OpenAI ({})", sid))
+        .with_glossary(glossary)
+        .with_name_tagging(name_tagging);
+
+        let provider: Arc<dyn TranslateProviderTrait + Send + Sync> = Arc::new(provider);
+        let provider_name = format!("openai-{}-{}", sid, cfg.model_9b);
+        eprintln!("  [翻译] 手动构造 provider: service_id={}, model={}, qps={}", sid, cfg.model_9b, qps);
+        let rate_limit = translate::RateLimitPolicy::Qps(qps);
+        return (provider, provider_name, rate_limit);
+    }
+
+    // 其他情况：使用 resolve_provider
     let resolved = ipc::resolve_provider(
         &user_db,
         provider_str,
@@ -92,8 +134,8 @@ pub fn create_translate_provider(
     )
     .expect("从用户数据库读取翻译引擎配置失败，请先在软件中配置该引擎");
 
-    eprintln!("  [翻译] 从用户数据库加载引擎: provider={}", provider_str);
-    (resolved.instance, resolved.name)
+    eprintln!("  [翻译] 从用户数据库加载引擎: provider={}, model={}", provider_str, cfg.model_9b);
+    (resolved.instance, resolved.name, resolved.rate_limit)
 }
 
 /// 打开用户数据库（与软件运行时使用的是同一个数据库）
@@ -150,15 +192,8 @@ pub async fn extract_names(
     source_lang: &str,
     target_lang: &str,
 ) -> Vec<ExtractedName> {
-    let model_type = ModelType::from_model_id(&cfg.model_9b);
-    let provider = OpenAiProvider::with_client(
-        cfg.api_base.clone(),
-        cfg.model_9b.clone(),
-        model_type,
-        None,
-        reqwest::Client::new(),
-    )
-    .with_service_name("LM Studio".to_string());
+    // 使用 create_translate_provider 获取 provider（支持 GLM 等自定义服务）
+    let (provider, _provider_name, _rate_limit) = create_translate_provider(cfg, Vec::new(), false);
 
     // 分段提取（每段最多 150 条）
     const MAX_LINES_PER_SEGMENT: usize = 150;
@@ -191,6 +226,7 @@ pub async fn extract_names(
 // === SECTION 3 END ===
 
 /// 用 9b 模型翻译字幕
+#[allow(dead_code)]
 pub async fn translate_with_9b(
     file: &SubtitleFile,
     cfg: &super::config::TestConfig,
@@ -212,12 +248,14 @@ pub async fn translate_with_9b(
         .collect();
 
     // 创建 provider（支持 9b AI 和传统翻译引擎）
-    let (provider, provider_name) = create_translate_provider(cfg, glossary, name_precision);
+    let (provider, provider_name, rate_limit) = create_translate_provider(cfg, glossary, name_precision);
     eprintln!("  [翻译] provider_name={}, file_hash={:?}", provider_name, file.file_hash);
 
-    // 创建 scheduler
-    let scheduler = TranslateScheduler::new(db, provider, provider_name)
-        .with_file_hash(file.file_hash.clone());
+    // 创建 scheduler（新增 model 参数）
+    let model = cfg.model_9b.clone();
+    let scheduler = TranslateScheduler::new(db, provider, provider_name, model)
+        .with_file_hash(file.file_hash.clone())
+        .with_concurrency_and_rate_limit(1, rate_limit);
 
     // 执行翻译
     eprintln!("  [翻译] 开始翻译 {} 条字幕...", file.entries.len());
@@ -268,6 +306,7 @@ pub async fn translate_with_9b(
 
 /// 批次翻译+验证：每翻完一批就立即检查该批，输出问题条目
 /// 返回完整的翻译结果和每批的检查报告
+#[allow(dead_code)]
 pub async fn translate_with_9b_batched(
     file: &SubtitleFile,
     cfg: &super::config::TestConfig,
@@ -288,10 +327,12 @@ pub async fn translate_with_9b_batched(
         .map(|n| (n.english.clone(), n.chinese.clone()))
         .collect();
 
-    let (provider, provider_name) = create_translate_provider(cfg, glossary, name_precision);
+    let (provider, provider_name, rate_limit) = create_translate_provider(cfg, glossary, name_precision);
+    let model = cfg.model_9b.clone();
 
-    let scheduler = TranslateScheduler::new(db, provider, provider_name)
-        .with_file_hash(file.file_hash.clone());
+    let scheduler = TranslateScheduler::new(db, provider, provider_name, model)
+        .with_file_hash(file.file_hash.clone())
+        .with_concurrency_and_rate_limit(1, rate_limit);
 
     // 按批次翻译
     const BATCH_SIZE: usize = 30;
@@ -388,6 +429,7 @@ pub async fn translate_with_9b_batched(
 }
 
 /// 从 SubtitleFile 中提取指定范围的条目，构造一个新的 SubtitleFile
+#[allow(dead_code)]
 fn extract_batch_subfile(file: &SubtitleFile, start: usize, end: usize) -> SubtitleFile {
     let mut sub = file.clone();
     sub.entries = file.entries[start..end].to_vec();
@@ -395,6 +437,7 @@ fn extract_batch_subfile(file: &SubtitleFile, start: usize, end: usize) -> Subti
 }
 
 /// 对单个批次运行 L1/L2 检查并输出结果
+#[allow(dead_code)]
 fn verify_batch(orig: &SubtitleFile, trans: &SubtitleFile, target_lang: &str, batch_num: usize) {
     use super::checks_l1;
     use super::checks_l2;
@@ -510,13 +553,17 @@ pub async fn stage_translate_batch(
         .map(|n| (n.english.clone(), n.chinese.clone()))
         .collect();
 
-    let (provider, provider_name) = create_translate_provider(cfg, glossary, state.name_precision);
+    let (provider, provider_name, rate_limit) = create_translate_provider(cfg, glossary, state.name_precision);
     let provider_name_for_l3 = provider_name.clone();
-    let scheduler = TranslateScheduler::new(db, provider, provider_name)
-        .with_file_hash(file.file_hash.clone());
+    let model = cfg.model_9b.clone();
+    let model_for_log = model.clone();
+    
+    let scheduler = TranslateScheduler::new(db, provider, provider_name, model)
+        .with_file_hash(file.file_hash.clone())
+        .with_concurrency_and_rate_limit(1, rate_limit);
 
     let batch_entries = &file.entries[batch_start..batch_end];
-    eprintln!("  [9b翻译] 开始翻译 {} 条...", batch_entries.len());
+    eprintln!("  [翻译] 开始翻译 {} 条（模型: {}）...", batch_entries.len(), model_for_log);
 
     let result = scheduler
         .translate_entries(batch_entries, &state.source_lang, &state.target_lang, 500)
@@ -549,7 +596,7 @@ pub async fn stage_translate_batch(
             if te.failed { " [FAILED]" } else { "" });
     }
 
-    eprintln!("  [9b翻译] 完成: {} 成功, {} 失败, {} 缓存, {} token",
+    eprintln!("  [翻译] 完成: {} 成功, {} 失败, {} 缓存, {} token",
         result.translations.len() - batch_failed, batch_failed, batch_cached, batch_tokens);
 
     // 打印所有失败条目的详情
@@ -574,13 +621,9 @@ pub async fn stage_translate_batch(
 
     // 27b 验证
     eprintln!("  [27b验证] 开始验证批次 {}...", batch_num);
-    let mut translated_file = file.clone();
-    for tr in &translations {
-        if let Some(entry) = translated_file.entries.iter_mut().find(|e| e.index == tr.index) {
-            entry.translated = tr.translated.clone();
-            entry.failed = tr.failed;
-        }
-    }
+    // 构建包含所有已完成批次翻译的 SubtitleFile（不只是当前批次），
+    // 这样 L3 的 batch_bilingual_srt 导出双语 SRT 时，已翻译条目能正确检测为双语
+    let translated_file = state.build_translated_file(file);
 
     let judge_result = super::judge::judge_batch(
         file,
@@ -642,6 +685,7 @@ pub async fn stage_translate_batch(
         &state.source_lang,
         &state.target_lang,
         &provider_name_for_l3,
+        &model_for_log,
         &file.file_hash,
         batch_start,
         batch_end,

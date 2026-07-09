@@ -1,6 +1,6 @@
 // L2 语言正确性：空译文、假翻译、CJK、音效标记、人名一致性、长度
-use super::checks_l1::{CheckResult, CheckStatus};
-use zimufan_lib::subtitle::{SubtitleEntry, SubtitleFile};
+use super::checks_l1::CheckResult;
+use zimufan_lib::subtitle::SubtitleFile;
 
 /// 运行所有 L2 检查
 pub fn run_l2_checks(original: &SubtitleFile, translated: &SubtitleFile, target_lang: &str) -> Vec<CheckResult> {

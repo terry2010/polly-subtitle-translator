@@ -225,8 +225,14 @@ async fn run_state_machine(
             }
 
             // L3.2 全量多次打开关闭验证（3 次）
+            // provider_name 必须与 translate_runner 中 create_translate_provider 一致，
+            // 否则缓存 key 不匹配，恢复时缓存命中 0 条
             let file_hash = subtitle.file_hash.clone();
-            let provider_name = format!("openai-lmstudio-{}", cfg.model_9b);
+            let provider_name = if cfg.service_id.is_some() {
+                format!("openai-{}-{}", cfg.service_id.as_deref().unwrap(), cfg.model_9b)
+            } else {
+                format!("openai-lmstudio-{}", cfg.model_9b)
+            };
             for cr in helpers::checks_l3::check_repeated_open(
                 &subtitle, &translated_file, db,
                 &fixture.source_lang, &fixture.target_lang,
