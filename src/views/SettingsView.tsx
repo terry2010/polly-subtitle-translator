@@ -416,7 +416,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   const [useProxy, setUseProxy] = useState<boolean | null>(null);
   // AI 专属
   const [baseUrl, setBaseUrl] = useState("");
-  const [qps, setQps] = useState(5);
+  const [qps, setQps] = useState(5.0);
   const [model, setModel] = useState("");
   const [modelList, setModelList] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -560,7 +560,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         } else if (currentService.presetBaseUrl) {
           setBaseUrl(currentService.presetBaseUrl);
         }
-        if (savedQps) setQps(parseInt(savedQps) || currentService.presetQps || 5);
+        if (savedQps) setQps(parseFloat(savedQps) || currentService.presetQps || 5);
         if (savedSecret) setSecretKey("••••••••");
         setUseProxy(savedUseProxy === "true" ? true : savedUseProxy === "false" ? false : null);
         if (savedSelected) {
@@ -587,7 +587,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         if (savedAppId) setAppId(savedAppId);
         if (savedRegion) setRegion(savedRegion);
         if (savedSecret) setSecretKey("••••••••");
-        if (savedQps) setQps(parseInt(savedQps) || currentService.presetQps || 5);
+        if (savedQps) setQps(parseFloat(savedQps) || currentService.presetQps || 5);
         setUseProxy(savedUseProxy === "true" ? true : savedUseProxy === "false" ? false : null);
         setLoading(false);
       });
@@ -1084,7 +1084,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             <div>
               <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
               <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDescTraditional", "该服务的请求频率上限。免费版通常为 1-5，付费版可按套餐调高。")}</p>
-              <Input type="number" value={qps} onChange={(e) => setQps(parseInt(e.target.value) || 1)} min={1} disabled={loading} className="w-24" />
+              <Input type="number" step="0.1" value={qps} onChange={(e) => setQps(parseFloat(e.target.value) || 1)} min={0.1} disabled={loading} className="w-24" />
             </div>
             {/* 代理 */}
             <div className="flex items-center justify-between border-t pt-3">
@@ -1263,7 +1263,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           <div>
             <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
             <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDesc", "该服务的并发请求上限。免费版通常较低，付费版可按套餐调高。")}</p>
-            <Input type="number" value={qps} onChange={(e) => setQps(parseInt(e.target.value) || 1)} min={1} disabled={loading} className="w-24" />
+            <Input type="number" step="0.1" value={qps} onChange={(e) => setQps(parseFloat(e.target.value) || 1)} min={0.1} disabled={loading} className="w-24" />
           </div>
           {/* 代理 */}
           <div className="flex items-center justify-between border-t pt-3">
