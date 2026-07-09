@@ -36,13 +36,27 @@ pub(crate) fn resolve_translation_concurrency(
     } else {
         format!("translate_{}_qps", prov.as_str())
     };
-    let user_override = db.get_config(&config_key)
+    let user_override_qps = db.get_config(&config_key)
+        .ok().flatten()
+        .and_then(|v| v.parse::<f64>().ok());
+    let user_override_concurrency = db.get_config(&config_key)
         .ok().flatten()
         .and_then(|v| v.parse::<usize>().ok());
-    let rate_limit = match (default_policy, user_override) {
-        (translate::RateLimitPolicy::Qps(_), Some(q)) => translate::RateLimitPolicy::Qps(q),
-        (translate::RateLimitPolicy::Concurrency(_), Some(c)) => translate::RateLimitPolicy::Concurrency(c),
-        (policy, None) => policy,
+    let rate_limit = match default_policy {
+        translate::RateLimitPolicy::Qps(_) => {
+            if let Some(q) = user_override_qps {
+                translate::RateLimitPolicy::Qps(q)
+            } else {
+                default_policy
+            }
+        }
+        translate::RateLimitPolicy::Concurrency(_) => {
+            if let Some(c) = user_override_concurrency {
+                translate::RateLimitPolicy::Concurrency(c)
+            } else {
+                default_policy
+            }
+        }
     };
 
     let user_concurrency = db.get_config("translate_concurrency")
@@ -333,13 +347,27 @@ pub fn resolve_provider(
     } else {
         format!("translate_{}_qps", prov.as_str())
     };
-    let user_override = db.get_config(&config_key)
+    let user_override_qps = db.get_config(&config_key)
+        .ok().flatten()
+        .and_then(|v| v.parse::<f64>().ok());
+    let user_override_concurrency = db.get_config(&config_key)
         .ok().flatten()
         .and_then(|v| v.parse::<usize>().ok());
-    let rate_limit = match (rate_limit, user_override) {
-        (translate::RateLimitPolicy::Qps(_), Some(q)) => translate::RateLimitPolicy::Qps(q),
-        (translate::RateLimitPolicy::Concurrency(_), Some(c)) => translate::RateLimitPolicy::Concurrency(c),
-        (policy, None) => policy,
+    let rate_limit = match rate_limit {
+        translate::RateLimitPolicy::Qps(_) => {
+            if let Some(q) = user_override_qps {
+                translate::RateLimitPolicy::Qps(q)
+            } else {
+                rate_limit
+            }
+        }
+        translate::RateLimitPolicy::Concurrency(_) => {
+            if let Some(c) = user_override_concurrency {
+                translate::RateLimitPolicy::Concurrency(c)
+            } else {
+                rate_limit
+            }
+        }
     };
 
     Ok(ResolvedProvider {

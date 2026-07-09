@@ -813,7 +813,7 @@ pub fn run() {
             tracing::info!("AI-SubTrans 启动完成，数据目录: {:?}", app_data_dir);
 
             // 窗口初始位置：根据鼠标所在显示器居中计算（先定位不显示）
-            let initial_position: Option<(i32, i32, i32, i32)> = {
+            let _initial_position: Option<(i32, i32, i32, i32)> = {
                 #[cfg(windows)]
                 {
                     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;

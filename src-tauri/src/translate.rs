@@ -221,10 +221,11 @@ impl ProxyConfig {
 }
 
 /// 限流策略
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RateLimitPolicy {
     /// 每秒最多 N 个请求（QPS），请求间强制间隔 1/N 秒
-    Qps(usize),
+    /// 支持小数（如 0.5 = 每 2 秒 1 个请求），用于 GLM 等严格限流的 API
+    Qps(f64),
     /// 最多 N 个并发请求，无间隔要求
     Concurrency(usize),
 }
@@ -241,8 +242,8 @@ impl RateLimitPolicy {
     /// 请求发出后的强制等待时间（Qps 模式下为 1/N 秒，Concurrency 模式下为 0）
     pub fn min_interval(&self) -> std::time::Duration {
         match self {
-            RateLimitPolicy::Qps(qps) if *qps > 0 => {
-                std::time::Duration::from_secs_f64(1.0 / *qps as f64)
+            RateLimitPolicy::Qps(qps) if *qps > 0.0 => {
+                std::time::Duration::from_secs_f64(1.0 / *qps)
             }
             _ => std::time::Duration::ZERO,
         }
@@ -335,17 +336,17 @@ impl TranslateProvider {
     /// 限流策略：按各 API 官方政策
     pub fn rate_limit_policy(&self) -> RateLimitPolicy {
         match self {
-            TranslateProvider::Baidu => RateLimitPolicy::Qps(1),
-            TranslateProvider::Youdao => RateLimitPolicy::Qps(1),
+            TranslateProvider::Baidu => RateLimitPolicy::Qps(1.0),
+            TranslateProvider::Youdao => RateLimitPolicy::Qps(1.0),
             TranslateProvider::OpenAi => RateLimitPolicy::Concurrency(5),
             TranslateProvider::DeepL => RateLimitPolicy::Concurrency(5),
             TranslateProvider::Google => RateLimitPolicy::Concurrency(10),
             TranslateProvider::Bing => RateLimitPolicy::Concurrency(10),
-            TranslateProvider::Caiyun => RateLimitPolicy::Qps(5),
+            TranslateProvider::Caiyun => RateLimitPolicy::Qps(5.0),
             TranslateProvider::Niutrans => RateLimitPolicy::Concurrency(5),
-            TranslateProvider::Tencent => RateLimitPolicy::Qps(5),
-            TranslateProvider::Volcengine => RateLimitPolicy::Qps(5),
-            TranslateProvider::Aliyun => RateLimitPolicy::Qps(50),
+            TranslateProvider::Tencent => RateLimitPolicy::Qps(5.0),
+            TranslateProvider::Volcengine => RateLimitPolicy::Qps(5.0),
+            TranslateProvider::Aliyun => RateLimitPolicy::Qps(50.0),
             TranslateProvider::Amazon => RateLimitPolicy::Concurrency(10),
         }
     }
@@ -353,7 +354,7 @@ impl TranslateProvider {
     /// 各引擎的 QPS 上限（用于显示和兼容旧逻辑）
     pub fn qps_limit(&self) -> usize {
         match self.rate_limit_policy() {
-            RateLimitPolicy::Qps(q) => q,
+            RateLimitPolicy::Qps(q) => q.round() as usize,
             RateLimitPolicy::Concurrency(n) => n,
         }
     }
@@ -3399,7 +3400,9 @@ fn get_model_batch_sizes(model: &str) -> (usize, Vec<usize>) {
     // 按模型名称匹配（优先级最高）
     let model_lower = model.to_lowercase();
     if model_lower.contains("glm-4.7-flash") || model_lower.contains("glm-4-7-flash") {
-        return (30, vec![30, 10, 5, 3, 1]);
+        // GLM 4.7 flash 倾向于把跨条目的句子重新分配，批次越大错位范围越大
+        // 用 10 条一批减少错位影响范围，降级路径 10→5→3→1
+        return (10, vec![10, 5, 3, 1]);
     }
     if model_lower.contains("glm-4.5") || model_lower.contains("glm-4-5") {
         return (100, vec![100, 30, 10, 5, 3, 1]);

@@ -163,6 +163,7 @@ impl TestState {
     }
 
     /// 获取当前待执行的批次索引
+    #[allow(dead_code)]
     pub fn current_batch(&self) -> Option<&BatchState> {
         if self.current_stage == 0 {
             return None; // 还在名词预扫描阶段
@@ -171,6 +172,7 @@ impl TestState {
     }
 
     /// 获取当前待执行的批次索引（可变）
+    #[allow(dead_code)]
     pub fn current_batch_mut(&mut self) -> Option<&mut BatchState> {
         if self.current_stage == 0 {
             return None;

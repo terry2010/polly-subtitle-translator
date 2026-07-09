@@ -657,6 +657,12 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           //   - 含音乐符号的歌词/拟声词（♪ Da-da da da ♪）：无法翻译，保持原样正确
           //   - 非英语原文（拼写字母 G-O-R、祖鲁语歌词等）：保持原样是正确行为
           const isUntranslated = (e: typeof file.entries[0]) => {
+            // 音效标记格式不一致检查（必须在排除规则之前）：
+            // 原文是音效标记但译文不是（或反过来），通常是翻译错误（如 [ Both grunting ] → [ 两人都在用力 }）
+            // 但译文为空时不在此处判定，由后续空译文检查处理
+            if (e.translated?.trim() && looksLikeSoundEffect(e.text) !== looksLikeSoundEffect(e.translated)) {
+              return true;
+            }
             // 排除：纯音乐符号、音效标记、非英语原文 — 这些保持原样不是错误
             if (isMusicOrSymbolOnly(e.text) || looksLikeSoundEffect(e.text) || isNonEnglishSource(e.text)) {
               return false;
@@ -667,8 +673,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             }
             return !e.translated
               || e.translated.trim() === e.text.trim()
-              || (targetLang.startsWith("zh") && !hasCjk(e.translated) && !hasCjk(e.text))
-              || looksLikeSoundEffect(e.text) !== looksLikeSoundEffect(e.translated);
+              || (targetLang.startsWith("zh") && !hasCjk(e.translated) && !hasCjk(e.text));
           };
           const translatedCount = file.entries.filter((e) => e.translated && !e.failed && !isUntranslated(e)).length;
           const cacheCount = file.entries.filter((e) => e.from_cache).length;

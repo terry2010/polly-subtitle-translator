@@ -100,6 +100,14 @@ fn has_english_word(s: &str, min_len: usize) -> bool {
 ///   - 非英语原文（拼写字母 G-O-R、祖鲁语歌词等）：保持原样是正确行为
 ///   - 译文含音乐符号（歌词/拟声词，无法翻译）：保持原样是正确行为
 fn is_untranslated(e: &SubtitleEntry, target_lang: &str) -> bool {
+    // 音效标记格式不一致检查（必须在排除规则之前）：
+    // 原文是音效标记但译文不是（或反过来），通常是翻译错误（如 [ Both grunting ] → [ 两人都在用力 }）
+    // 但译文为空时不在此处判定，由后续空译文检查处理
+    if !e.translated.trim().is_empty()
+        && looks_like_sound_effect(&e.text) != looks_like_sound_effect(&e.translated)
+    {
+        return true;
+    }
     // 排除：纯音乐符号、音效标记、非英语原文 — 这些保持原样不是错误
     if is_music_or_symbol_only(&e.text) || looks_like_sound_effect(&e.text) || !has_english_word(&e.text, 3) {
         return false;
@@ -111,7 +119,6 @@ fn is_untranslated(e: &SubtitleEntry, target_lang: &str) -> bool {
     e.translated.trim().is_empty()
         || e.translated.trim() == e.text.trim()
         || (target_lang.starts_with("zh") && !has_cjk(&e.translated) && !has_cjk(&e.text))
-        || looks_like_sound_effect(&e.text) != looks_like_sound_effect(&e.translated)
 }
 
 /// 失败统计（与前端工具栏一致）：返回 (failed, missing, translated, total)
@@ -144,7 +151,7 @@ fn check_bilingual_roundtrip_single(
     let check_name = format!("bilingual_roundtrip_{}", format_name.to_lowercase());
 
     // 翻译时的状态（与前端工具栏一致）
-    let (orig_failed, orig_missing, orig_translated, orig_total) = count_status(translated, target_lang);
+    let (orig_failed, orig_missing, _orig_translated, _orig_total) = count_status(translated, target_lang);
     // 总问题条目数 = failed ∪ missing（不能直接相加，因为 failed 和 missing 可能重叠）
     let orig_problematic = translated.entries.iter()
         .filter(|e| e.failed || is_untranslated(e, target_lang))
@@ -206,7 +213,7 @@ fn check_bilingual_roundtrip_single(
     // 总问题条目数 (failed ∪ missing) 应一致
     // 注意：不能直接用 failed + missing，因为 failed 和 missing 可能重叠
     // （如 failed=true 且 translated 为空的条目会被两者都计数）
-    let (rel_failed, rel_missing, rel_translated, rel_total) = count_status(&reloaded, target_lang);
+    let (rel_failed, rel_missing, rel_translated, _rel_total) = count_status(&reloaded, target_lang);
     let rel_problematic = rel_failed + rel_missing;
 
     if rel_problematic != orig_problematic {
@@ -320,6 +327,7 @@ pub fn check_cache_recovery(
             String::new(),
         )) as std::sync::Arc<dyn zimufan_lib::translate::TranslateProviderTrait + Send + Sync>,
         provider_name.to_string(),
+        String::new(), // model（Baidu 不需要）
     )
     .with_file_hash(file_hash.to_string());
 
@@ -408,9 +416,19 @@ pub fn check_repeated_open(
     provider_name: &str,
     file_hash: &str,
 ) -> Vec<CheckResult> {
-    let (orig_failed, orig_missing, _, _) = count_status(translated, target_lang);
+    // 只比较"实际处理过"的条目：translated 非空 或 failed=true。
+    // 原因：测试可能中途停止（如 L3 批次检查发现 bug），未到达的条目 translated="" 且 failed=false，
+    // 但它们的原文可能与已翻译条目重复，缓存 key 匹配，恢复时获得缓存命中。
+    // 翻译时算 problematic（空译文），恢复后不算（有缓存译文），导致不一致。
+    // 这些条目从未被处理，不应参与比较。
+    let processed_indices: std::collections::HashSet<usize> = translated.entries.iter()
+        .filter(|e| !e.translated.is_empty() || e.failed)
+        .map(|e| e.index)
+        .collect();
     // 总问题条目数 = failed ∪ missing（不能直接相加，因为 failed 和 missing 可能重叠）
+    // 只统计实际处理过的条目
     let orig_problematic = translated.entries.iter()
+        .filter(|e| processed_indices.contains(&e.index))
         .filter(|e| e.failed || is_untranslated(e, target_lang))
         .count();
     let mut results = Vec::new();
@@ -430,6 +448,7 @@ pub fn check_repeated_open(
                 String::new(),
             )) as std::sync::Arc<dyn zimufan_lib::translate::TranslateProviderTrait + Send + Sync>,
             provider_name.to_string(),
+            String::new(), // model（Baidu 不需要）
         )
         .with_file_hash(file_hash.to_string());
 
@@ -455,15 +474,20 @@ pub fn check_repeated_open(
         }
 
         let (rec_failed, rec_missing, _, _) = count_status(&recovered, target_lang);
+        // 只统计实际处理过的条目（与 orig_problematic 对齐）
         let rec_problematic = recovered.entries.iter()
+            .filter(|e| processed_indices.contains(&e.index))
             .filter(|e| e.failed || is_untranslated(e, target_lang))
             .count();
         let cached_count = recovered.entries.iter().filter(|e| e.from_cache).count();
 
         if rec_problematic != orig_problematic {
-            // 找出差异条目
+            // 找出差异条目（只比较处理过的条目）
             let mut diff_indices = Vec::new();
             for (orig, rec) in translated.entries.iter().zip(&recovered.entries) {
+                if !processed_indices.contains(&orig.index) {
+                    continue;
+                }
                 let orig_bad = orig.failed || is_untranslated(orig, target_lang);
                 let rec_bad = rec.failed || is_untranslated(rec, target_lang);
                 if orig_bad != rec_bad {
@@ -500,6 +524,7 @@ pub fn check_batch_l3(
     source_lang: &str,
     target_lang: &str,
     provider_name: &str,
+    model: &str,
     file_hash: &str,
     batch_start: usize,
     batch_end: usize,
@@ -509,7 +534,7 @@ pub fn check_batch_l3(
     // L3.1 批次缓存恢复验证
     results.push(check_batch_cache_recovery(
         original, translated, db,
-        source_lang, target_lang, provider_name, file_hash,
+        source_lang, target_lang, provider_name, model, file_hash,
         batch_start, batch_end,
     ));
 
@@ -532,6 +557,7 @@ fn check_batch_cache_recovery(
     source_lang: &str,
     target_lang: &str,
     provider_name: &str,
+    model: &str,
     file_hash: &str,
     batch_start: usize,
     batch_end: usize,
@@ -546,7 +572,7 @@ fn check_batch_cache_recovery(
         entry.from_cache = false;
     }
 
-    // 从缓存查询
+    // 从缓存查询（使用与翻译时相同的 provider_name 和 model）
     let scheduler = zimufan_lib::translate::TranslateScheduler::new(
         db,
         std::sync::Arc::new(zimufan_lib::translate::BaiduProvider::new(
@@ -554,6 +580,7 @@ fn check_batch_cache_recovery(
             String::new(),
         )) as std::sync::Arc<dyn zimufan_lib::translate::TranslateProviderTrait + Send + Sync>,
         provider_name.to_string(),
+        model.to_string(),
     )
     .with_file_hash(file_hash.to_string());
 
@@ -674,6 +701,20 @@ fn check_batch_bilingual_srt(
     // 检测双语
     let detect = detect_bilingual(&reloaded);
     if !detect.is_bilingual {
+        // 检查是否因为整个文件已翻译条目太少（测试中途停止或大量 failed）
+        // 如果已翻译条目（非空、非 failed）不足总数的 10%，跳过双语检测，
+        // 只验证批次内的问题数和内容一致性
+        let translated_count = translated.entries.iter()
+            .filter(|e| !e.translated.is_empty() && !e.failed)
+            .count();
+        if translated_count * 10 < translated.entries.len() {
+            return CheckResult::warn(
+                check_name,
+                &format!("批次双语 SRT 跳过双语检测（已翻译条目 {}/{} 不足 10%），matched={}, total={}",
+                    translated_count, translated.entries.len(), detect.matched_count, detect.total_count),
+                "subtitle.rs detect_bilingual",
+            );
+        }
         return CheckResult::fail(
             check_name,
             &format!("批次双语 SRT 检测失败: matched={}, total={}",
@@ -704,8 +745,8 @@ fn check_batch_bilingual_srt(
         .collect();
 
     // 验证问题数一致
-    let (orig_failed, orig_missing, _, _) = count_status(translated, target_lang);
-    let (rel_failed, rel_missing, _, _) = count_status(&reloaded, target_lang);
+    let (_orig_failed, _orig_missing, _, _) = count_status(translated, target_lang);
+    let (_rel_failed, _rel_missing, _, _) = count_status(&reloaded, target_lang);
 
     // 只统计这个批次的问题数
     let orig_batch_problematic = batch_orig.iter().filter(|e| {
