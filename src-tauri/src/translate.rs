@@ -55,6 +55,28 @@ fn strip_ass_tags(s: &str) -> String {
     result
 }
 
+/// 去掉所有格式标签：ASS 覆盖标签 {...} 和 HTML/占位符标签 <...>
+/// 用于比较译文与原文是否相同时去除标签干扰
+fn strip_format_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_brace = false;
+    let mut in_html = false;
+    for c in s.chars() {
+        if c == '{' {
+            in_brace = true;
+        } else if c == '}' {
+            in_brace = false;
+        } else if c == '<' {
+            in_html = true;
+        } else if c == '>' {
+            in_html = false;
+        } else if !in_brace && !in_html {
+            out.push(c);
+        }
+    }
+    out
+}
+
 /// 判断是否为纯音乐符号/特殊符号（如 ♪♪、♬♬ 等，无文字内容）
 pub(crate) fn is_music_or_symbol_only(s: &str) -> bool {
     let s = s.trim();
@@ -89,6 +111,115 @@ pub(crate) fn has_english_word(s: &str, min_len: usize) -> bool {
         }
     }
     max_run >= min_len
+}
+
+/// 统计字符串中的英文单词数（≥min_len 字符的连续字母序列）
+/// 用于检测部分翻译：译文中残留的英文单词
+#[allow(dead_code)]
+pub(crate) fn count_english_words(s: &str, min_len: usize) -> usize {
+    let mut count = 0usize;
+    let mut run = 0usize;
+    for c in s.chars() {
+        if c.is_ascii_alphabetic() || c == '\'' || c == '-' {
+            // 字母、撇号、连字符都算单词的一部分（如 don't, w-we）
+            if c.is_ascii_alphabetic() {
+                run += 1;
+            }
+        } else {
+            if run >= min_len {
+                count += 1;
+            }
+            run = 0;
+        }
+    }
+    if run >= min_len {
+        count += 1;
+    }
+    count
+}
+
+/// 提取字符串中的英文 token（≥min_len 字母字符的连续序列，含撇号和连字符）
+/// 返回 token 字符串列表，用于细粒度分析残留英文
+fn extract_english_tokens(s: &str, min_len: usize) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut letter_count = 0usize;
+    for c in s.chars() {
+        if c.is_ascii_alphabetic() || c == '\'' || c == '-' {
+            current.push(c);
+            if c.is_ascii_alphabetic() {
+                letter_count += 1;
+            }
+        } else {
+            if letter_count >= min_len {
+                tokens.push(current.clone());
+            }
+            current.clear();
+            letter_count = 0;
+        }
+    }
+    if letter_count >= min_len {
+        tokens.push(current);
+    }
+    tokens
+}
+
+/// 去掉 <name=...>...</name> 标签，保留标签内的中文翻译
+fn strip_name_tags_inline(s: &str) -> String {
+    // 去掉 <name=EnglishName> 和 </name> 标签，保留中间的中文
+    let re = regex::Regex::new(r"</?name=[^>]*>").unwrap();
+    re.replace_all(s, "").to_string()
+}
+
+/// 检测部分翻译：译文含 CJK 但同时残留英文单词
+/// Qwen3-8B 常见模式：翻译后半部分但保留前半部分英文原文
+/// 检测策略：
+/// 1. ≥2 个英文 token → 部分翻译
+/// 2. 1 个英文 token 时：
+///    - 含连字符（结巴模式如 Y-Y-You, a-and）→ 部分翻译
+///    - 全小写（普通词汇如 guys, anymore）→ 部分翻译
+///    - 全大写且 ≤5 字符（缩写如 MPS, MUP, CEO）→ 跳过
+///    - 首字母大写（可能是专有名词如 Snowball, Skyzone）→ 跳过
+///    - 全大写且 >5 字符（可能是感叹如 WAAAAAAAAAAAR）→ 跳过
+pub(crate) fn is_partial_translation(orig: &str, trans: &str) -> bool {
+    // 原文必须是英文内容
+    if !has_english_word(orig, 3) {
+        return false;
+    }
+    // 译文必须含 CJK（说明模型确实翻译了一部分）
+    if !has_cjk(trans) {
+        return false;
+    }
+    // 去掉 name 标签（保留中文）、ASS 标签、占位符标签
+    let cleaned = strip_name_tags_inline(trans);
+    let cleaned = strip_format_tags(&cleaned);
+    // 去掉音效标记 [...] 中的内容
+    let cleaned = regex::Regex::new(r"\[[^\]]*\]")
+        .unwrap()
+        .replace_all(&cleaned, "")
+        .to_string();
+    // 提取残留英文 token（≥3 字母字符）
+    let tokens = extract_english_tokens(&cleaned, 3);
+    if tokens.is_empty() {
+        return false;
+    }
+    // ≥2 个英文 token → 部分翻译
+    if tokens.len() >= 2 {
+        return true;
+    }
+    // 1 个英文 token：根据特征判断
+    let token = &tokens[0];
+    // 含连字符 → 结巴模式，部分翻译
+    if token.contains('-') {
+        return true;
+    }
+    // 全小写 → 普通词汇未翻译
+    if token.chars().filter(|c| c.is_ascii_alphabetic()).all(|c| c.is_ascii_lowercase()) {
+        return true;
+    }
+    // 全大写 → 缩写或感叹，跳过
+    // 首字母大写 → 可能是专有名词，跳过
+    false
 }
 
 /// 检测多行原文中非音效行是否在译文中丢失
@@ -1902,11 +2033,38 @@ impl OpenAiProvider {
     }
 
     /// 构建 system prompt（优先远程模板，回退内置）
+    /// 如果设置了 glossary，将译名表注入到 system prompt 末尾，
+    /// 保证跨批次人名翻译一致。
+    /// 如果启用了 name_tagging，要求模型用 <name=En>Zh</name> 标记人名。
     fn build_system_prompt(&self, source_lang: &str, target_lang: &str) -> String {
         let src = lang_full_name(source_lang);
         let tgt = lang_full_name(target_lang);
         let view = PromptTemplateRegistry::get_template(&self.model_type);
-        view.render_system(src, tgt)
+        let mut prompt = view.render_system(src, tgt);
+
+        // 注入译名表
+        if !self.glossary.is_empty() {
+            let glossary_text = self.glossary
+                .iter()
+                .map(|(en, zh)| format!("{} → {}", en, zh))
+                .collect::<Vec<_>>()
+                .join("\n");
+            prompt.push_str(&format!(
+                "\n\nGlossary (use these translations consistently for proper nouns):\n{}",
+                glossary_text
+            ));
+        }
+
+        // 注入人名标记指令
+        if self.name_tagging {
+            prompt.push_str(
+                "\n\nWhen translating a proper noun (person name) that appears in the Glossary, \
+                 wrap the translated name in tags like <name=EnglishName>ChineseName</name>. \
+                 Example: <name=Reese>里斯</name>"
+            );
+        }
+
+        prompt
     }
 
     /// 构建 user prompt（编号列表格式）
@@ -2112,20 +2270,30 @@ impl OpenAiProvider {
             "temperature": 0.3,
             "stream": true,
         });
-        // Qwen3 关闭 thinking 模式，避免 reasoning 内容干扰 JSON 解析并节省时间
-        // 但 "nothink" 版本本身已禁用 thinking，不支持 chat_template_kwargs 参数，
-        // 强行添加会导致 LM Studio 流式响应返回空内容。
-        if self.model_type == ModelType::Qwen3 && !self.model.to_lowercase().contains("nothink") {
-            request_body["chat_template_kwargs"] = serde_json::json!({
-                "enable_thinking": false
-            });
-        }
         // 智谱 GLM 关闭 thinking 模式，使用正确的参数格式
         let is_zhipu = self.service_name.contains("智谱") || self.service_name.contains("GLM") || self.service_name.contains("zhipu");
         if is_zhipu {
             request_body["thinking"] = serde_json::json!({
                 "type": "disabled"
             });
+        }
+        // 统一关闭 thinking 模式：Qwen3 / DeepSeek / Generic 均禁用推理过程
+        // 推理模型（DeepSeek-V4、Qwen3 等）会先输出大段思考过程再输出答案，
+        // 导致 stop sequences 提前触发、JSON 解析失败、响应变慢。
+        // 例外：Qwen3 "nothink" 版本本身已禁用 thinking，不支持该参数，
+        // 强行添加会导致 LM Studio 流式响应返回空内容。
+        // 云端 API（SiliconFlow 等）使用顶层 enable_thinking 参数，
+        // 本地部署（LM Studio / vLLM）使用 chat_template_kwargs.enable_thinking。
+        let skip_thinking_disable = is_zhipu
+            || (self.model_type == ModelType::Qwen3 && self.model.to_lowercase().contains("nothink"));
+        if !skip_thinking_disable {
+            if self.is_local_url() {
+                request_body["chat_template_kwargs"] = serde_json::json!({
+                    "enable_thinking": false
+                });
+            } else {
+                request_body["enable_thinking"] = serde_json::json!(false);
+            }
         }
         // 智谱 GLM 响应较慢，使用更长的超时
         let timeout_secs = if self.is_local_url() { 1800 } else if is_zhipu { 180 } else { 120 };
@@ -2216,25 +2384,40 @@ impl OpenAiProvider {
             let chunk_result = tokio::time::timeout(
                 std::time::Duration::from_secs(chunk_timeout_secs),
                 resp.chunk(),
-            ).await.map_err(|_| {
-                crate::log_api_debug(
-                    &self.service_name, &self.model, "auto", "auto",
-                    &request_body.to_string(),
-                    &format!("[chunk timeout after {} chars, {}s no data]", full_content.len(), chunk_timeout_secs),
-                    200,
-                );
-                AppError::TranslateNetworkError {
-                    provider: self.service_name.clone(),
-                    detail: format!("stream chunk timeout: {}s no data", chunk_timeout_secs),
+            ).await;
+
+            // 流中断时保留已收到的部分内容（而非直接返回错误）：
+            // Qwen3-8B 等小模型的流式响应经常中途断开（chunk error / timeout），
+            // 但此时可能已收到 4/5 条正确翻译。丢弃它们会导致整批重试，浪费大量 API 调用。
+            // 改为 break 跳出循环，让后续 parse_numbered_response 用正则提取已收到的部分结果。
+            let chunk = match chunk_result {
+                Ok(Ok(Some(c))) => c,       // 正常收到 chunk，继续处理
+                Ok(Ok(None)) => break,      // 流正常结束
+                Ok(Err(e)) => {
+                    // chunk 解码错误（如 "error decoding response body"）
+                    tracing::warn!(
+                        "流中断（chunk error）：已收到 {} 字符，尝试解析部分结果。错误: {}",
+                        full_content.len(), e
+                    );
+                    if let Some(ref log_file) = stream_log_file {
+                        crate::log_stream_to_file(log_file, &format!(
+                            "\n[stream interrupted: {}]\n", e
+                        ));
+                    }
+                    break; // 不返回错误，继续解析 full_content
                 }
-            })?;
-
-            let chunk = chunk_result.map_err(|e| AppError::TranslateNetworkError {
-                provider: self.service_name.clone(),
-                detail: format!("stream chunk error: {}", e),
-            })?;
-
-            let Some(chunk) = chunk else { break; };
+                Err(_) => {
+                    // chunk 超时（无数据超过 chunk_timeout_secs）
+                    tracing::warn!(
+                        "流中断（chunk timeout）：已收到 {} 字符，尝试解析部分结果",
+                        full_content.len()
+                    );
+                    if let Some(ref log_file) = stream_log_file {
+                        crate::log_stream_to_file(log_file, "\n[stream timeout]\n");
+                    }
+                    break; // 不返回错误，继续解析 full_content
+                }
+            };
 
             buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -2463,16 +2646,11 @@ impl TranslateProviderTrait for OpenAiProvider {
         // 已知支持：OpenAI、DeepSeek、通义千问
         // 已知不支持/不确定：LM Studio、Ollama、其他本地推理引擎
         // 对云端 API 加 response_format，对本地 URL 不加（避免 400 错误）
+        // 注意：人名提取需要返回 JSON 数组 [{...}, {...}]，而 json_object 模式
+        // 强制返回单个 JSON 对象 {}，会导致模型只输出 1 个人名。
+        // 因此人名提取不使用 response_format，依赖 prompt 约束输出格式。
         if !self.is_local_url() {
-            request_body["response_format"] = serde_json::json!({ "type": "json_object" });
-        }
-        // Qwen3 关闭 thinking 模式，避免 reasoning 内容干扰 JSON 解析并节省时间
-        // 但 "nothink" 版本本身已禁用 thinking，不支持 chat_template_kwargs 参数，
-        // 强行添加会导致 LM Studio 流式响应返回空内容。
-        if self.model_type == ModelType::Qwen3 && !self.model.to_lowercase().contains("nothink") {
-            request_body["chat_template_kwargs"] = serde_json::json!({
-                "enable_thinking": false
-            });
+            // 不加 response_format，让模型自由输出 JSON 数组
         }
         // 智谱 GLM 关闭 thinking 模式，使用正确的参数格式
         let is_zhipu = self.service_name.contains("智谱") || self.service_name.contains("GLM") || self.service_name.contains("zhipu");
@@ -2480,6 +2658,20 @@ impl TranslateProviderTrait for OpenAiProvider {
             request_body["thinking"] = serde_json::json!({
                 "type": "disabled"
             });
+        }
+        // 统一关闭 thinking 模式：Qwen3 / DeepSeek / Generic 均禁用推理过程
+        // 例外：Qwen3 "nothink" 版本本身已禁用，强行添加会导致空响应。
+        // 智谱 GLM 用独立的 thinking.type 参数，不走 enable_thinking。
+        let skip_thinking_disable = is_zhipu
+            || (self.model_type == ModelType::Qwen3 && self.model.to_lowercase().contains("nothink"));
+        if !skip_thinking_disable {
+            if self.is_local_url() {
+                request_body["chat_template_kwargs"] = serde_json::json!({
+                    "enable_thinking": false
+                });
+            } else {
+                request_body["enable_thinking"] = serde_json::json!(false);
+            }
         }
         // 智谱 GLM 响应较慢，使用更长的超时
         let timeout_secs = if self.is_local_url() { 1800 } else if is_zhipu { 180 } else { 120 };
@@ -3028,12 +3220,15 @@ impl<'a> TranslateScheduler<'a> {
                     ratio > 5.0 && trans_len > 10
                 };
                 // failed 判定：与批次模式一致，排除非英语/音乐/音效内容
+                let partial_trans = !is_non_english && !is_music_or_sfx
+                    && is_partial_translation(&entry.text, &restored);
                 let failed = any_failed
                     || combined.is_empty()
                     || (!is_non_english && !is_music_or_sfx && same_as_orig)
                     || (no_cjk && !is_non_english && !is_music_or_sfx && !trans_has_music)
                     || sound_mismatch
-                    || length_ratio_abnormal;
+                    || length_ratio_abnormal
+                    || partial_trans;
                 if !restored.is_empty() && !failed {
                     let cache_key = translate_cache_key(
                         &entry.text,
@@ -3129,6 +3324,7 @@ impl<'a> TranslateScheduler<'a> {
                 let semaphore = semaphore.clone();
                 let stream_log_slots = stream_log_slots.clone();
                 let slot_counter = slot_counter.clone();
+                let rate_limit = self.rate_limit;
 
                 join_set.spawn(async move {
                     // 在 task 内部获取信号量，不阻塞 spawn 循环
@@ -3137,7 +3333,14 @@ impl<'a> TranslateScheduler<'a> {
                     if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
                         return (batch_idx, vec![]);
                     }
-                    tracing::info!("翻译批次 {}/{}，本批 {} 条，启用降级重试", batch_idx + 1, total_batches, texts.len());
+                    // QPS 模式：获取信号量后，发请求前强制等待 min_interval
+                    // 信号量只保证不并发，但不保证请求间隔；降级重试会发多个请求，
+                    // 没有 sleep 的话 30→10→5→3→1 全部降级会产生 ~200 个无间隔请求
+                    let min_interval = rate_limit.min_interval();
+                    if !min_interval.is_zero() {
+                        tokio::time::sleep(min_interval).await;
+                    }
+                    tracing::info!("翻译批次 {}/{}，本批 {} 条", batch_idx + 1, total_batches, texts.len());
 
                     // 分配并发槽位的日志文件
                     let slot_idx = (slot_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % stream_log_slots.len() as u64) as usize;
@@ -3152,6 +3355,7 @@ impl<'a> TranslateScheduler<'a> {
                             &model,
                             &cancel_counter,
                             my_gen,
+                            rate_limit,
                         ).await
                     }).await;
                     (batch_idx, result)
@@ -3407,10 +3611,17 @@ fn get_model_batch_sizes(model: &str) -> (usize, Vec<usize>) {
     if model_lower.contains("glm-4.5") || model_lower.contains("glm-4-5") {
         return (100, vec![100, 30, 10, 5, 3, 1]);
     }
-    
+
     // 按 API 来源匹配（智谱 GLM 官方 API）
     if model_lower.starts_with("glm-") {
         return (150, vec![150, 30, 10, 5, 3, 1]);
+    }
+
+    // Qwen3 小模型（8B/4B/7B 等）：参数量小，JSON 输出能力有限
+    // 实测 10 条批次失败率 43%，5 条批次成功率 76%
+    // 直接从 5 条开始，降级路径 5→3→1，减少无效的 10 条尝试
+    if model_lower.contains("qwen3") && (model_lower.contains("8b") || model_lower.contains("4b") || model_lower.contains("7b")) {
+        return (5, vec![5, 3, 1]);
     }
     
     // 默认配置
@@ -3429,8 +3640,10 @@ async fn translate_batch_with_fallback(
     model: &str,
     cancel_counter: &std::sync::Arc<std::sync::atomic::AtomicU64>,
     my_gen: u64,
+    rate_limit: RateLimitPolicy,
 ) -> Vec<String> {
     let (_, batch_sizes) = get_model_batch_sizes(model);
+    let min_interval = rate_limit.min_interval();
 
     // 结果数组，初始全空；pending 记录尚未翻译成功的索引
     let mut results: Vec<String> = vec![String::new(); texts.len()];
@@ -3449,6 +3662,11 @@ async fn translate_batch_with_fallback(
         for chunk_indices in pending.chunks(batch_size) {
             if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
                 break;
+            }
+            // QPS 限流：降级重试的每个子批次请求前强制等待
+            // 首批的第一个子批次已在调用方（translate_entries_full）sleep 过，跳过
+            if !min_interval.is_zero() && !(batch_size == batch_sizes[0] && chunk_indices[0] == 0) {
+                tokio::time::sleep(min_interval).await;
             }
             let chunk_texts: Vec<String> =
                 chunk_indices.iter().map(|&i| texts[i].clone()).collect();
@@ -3480,6 +3698,48 @@ async fn translate_batch_with_fallback(
                         let orig_text = &texts[idx];
                         let orig_len = orig_text.chars().count().max(1);
                         let trans_len = t.chars().count();
+                        // 模型返回原文检测：译文与原文相同（去掉标签后）时，
+                        // 模型可能直接原样返回了输入而没有翻译。
+                        // 例外：音效标记/音乐符号/非英语内容保持原样是正确行为。
+                        // 检测到时标记为待重试，进入更小批次降级。
+                        // batch_size==1 时跳过——已无更小批次可降级，接受结果即可。
+                        {
+                            let is_sound = looks_like_sound_effect(orig_text);
+                            let is_music = is_music_or_symbol_only(orig_text);
+                            let is_non_english = !has_english_word(orig_text, 3);
+                            if !skip_shift_check && !is_sound && !is_music && !is_non_english {
+                                // 去掉格式标签后比较
+                                let orig_clean = strip_format_tags(orig_text).trim().to_string();
+                                let trans_clean = strip_format_tags(t).trim().to_string();
+                                if orig_clean == trans_clean && !orig_clean.is_empty() {
+                                    tracing::warn!(
+                                        "批次未翻译检测：idx={} 译文与原文相同，标记为待重试",
+                                        idx
+                                    );
+                                    shift_detected = true;
+                                    continue; // 不填入 results，进入 still_pending
+                                }
+                            }
+                        }
+                        // 部分翻译检测：译文含 CJK 但同时残留多个英文单词
+                        // Qwen3-8B 常见模式：翻译后半部分但保留前半部分英文原文
+                        // 例外：音效标记/音乐符号/非英语内容不检测
+                        // batch_size==1 时跳过——已无更小批次可降级，
+                        // 部分翻译总比回退到原文好。
+                        {
+                            let is_sound = looks_like_sound_effect(orig_text);
+                            let is_music = is_music_or_symbol_only(orig_text);
+                            let is_non_english = !has_english_word(orig_text, 3);
+                            if !skip_shift_check && !is_sound && !is_music && !is_non_english
+                                && is_partial_translation(orig_text, t) {
+                                tracing::warn!(
+                                    "批次部分翻译检测：idx={} 译文残留多个英文单词，标记为待重试",
+                                    idx
+                                );
+                                shift_detected = true;
+                                continue; // 不填入 results，进入 still_pending
+                            }
+                        }
                         // 跳过音效标记和音乐符号（长度比值无意义）
                         let is_sound = looks_like_sound_effect(orig_text);
                         let is_music = is_music_or_symbol_only(orig_text);
@@ -5595,11 +5855,9 @@ fn build_name_extraction_system_prompt(source_lang: &str, target_lang: &str, ser
              品牌名（全大写或包含数字）格式：zh = \"EnglishName（中文翻译）\"，请将\"中文翻译\"替换为实际的中文翻译。\n\n\
              示例：\n\
              [\n\
-               {{\"en\": \"Jeremy\", \"zh\": \"杰里米\"}},\n\
-               {{\"en\": \"Endgame\", \"zh\": \"终结者\"}},\n\
-               {{\"en\": \"Skylark\", \"zh\": \"云雀\"}},\n\
-               {{\"en\": \"GS4\", \"zh\": \"GS4（农业系统4）\"}},\n\
-               {{\"en\": \"Countryfile\", \"zh\": \"乡村档案\"}}\n\
+               {{\"en\": \"Zyx\", \"zh\": \"齐克斯\"}},\n\
+               {{\"en\": \"Q7X\", \"zh\": \"Q7X（量子7型）\"}},\n\
+               {{\"en\": \"Ploria\", \"zh\": \"普洛里亚\"}}\n\
              ]\n\n\
              只输出 JSON 数组，不要输出其他文字。",
             src = src, tgt = tgt
@@ -5609,19 +5867,19 @@ fn build_name_extraction_system_prompt(source_lang: &str, target_lang: &str, ser
     // 默认 prompt（英文）
     format!(
         "Extract proper nouns from {src} subtitles and translate each to {tgt}.\n\
-         ONLY extract: person names, place/farm/field names, brand/product names, movie/TV/song/band titles, named animals, bird species.\n\
+         ONLY extract: person names, place/farm/field names, brand/product names, movie/TV/song/band/game titles, organization names, named animals, bird species.\n\
          Do NOT extract: crops, generic animals, colors, months, seasons, units, weather, numbers, dates, adjectives, verbs, common nouns, farm terms.\n\
+         Do NOT extract: pronouns (I, you, he, she, it, we, they, me, my, our), prepositions (in, on, at, to, for, with, up), interjections (oh, ah, wow, hey), onomatopoeia (hmm, ugh, aah), common verbs (run, let, go, get, make), common nouns (door, room, store, engine, metal, computer, device, emergency, portal, silo, vodka, modem, fishing, bones, blood, yard, shutoff, lockdown, implants, potato distillery, hog-men, hogs, catfish, multiverse, homeworld, password man, rig, reel, fellas, dad, mom, grandpa, god, captain, level, switch, vehicle, powering, dug, crackles, roars, howdy, salud, ding, owww, ooh, oh-ho-ho, aaaaah, aaaah, hootenanny, white coat, iron giant as common noun).\n\
+         Do NOT extract stuttering patterns (M-o-o-o-ort-y, Y-o-o-ours, F-u-u-u-uck) — extract the base name instead (Morty, Yours, Fuck is not a proper noun).\n\
          If unsure, do NOT include it.\n\
          You MUST translate every name to {tgt}. Never output English as the translation.\n\n\
          Output a JSON array. Each element is {{\"en\": \"EnglishName\", \"zh\": \"{tgt}Translation\"}}.\n\
          For brand names (all-caps or containing numbers), zh = \"EnglishName（中文翻译）\" - replace \"中文翻译\" with actual Chinese translation.\n\n\
          Example:\n\
          [\n\
-           {{\"en\": \"Jeremy\", \"zh\": \"杰里米\"}},\n\
-           {{\"en\": \"Endgame\", \"zh\": \"终结者\"}},\n\
-           {{\"en\": \"Skylark\", \"zh\": \"云雀\"}},\n\
-           {{\"en\": \"GS4\", \"zh\": \"GS4（农业系统4）\"}},\n\
-           {{\"en\": \"Countryfile\", \"zh\": \"乡村档案\"}}\n\
+           {{\"en\": \"Zyx\", \"zh\": \"齐克斯\"}},\n\
+           {{\"en\": \"Q7X\", \"zh\": \"Q7X（量子7型）\"}},\n\
+           {{\"en\": \"Ploria\", \"zh\": \"普洛里亚\"}}\n\
          ]\n\n\
          Output ONLY the JSON array. No text before or after. No explanations.",
         src = src, tgt = tgt
@@ -6140,6 +6398,184 @@ fn merge_extracted_names(segment_results: &[SegmentNameResult]) -> Vec<Extracted
     merged
 }
 
+/// 过滤掉模型误提取的普通词汇
+/// 移除：代词、介词、感叹词、口吃模式、常见动词/名词等非专有名词
+fn filter_common_words_from_glossary(names: Vec<ExtractedName>) -> Vec<ExtractedName> {
+    // 常见英文普通词汇黑名单（小写匹配）
+    // 这些是模型容易误提取的词，不是专有名词
+    const COMMON_WORDS: &[&str] = &[
+        // 代词
+        "i", "you", "he", "she", "it", "we", "they", "me", "my", "your", "his", "her", "our", "their",
+        // 介词/连词
+        "in", "on", "at", "to", "for", "with", "up", "down", "out", "off", "over", "under", "from", "into",
+        "and", "or", "but", "so", "if", "than", "then",
+        // 感叹词/拟声词
+        "oh", "ah", "wow", "hey", "hmm", "ugh", "aah", "ooh", "ow", "oww", "owww", "aah", "aaah", "aaaah", "aaaaah",
+        "unh", "unf", "hunh", "uhh", "hnn", "mmm", "mm",
+        "haaaa", "hahaha", "glug", "chuckles", "sniff conference",
+        // 脏话/粗口
+        "asshole", "fucking", "holy shit", "piece-of-shit", "damn", "shit",
+        // 常见动词
+        "run", "let", "go", "get", "make", "do", "did", "done", "come", "take", "give", "say", "see", "know",
+        "dug", "fishing", "powering", "crackles", "roars", "wade", "squish", "stitch",
+        // 常见名词
+        "door", "room", "store", "engine", "metal", "computer", "device", "emergency", "portal", "silo",
+        "vodka", "modem", "bones", "blood", "yard", "shutoff", "lockdown", "implants", "potato", "distillery",
+        "hog-men", "hogs", "hog", "catfish", "multiverse", "homeworld", "password", "man", "rig", "reel",
+        "fellas", "dad", "mom", "grandpa", "god", "captain", "level", "switch", "vehicle", "ding",
+        "hootenanny", "white", "coat", "iron", "giant", "skyzone", "store", "metal", "metal",
+        "computer", "science", "electricity", "fishing", "wade", "store", "room",
+        "carpet", "drugs", "government", "worry", "worm", "wolves", "humans",
+        "emperor", "general", "commander", "leader", "grandfather", "honey", "sweetie",
+        "communion", "sub-hyena", "subway", "monorail", "martinis", "mech-suit",
+        "eugenics", "infinite", "super", "frankly", "racist", "bigot",
+        "client dinner", "dog commander", "dog spokesperson", "guest house",
+        "mup facility", "mup video", "mup-a-cino", "mups", "smooth jazz",
+        "surprise improv", "endgame", "countryfile",
+        // GLM-4-9B 误提取的词
+        "access", "ahh", "all", "awesome", "aye-aye, captain!", "badass",
+        "bottles", "burps", "cellphone", "champ", "computer science", "dig",
+        "emergency shutoff", "gulp", "gunfire", "hardware store", "hatch",
+        "house", "lava", "leg", "level 17", "liberation", "muffled screaming",
+        "muffled screaming continues", "neighbor", "ocean", "pipes",
+        "portal thing", "potato distillery", "raccoon", "resistance",
+        "robots", "salud", "sighs", "smiths", "threat nullified", "tools",
+        "true", "vodka hogs", "warranty", "what", "white coat",
+        "jesus fucking christ", "it guy", "oppressor", "sanchez",
+        "huge clouds metallurgy", "iron giant", "skylark", "rex",
+        "jeremy", "georgie boy", "hog planet", "hog resistance",
+        // 口吃模式（含连字符重复字母）
+        // 这些会被单独检测
+    ];
+
+    names
+        .into_iter()
+        .filter(|name| {
+            let en_lower = name.english.to_lowercase();
+            let en_lower = en_lower.trim();
+
+            // 1. 黑名单匹配
+            if COMMON_WORDS.contains(&en_lower) {
+                tracing::debug!("人名过滤: 移除普通词汇 \"{}\"", name.english);
+                return false;
+            }
+
+            // 2. 口吃模式检测：含连字符且重复字母（如 M-o-o-o-ort-y, Y-o-o-ours, F-u-u-u-uck）
+            if en_lower.contains('-') {
+                // 检查是否有重复的字母段（如 o-o-o, u-u-u）
+                let parts: Vec<&str> = en_lower.split('-').collect();
+                if parts.len() >= 3 {
+                    // 统计单字符段的出现次数
+                    let single_char_count = parts.iter().filter(|p| p.len() == 1).count();
+                    if single_char_count >= 2 {
+                        tracing::debug!("人名过滤: 移除口吃模式 \"{}\"", name.english);
+                        return false;
+                    }
+                }
+            }
+
+            // 3. 过短词（≤2字符且非已知缩写）
+            if en_lower.len() <= 2 && !en_lower.chars().all(|c| c.is_ascii_uppercase()) {
+                tracing::debug!("人名过滤: 移除过短词 \"{}\"", name.english);
+                return false;
+            }
+
+            // 4. 译文和原文完全相同（模型没翻译）
+            if name.chinese.trim() == name.english.trim() {
+                tracing::debug!("人名过滤: 移除未翻译条目 \"{}\"", name.english);
+                return false;
+            }
+
+            // 5. 全大写拉长词（如 SNOWBALLLLL, WAAAAAAAAAAAR）
+            // 原词被拉长重复字母，不是专有名词
+            if name.english.chars().all(|c| c.is_ascii_alphabetic())
+                && name.english.chars().all(|c| c.is_ascii_uppercase())
+                && name.english.len() > 8
+            {
+                // 检查是否有重复字母（拉长模式）
+                let chars: Vec<char> = name.english.chars().collect();
+                let mut repeat_count = 0;
+                for i in 1..chars.len() {
+                    if chars[i] == chars[i-1] {
+                        repeat_count += 1;
+                    }
+                }
+                if repeat_count >= 3 {
+                    tracing::debug!("人名过滤: 移除全大写拉长词 \"{}\"", name.english);
+                    return false;
+                }
+            }
+
+            // 6. 重复短语（如 "Take, take, take"）
+            if en_lower.contains(',') {
+                let parts: Vec<&str> = en_lower.split(',').map(|p| p.trim()).collect();
+                if parts.len() >= 3 {
+                    let first = parts[0];
+                    if parts.iter().all(|p| *p == first) {
+                        tracing::debug!("人名过滤: 移除重复短语 \"{}\"", name.english);
+                        return false;
+                    }
+                }
+            }
+
+            true
+        })
+        .collect()
+}
+
+/// 过滤掉未出现在字幕文本中的名字
+/// 模型可能把 system prompt 示例中的条目（如 GS4, Jeremy, Endgame, Skylark, Countryfile）
+/// 原样复制到输出中，这些名字并不在实际字幕里，应该移除。
+/// 匹配策略：大小写不敏感地检查 english 名字是否作为子串出现在任意字幕行中。
+fn filter_names_not_in_text(names: Vec<ExtractedName>, texts: &[String]) -> Vec<ExtractedName> {
+    // 预计算：把所有字幕文本拼成一个大字符串（小写），用于快速查找
+    // 字幕总量通常 ~500 条，总字符 ~50KB，拼接后查找很快
+    let all_text_lower: String = texts
+        .iter()
+        .flat_map(|t| t.chars())
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+
+    names
+        .into_iter()
+        .filter(|name| {
+            let en_lower = name.english.to_lowercase();
+            let en_lower = en_lower.trim();
+
+            // 空字符串跳过
+            if en_lower.is_empty() {
+                return false;
+            }
+
+            // 检查是否出现在字幕文本中（大小写不敏感）
+            // 对于含空格的多词名字（如 "Rick Sanchez"），检查完整短语
+            // 对于单词名字，检查单词边界以避免子串误匹配
+            if en_lower.contains(' ') {
+                // 多词：直接检查子串
+                if all_text_lower.contains(&en_lower) {
+                    return true;
+                }
+                // 可能字幕中换行了，去掉空格再查
+                let no_space = en_lower.replace(' ', "");
+                if all_text_lower.replace(' ', "").contains(&no_space) {
+                    return true;
+                }
+                tracing::debug!("人名过滤: \"{}\" 未出现在字幕文本中（多词）", name.english);
+                return false;
+            }
+
+            // 单词：检查子串出现
+            // 简单子串匹配即可，因为人名通常是独特的
+            if all_text_lower.contains(&en_lower) {
+                return true;
+            }
+
+            tracing::debug!("人名过滤: \"{}\" 未出现在字幕文本中", name.english);
+            false
+        })
+        .collect()
+}
+
 /// 从字幕文本中提取人名（分段并发扫描 + 合并去重）
 /// 返回统一的人名译名表
 /// app_handle: 用于向前端发送进度事件（extract-names-progress）
@@ -6154,6 +6590,7 @@ pub async fn extract_names_from_subtitles(
     app_handle: Option<tauri::AppHandle>,
     user_concurrency: usize,
     rate_limit: RateLimitPolicy,
+    model: &str,
 ) -> Result<Vec<ExtractedName>, AppError> {
     if texts.is_empty() {
         return Ok(Vec::new());
@@ -6163,7 +6600,14 @@ pub async fn extract_names_from_subtitles(
     // 9b 模型在内容过多时容易"逐行分析"产生大量思考过程，
     // 限制每段最多 150 条字幕（约 2500-3000 token），减少 AI 的分析量。
     // 同时保留 token 预算上限作为第二道限制。
-    const MAX_LINES_PER_SEGMENT: usize = 150;
+    //
+    // 人名提取分段上限受翻译批次大小约束：
+    // - 翻译批次大小 >= 150（默认值）时，人名提取用默认 150 条/段
+    // - 翻译批次大小 < 150（如小模型 10 条/批）时，人名提取也用更小的值
+    // 这样小模型在人名提取时也不会因单段过多导致输出错乱
+    const DEFAULT_MAX_LINES_PER_SEGMENT: usize = 150;
+    let (translation_batch_size, _) = get_model_batch_sizes(model);
+    let max_lines_per_segment = translation_batch_size.min(DEFAULT_MAX_LINES_PER_SEGMENT);
     let segment_budget = max_input_tokens.saturating_sub(2000).max(1000).min(3500);
     let mut segments: Vec<Vec<String>> = Vec::new();
     let mut current: Vec<String> = Vec::new();
@@ -6171,7 +6615,7 @@ pub async fn extract_names_from_subtitles(
     for text in texts {
         let tokens = text.chars().count() / 3 + 1;
         let would_exceed_tokens = !current.is_empty() && current_tokens + tokens > segment_budget;
-        let would_exceed_lines = current.len() >= MAX_LINES_PER_SEGMENT;
+        let would_exceed_lines = current.len() >= max_lines_per_segment;
         if would_exceed_tokens || would_exceed_lines {
             segments.push(std::mem::take(&mut current));
             current_tokens = 0;
@@ -6184,7 +6628,7 @@ pub async fn extract_names_from_subtitles(
     }
 
     let total_segments = segments.len();
-    tracing::info!("人名预扫描: {} 段（token 预算: {}）", total_segments, segment_budget);
+    tracing::info!("人名预扫描: {} 段（token 预算: {}，每段上限: {} 条）", total_segments, segment_budget, max_lines_per_segment);
     let scan_start = std::time::Instant::now();
 
     // 发送初始进度事件
@@ -6318,6 +6762,11 @@ pub async fn extract_names_from_subtitles(
     segment_results.sort_by_key(|r| r.segment_idx);
 
     let merged = merge_extracted_names(&segment_results);
+    // 后过滤：移除模型误提取的普通词汇（代词/介词/感叹词/口吃模式等）
+    let merged = filter_common_words_from_glossary(merged);
+    // 后过滤：只保留实际出现在字幕文本中的名字
+    // 模型可能把 system prompt 示例中的条目（如 GS4, Jeremy, Endgame）原样复制到输出
+    let merged = filter_names_not_in_text(merged, texts);
     tracing::info!("人名预扫描完成: 合并后 {} 个人名, 总耗时 {:.2}s", merged.len(), scan_start.elapsed().as_secs_f64());
 
     // 发送完成事件

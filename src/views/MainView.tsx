@@ -221,9 +221,9 @@ export default function MainView() {
       .finally(() => setAutoTranslateLoaded(true));
   }, []);
 
-  // 打开视频后默认展开，5秒后收起（鼠标 hover 时不收起）
+  // 打开视频或字幕后默认展开，5秒后收起（鼠标 hover 时不收起）
   useEffect(() => {
-    if (!probeResult) return;
+    if (!probeResult && !subtitleStore.file) return;
     setCardExpanded(true);
     if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
     cardCollapseTimer.current = setTimeout(() => {
@@ -232,7 +232,7 @@ export default function MainView() {
     return () => {
       if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
     };
-  }, [probeResult]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [probeResult, subtitleStore.file]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 鼠标进入卡片：展开 + 取消收起定时器
   const handleCardMouseEnter = useCallback(() => {
@@ -1310,7 +1310,7 @@ export default function MainView() {
           </div>
         </div>
 
-        {/* 右栏：视频信息 + 字幕操作区 */}
+        {/* 右栏：文件信息 + 快捷操作 + 字幕操作区 */}
         <div className="w-80 border-l overflow-auto p-3 space-y-3 flex-shrink-0">
           {/* 视频信息卡（可展开/收起，hover 展开，5秒后自动收起） */}
           {probeResult && (
@@ -1340,6 +1340,34 @@ export default function MainView() {
                   <div>{t("video.format", "格式")}: {probeResult.format.format_name}</div>
                   <div>{t("video.audioStreams")}: {probeResult.audio_streams.map(s => s.language ?? "??").join(", ")}</div>
                   <div>{t("video.subtitleStreams")}: {probeResult.subtitle_streams.length}</div>
+                </CardContent>
+              </div>
+            </Card>
+          )}
+
+          {/* 字幕文件信息卡（纯字幕模式，可展开/收起，与视频信息卡同样的交互逻辑） */}
+          {subtitleStore.file && !probeResult && (
+            <Card
+              className="relative transition-all duration-300 overflow-hidden"
+              onMouseEnter={handleCardMouseEnter}
+              onMouseLeave={handleCardMouseLeave}
+            >
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-1 text-sm">
+                  <FileText className="h-4 w-4" />
+                  {subtitleStore.file.source_path?.split(/[\\/]/).pop() ?? "subtitle"}
+                </CardTitle>
+              </CardHeader>
+              <div
+                className="grid transition-all duration-300 ease-in-out"
+                style={{
+                  gridTemplateRows: cardExpanded ? "1fr" : "0fr",
+                  opacity: cardExpanded ? 1 : 0,
+                }}
+              >
+                <CardContent className="space-y-1 text-xs text-muted-foreground overflow-hidden">
+                  <div>{t("subtitle.format")}: {subtitleStore.file.format}</div>
+                  <div>{t("subtitle.count")}: {subtitleStore.file.entries.length}</div>
                 </CardContent>
               </div>
             </Card>
@@ -1382,22 +1410,6 @@ export default function MainView() {
               </CardContent>
             </Card>
           ) : null}
-
-          {/* 字幕文件信息（纯字幕模式） */}
-          {subtitleStore.file && !probeResult && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-1 text-sm">
-                  <FileText className="h-4 w-4" />
-                  {subtitleStore.file.source_path?.split(/[\\/]/).pop() ?? "subtitle"}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="text-xs text-muted-foreground">
-                <div>{t("subtitle.format")}: {subtitleStore.file.format}</div>
-                <div>{t("subtitle.count")}: {subtitleStore.file.entries.length}</div>
-              </CardContent>
-            </Card>
-          )}
 
           {/* 字幕操作区 */}
           <Card>

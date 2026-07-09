@@ -843,6 +843,7 @@ pub async fn extract_names(
     };
     let base_url = db.get_config(&base_url_key).map_err(to_ipc_err)?;
     let model = model.ok_or_else(|| AppError::TranslateNotConfigured.to_ipc_error())?;
+    let model_for_names = model.clone();
     let model_type = if let Some(mt) = model_type {
         translate::ModelType::from_str(&mt)
     } else {
@@ -897,6 +898,7 @@ pub async fn extract_names(
         Some(app_handle),
         final_concurrency,
         rate_limit,
+        &model_for_names,
     ).await.map_err(to_ipc_err)?;
 
     let elapsed = extract_start.elapsed();
