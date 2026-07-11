@@ -1,269 +1,39 @@
 // 翻译模块
 // provider 抽象（百度/Bing/Google）+ 分段 + 占位符保护 + 缓存 + 限流重试
 
+mod translate_utils;
+mod translate_ai;
+
 use crate::db::{translate_cache_key, Database};
 use crate::error::AppError;
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 
-/// 检查字符串是否包含 CJK 字符（中日韩统一表意文字）
-fn has_cjk(s: &str) -> bool {
-    s.chars().any(|c| {
-        let code = c as u32;
-        (0x4E00..=0x9FFF).contains(&code)
-    })
-}
+// 从 translate_utils re-export，让 translate.rs 内部代码无需改动
+pub(crate) use translate_utils::{
+    PlaceholderProtector, build_cache_provider_name, clean_json_leak,
+    has_cjk, has_english_word,
+    has_music_symbols, is_music_or_symbol_only,
+    is_partial_translation, looks_like_sound_effect,
+    split_text, strip_markdown_code_fence,
+};
+#[cfg(test)]
+pub(crate) use translate_utils::has_lost_non_sound_lines;
 
-/// 判断文本是否为音效/环境声标记，如 [clattering continues] / [碰撞声持续] / [soft music]
-/// 规则：整段 trimmed 文本被一对 [] 包裹，或主要内容是方括号内的一个短语。
-pub(crate) fn looks_like_sound_effect(s: &str) -> bool {
-    // 先去掉 ASS 定位/样式标签（如 {\an8}、{\b1} 等），与 build_entry_text 的 strip_inline_ass_and_html_tags 一致
-    // 否则含 {\an8} 前缀的音效标记（如 {\an8}[phone buzzing]）会被误判为非音效标记，
-    // 导致翻译时 is_untranslated 与导出往返后 is_untranslated 不一致
-    let stripped = strip_ass_tags(s);
-    let s = stripped.trim();
-    if s.is_empty() {
-        return false;
-    }
-    // 1. 整段被 [] 包裹
-    if s.starts_with('[') && s.ends_with(']') {
-        return true;
-    }
-    // 2. 去掉常见音效前缀（如 [Jeremy] / [Kaleb]）后仍被 [] 包裹
-    let re = regex::Regex::new(r"^\s*\[[^\]]+\]\s*(.*)$").unwrap();
-    if let Some(caps) = re.captures(s) {
-        let rest = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
-        if !rest.is_empty() && rest.starts_with('[') && rest.ends_with(']') {
-            return true;
-        }
-    }
-    false
-}
-
-/// 去掉 ASS 覆盖标签（{...} 包裹的部分，如 {\an8}、{\b1}、{\pos(x,y)} 等）
-fn strip_ass_tags(s: &str) -> String {
-    let mut result = String::with_capacity(s.len());
-    let mut in_brace = false;
-    for c in s.chars() {
-        match c {
-            '{' => in_brace = true,
-            '}' => in_brace = false,
-            _ if !in_brace => result.push(c),
-            _ => {}
-        }
-    }
-    result
-}
-
-/// 去掉所有格式标签：ASS 覆盖标签 {...} 和 HTML/占位符标签 <...>
-/// 用于比较译文与原文是否相同时去除标签干扰
-fn strip_format_tags(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_brace = false;
-    let mut in_html = false;
-    for c in s.chars() {
-        if c == '{' {
-            in_brace = true;
-        } else if c == '}' {
-            in_brace = false;
-        } else if c == '<' {
-            in_html = true;
-        } else if c == '>' {
-            in_html = false;
-        } else if !in_brace && !in_html {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// 判断是否为纯音乐符号/特殊符号（如 ♪♪、♬♬ 等，无文字内容）
-pub(crate) fn is_music_or_symbol_only(s: &str) -> bool {
-    let s = s.trim();
-    if s.is_empty() {
-        return false;
-    }
-    s.chars().all(|c| {
-        c.is_whitespace()
-            || "♪♬♫♩♭♮♯".contains(c)
-            || matches!(c, '[' | ']' | '(' | ')' | '.' | '-' | '_' | '*')
-    })
-}
-
-/// 判断文本是否包含音乐符号（♪♬♫♩ 等）
-/// 含音乐符号的译文是歌词/拟声词，无法翻译，保持原样是正确行为
-pub(crate) fn has_music_symbols(s: &str) -> bool {
-    s.chars().any(|c| "♪♬♫♩♭♮♯".contains(c))
-}
-
-/// 检查文本是否包含至少 min_len 个连续英文字母组成的单词
-/// 用于区分英语内容和非英语内容（如拼写字母 "G-O-R..."、祖鲁语歌词等）
-pub(crate) fn has_english_word(s: &str, min_len: usize) -> bool {
-    let mut max_run = 0usize;
-    for c in s.chars() {
-        if c.is_ascii_alphabetic() {
-            max_run += 1;
-        } else {
-            if max_run >= min_len {
-                return true;
-            }
-            max_run = 0;
-        }
-    }
-    max_run >= min_len
-}
-
-/// 统计字符串中的英文单词数（≥min_len 字符的连续字母序列）
-/// 用于检测部分翻译：译文中残留的英文单词
-#[allow(dead_code)]
-pub(crate) fn count_english_words(s: &str, min_len: usize) -> usize {
-    let mut count = 0usize;
-    let mut run = 0usize;
-    for c in s.chars() {
-        if c.is_ascii_alphabetic() || c == '\'' || c == '-' {
-            // 字母、撇号、连字符都算单词的一部分（如 don't, w-we）
-            if c.is_ascii_alphabetic() {
-                run += 1;
-            }
-        } else {
-            if run >= min_len {
-                count += 1;
-            }
-            run = 0;
-        }
-    }
-    if run >= min_len {
-        count += 1;
-    }
-    count
-}
-
-/// 提取字符串中的英文 token（≥min_len 字母字符的连续序列，含撇号和连字符）
-/// 返回 token 字符串列表，用于细粒度分析残留英文
-fn extract_english_tokens(s: &str, min_len: usize) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut letter_count = 0usize;
-    for c in s.chars() {
-        if c.is_ascii_alphabetic() || c == '\'' || c == '-' {
-            current.push(c);
-            if c.is_ascii_alphabetic() {
-                letter_count += 1;
-            }
-        } else {
-            if letter_count >= min_len {
-                tokens.push(current.clone());
-            }
-            current.clear();
-            letter_count = 0;
-        }
-    }
-    if letter_count >= min_len {
-        tokens.push(current);
-    }
-    tokens
-}
-
-/// 去掉 <name=...>...</name> 标签，保留标签内的中文翻译
-fn strip_name_tags_inline(s: &str) -> String {
-    // 去掉 <name=EnglishName> 和 </name> 标签，保留中间的中文
-    let re = regex::Regex::new(r"</?name=[^>]*>").unwrap();
-    re.replace_all(s, "").to_string()
-}
-
-/// 检测部分翻译：译文含 CJK 但同时残留英文单词
-/// Qwen3-8B 常见模式：翻译后半部分但保留前半部分英文原文
-/// 检测策略：
-/// 1. ≥2 个英文 token → 部分翻译
-/// 2. 1 个英文 token 时：
-///    - 含连字符（结巴模式如 Y-Y-You, a-and）→ 部分翻译
-///    - 全小写（普通词汇如 guys, anymore）→ 部分翻译
-///    - 全大写且 ≤5 字符（缩写如 MPS, MUP, CEO）→ 跳过
-///    - 首字母大写（可能是专有名词如 Snowball, Skyzone）→ 跳过
-///    - 全大写且 >5 字符（可能是感叹如 WAAAAAAAAAAAR）→ 跳过
-pub(crate) fn is_partial_translation(orig: &str, trans: &str) -> bool {
-    // 原文必须是英文内容
-    if !has_english_word(orig, 3) {
-        return false;
-    }
-    // 译文必须含 CJK（说明模型确实翻译了一部分）
-    if !has_cjk(trans) {
-        return false;
-    }
-    // 去掉 name 标签（保留中文）、ASS 标签、占位符标签
-    let cleaned = strip_name_tags_inline(trans);
-    let cleaned = strip_format_tags(&cleaned);
-    // 去掉音效标记 [...] 中的内容
-    let cleaned = regex::Regex::new(r"\[[^\]]*\]")
-        .unwrap()
-        .replace_all(&cleaned, "")
-        .to_string();
-    // 提取残留英文 token（≥3 字母字符）
-    let tokens = extract_english_tokens(&cleaned, 3);
-    if tokens.is_empty() {
-        return false;
-    }
-    // ≥2 个英文 token → 部分翻译
-    if tokens.len() >= 2 {
-        return true;
-    }
-    // 1 个英文 token：根据特征判断
-    let token = &tokens[0];
-    // 含连字符 → 结巴模式，部分翻译
-    if token.contains('-') {
-        return true;
-    }
-    // 全小写 → 普通词汇未翻译
-    if token.chars().filter(|c| c.is_ascii_alphabetic()).all(|c| c.is_ascii_lowercase()) {
-        return true;
-    }
-    // 全大写 → 缩写或感叹，跳过
-    // 首字母大写 → 可能是专有名词，跳过
-    false
-}
-
-/// 检测多行原文中非音效行是否在译文中丢失
-/// 例如原文 "from our mothers!\n[ Mup crying ]" → 译文 "[Mup 哭泣]"
-/// 原文有非音效行 "from our mothers!"，但译文只有音效标记，说明非音效行被丢失
-pub(crate) fn has_lost_non_sound_lines(orig: &str, trans: &str) -> bool {
-    // 原文必须是多行
-    if !orig.contains('\n') {
-        return false;
-    }
-    // 译文必须是音效标记（只翻译了音效部分）
-    if !looks_like_sound_effect(trans) {
-        return false;
-    }
-    // 原文中必须存在至少一行非音效、非音乐符号的实质内容
-    let has_non_sound_line = orig.lines().any(|line| {
-        let trimmed = line.trim();
-        !trimmed.is_empty()
-            && !looks_like_sound_effect(trimmed)
-            && !is_music_or_symbol_only(trimmed)
-    });
-    has_non_sound_line
-}
-
-/// 剥离 markdown 代码块包裹（```json ... ``` 或 ``` ... ```）
-/// 如果内容被代码块包裹，返回代码块内部内容；否则原样返回
-fn strip_markdown_code_fence(s: &str) -> String {
-    let s = s.trim();
-    if !s.starts_with("```") {
-        return s.to_string();
-    }
-    // 去掉第一行（```json 或 ```）
-    let after_first_line = match s.find('\n') {
-        Some(idx) => &s[idx + 1..],
-        None => return s.to_string(),
-    };
-    // 去掉最后的 ``` 行
-    let result = after_first_line.trim_end();
-    if result.ends_with("```") {
-        result[..result.len() - 3].trim().to_string()
-    } else {
-        result.to_string()
-    }
-}
+// 从 translate_ai re-export，让外部调用方（ipc.rs 等）无需改动
+pub use translate_ai::{
+    ai_service_display_name, extract_name_tags, extract_names_from_subtitles,
+    get_remote_prompt_version, notify_global_cancel, AiService, ExtractedName, ModelType, NameConsistencyResult,
+    NameInconsistency, OpenAiProvider, PromptTemplate, PromptTemplateRegistry,
+    PromptTemplateView, RemotePromptConfig, ThinkingStyle, post_process_name_tags, strip_name_tags,
+};
+pub use translate_utils::cleanup_cjk_spaces;
+// parse_name_extraction_response 被 e2e 集成测试（tests/e2e.rs）调用，
+// 不能用 #[cfg(test)]（integration test 编译 lib 时不启用 test cfg）也不能用 pub(crate)，
+// 必须 pub use 让外部 crate 可见
+pub use translate_ai::parse_name_extraction_response;
+#[cfg(test)]
+pub(crate) use translate_ai::{is_likely_proper_noun, BUILTIN_TEMPLATES};
+pub(crate) use translate_ai::{get_model_batch_sizes, translate_batch_with_fallback};
 
 /// 代理配置（从 config 表读取，构建 reqwest::Client 时使用）
 #[derive(Debug, Clone, Default)]
@@ -306,6 +76,11 @@ impl ProxyConfig {
 
     /// 构建 reqwest::Client（带代理或普通）
     pub fn build_client(&self) -> reqwest::Client {
+        self.build_client_builder().build().unwrap_or_else(|_| reqwest::Client::new())
+    }
+
+    /// 构建 reqwest::ClientBuilder（带代理），调用方可追加 timeout 等配置后 build
+    pub fn build_client_builder(&self) -> reqwest::ClientBuilder {
         match self.proxy_url() {
             Some(url) => {
                 tracing::info!("使用代理: {}", self.mode);
@@ -314,10 +89,8 @@ impl ProxyConfig {
                         tracing::warn!("代理配置失败: {}, 使用直连", e);
                         reqwest::Proxy::all("direct://").unwrap()
                     }))
-                    .build()
-                    .unwrap_or_else(|_| reqwest::Client::new())
             }
-            None => reqwest::Client::new(),
+            None => reqwest::Client::builder(),
         }
     }
 
@@ -514,18 +287,6 @@ impl TranslateProvider {
     }
 }
 
-/// 将字段内的 `|` 双写转义，确保拼接后可无歧义还原
-pub fn escape_field(s: &str) -> String {
-    s.replace('|', "||")
-}
-
-/// 拼接无歧义的缓存 provider_name：seg1|seg2|seg3，每段先转义
-/// 用于 translate_subtitle / get_cached_translations 构造缓存 key 的 provider 字段
-/// 保证不同输入产生不同字符串（无碰撞），从而缓存 key 自然隔离
-pub fn build_cache_provider_name(segments: &[&str]) -> String {
-    segments.iter().map(|s| escape_field(s)).collect::<Vec<_>>().join("|")
-}
-
 /// 翻译请求
 #[derive(Debug, Clone)]
 pub struct TranslateRequest {
@@ -696,141 +457,6 @@ pub struct TestConnectionResult {
 
 /// AI 模型类型（用于 prompt 分发）
 /// 初期支持 qwen3 / deepseek，其他模型用 Generic 通用 prompt
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ModelType {
-    Qwen3,
-    Deepseek,
-    Generic,
-}
-
-impl ModelType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            ModelType::Qwen3 => "qwen3",
-            ModelType::Deepseek => "deepseek",
-            ModelType::Generic => "generic",
-        }
-    }
-
-    /// 从 serde 字符串构造（用于从 db config 读取的值）
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "qwen3" => Some(ModelType::Qwen3),
-            "deepseek" => Some(ModelType::Deepseek),
-            "generic" => Some(ModelType::Generic),
-            _ => None,
-        }
-    }
-
-    /// 根据模型 id 自动识别模型类型（大小写不敏感）
-    /// qwen3-14b → Qwen3、deepseek-v4 → Deepseek、gemma-3 → Generic
-    pub fn from_model_id(id: &str) -> Self {
-        let lower = id.to_lowercase();
-        if lower.contains("qwen3") {
-            ModelType::Qwen3
-        } else if lower.contains("deepseek") {
-            ModelType::Deepseek
-        } else {
-            ModelType::Generic
-        }
-    }
-
-    /// 按模型类型返回输入 token 预算（每批 API 请求的输入上限估算）
-    /// 取模型上下文窗口的 ~10%，预留输出 + system prompt 空间
-    pub fn max_input_tokens(&self) -> usize {
-        match self {
-            // Qwen3 系列：上下文 128K，取 12000
-            ModelType::Qwen3 => 12000,
-            // DeepSeek 系列：上下文 64K，取 8000
-            ModelType::Deepseek => 8000,
-            // Generic（含本地小模型）：保守取 3000，兼容 4K 上下文的小模型
-            ModelType::Generic => 3000,
-        }
-    }
-}
-
-/// 内置 prompt 模板（编译进二进制，远程不可用时的兜底）
-pub struct PromptTemplate {
-    pub system: &'static str,
-    pub user_line_format: &'static str,
-}
-
-impl PromptTemplate {
-    /// 渲染 system prompt，替换 {src} / {tgt} 占位符
-    pub fn render_system(&self, src: &str, tgt: &str) -> String {
-        self.system.replace("{src}", src).replace("{tgt}", tgt)
-    }
-}
-
-/// 内置模板表（按 ModelType::as_str() 索引）
-/// 顺序：qwen3 / deepseek / generic
-const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
-    ("qwen3", PromptTemplate {
-        system: "You are a professional subtitle translator.\n\
-                 Translate the following {src} subtitles into {tgt}.\n\n\
-                 Output format (JSON):\n\
-                 - Return a JSON array of objects: [{\"n\": 1, \"t\": \"<translation1>\"}, {\"n\": 2, \"t\": \"<translation2>\"}]\n\
-                 - Each object contains the input line number \"n\" and the translation \"t\".\n\
-                 - Preserve special Unicode characters (like \u{E001}) exactly as-is.\n\
-                 - Tags like <x0>, </x0>, <x1>, </x1> are formatting markers. KEEP the tags themselves unchanged, but TRANSLATE the text content between them into {tgt}.\n\
-                 - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
-                 - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
-                 - The output array must contain exactly the same number of objects as the input lines.\n\
-                 - Do not add explanations, notes, or any extra text outside the JSON.\n\n\
-                 Example:\n\
-                 Input:\n\
-                 1. And it's 24 millimetres\n\
-                 2. you need every week.\n\
-                 3. [clattering continues]\n\
-                 Output:\n\
-                 [{\"n\": 1, \"t\": \"而每周需要二十四毫米。\"}, {\"n\": 2, \"t\": \"你每周都需要。\"}, {\"n\": 3, \"t\": \"[碰撞声持续]\"}]",
-        user_line_format: "{index}. {text}",
-    }),
-    ("deepseek", PromptTemplate {
-        system: "You are a professional subtitle translator.\n\
-                 Translate from {src} to {tgt}.\n\n\
-                 Output format (JSON):\n\
-                 - Return a JSON array of objects: [{\"n\": 1, \"t\": \"<translation1>\"}, {\"n\": 2, \"t\": \"<translation2>\"}]\n\
-                 - Each object contains the input line number \"n\" and the translation \"t\".\n\
-                 - Preserve all special characters and placeholders unchanged.\n\
-                 - Tags like <x0>, </x0>, <x1>, </x1> are formatting markers. KEEP the tags themselves unchanged, but TRANSLATE the text content between them into {tgt}.\n\
-                 - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
-                 - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
-                 - The output array must contain exactly the same number of objects as the input lines.\n\
-                 - Do not add any extra text outside the JSON.\n\n\
-                 Example:\n\
-                 Input:\n\
-                 1. And it's 24 millimetres\n\
-                 2. you need every week.\n\
-                 3. [clattering continues]\n\
-                 Output:\n\
-                 [{\"n\": 1, \"t\": \"而每周需要二十四毫米。\"}, {\"n\": 2, \"t\": \"你每周都需要。\"}, {\"n\": 3, \"t\": \"[碰撞声持续]\"}]",
-        user_line_format: "{index}. {text}",
-    }),
-    ("generic", PromptTemplate {
-        system: "You are a professional subtitle translator.\n\
-                 Translate the following {src} subtitles into {tgt}.\n\n\
-                 Output format (JSON):\n\
-                 - Return a JSON array of objects: [{\"n\": 1, \"t\": \"<translation1>\"}, {\"n\": 2, \"t\": \"<translation2>\"}]\n\
-                 - Each object contains the input line number \"n\" and the translation \"t\".\n\
-                 - Preserve special Unicode characters exactly as-is.\n\
-                 - Tags like <x0>, </x0>, <x1>, </x1> are formatting markers. KEEP the tags themselves unchanged, but TRANSLATE the text content between them into {tgt}.\n\
-                 - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
-                 - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
-                 - The output array must contain exactly the same number of objects as the input lines.\n\
-                 - Do not add any extra text outside the JSON.\n\n\
-                 Example:\n\
-                 Input:\n\
-                 1. And it's 24 millimetres\n\
-                 2. you need every week.\n\
-                 3. [clattering continues]\n\
-                 Output:\n\
-                 [{\"n\": 1, \"t\": \"而每周需要二十四毫米。\"}, {\"n\": 2, \"t\": \"你每周都需要。\"}, {\"n\": 3, \"t\": \"[碰撞声持续]\"}]",
-        user_line_format: "{index}. {text}",
-    }),
-];
-
 /// ISO 639-1 语言码 → 英文全称（用于 prompt 占位符 {src} / {tgt}）
 pub fn lang_full_name(code: &str) -> &'static str {
     match code.to_lowercase().as_str() {
@@ -862,402 +488,6 @@ pub fn lang_full_name(code: &str) -> &'static str {
 /// 占位符保护算法（对应需求文档 §4.2）
 /// 翻译前将需保护片段替换为私用区占位符，翻译后回填
 /// 保护范围：ass 样式标记 {\...}、HTML 标签 <...>、换行符、特殊符号
-
-/// 私用区字符范围：U+E000 ~ U+E0FF（256 个占位符）
-const PLACEHOLDER_BASE: u32 = 0xE000;
-
-/// 判断一个 `<...>` 片段是否为 HTML 字幕标签（需保护）。
-/// 支持常见字幕 HTML 标签及其闭合形式，不限制标签长度。
-/// 排除普通文本中的 `<` / `>` 符号（如数学表达式 `a < b`）。
-fn is_html_subtitle_tag(tag: &str) -> bool {
-    // 必须以 < 开头、> 结尾
-    if !tag.starts_with('<') || !tag.ends_with('>') {
-        return false;
-    }
-    // 提取标签名：跳过 < 和可选的 /
-    let inner = &tag[1..tag.len() - 1]; // 去掉 < >
-    let name_part = inner.strip_prefix('/').unwrap_or(inner);
-    // 标签名到第一个空格或属性为止
-    let tag_name = name_part.split_whitespace().next().unwrap_or(name_part);
-    if tag_name.is_empty() {
-        return false;
-    }
-    // 标签名必须全为字母（排除 <3、<.5 等非标签）
-    if !tag_name.chars().all(|c| c.is_ascii_alphabetic()) {
-        return false;
-    }
-    // 已知 HTML 字幕标签白名单
-    matches!(
-        tag_name.to_ascii_lowercase().as_str(),
-        "b" | "i" | "u" | "s" | "font" | "span" | "div" | "p" | "br"
-        | "strong" | "em" | "mark" | "strike" | "sub" | "sup" | "small"
-        | "big" | "tt" | "code" | "pre" | "blockquote" | "ruby" | "rt" | "rp"
-    )
-}
-
-/// 占位符保护器
-#[derive(Clone)]
-pub struct PlaceholderProtector {
-    /// 占位符映射表：占位符字符串 -> 原始文本
-    placeholders: Vec<(String, String)>,
-    /// 占位符策略
-    strategy: PlaceholderStrategy,
-}
-
-impl PlaceholderProtector {
-    pub fn new() -> Self {
-        Self::with_strategy(PlaceholderStrategy::PrivateUse)
-    }
-
-    /// 使用指定策略创建保护器
-    pub fn with_strategy(strategy: PlaceholderStrategy) -> Self {
-        Self {
-            placeholders: Vec::new(),
-            strategy,
-        }
-    }
-
-    /// 保护文本中的需保护片段，返回含占位符的文本
-    pub fn protect(&mut self, text: &str) -> String {
-        let mut result = String::with_capacity(text.len());
-        let mut remaining = text;
-
-        while !remaining.is_empty() {
-            // 检测 ass 样式标记 {\...}
-            if remaining.starts_with('{') {
-                if let Some(end) = remaining.find('}') {
-                    let tag = &remaining[..=end];
-                    let placeholder = self.add_placeholder(tag);
-                    result.push_str(&placeholder);
-                    remaining = &remaining[end + 1..];
-                    continue;
-                }
-            }
-
-            // 检测 HTML 标签 <...>
-            if remaining.starts_with('<') {
-                if let Some(end) = remaining.find('>') {
-                    let tag = &remaining[..=end];
-                    // 保护常见 HTML 字幕标签（含闭合标签），不保护普通 < > 符号
-                    // 不再限制标签长度，支持 <span>/<div> 等任意标签
-                    if is_html_subtitle_tag(tag) {
-                        // DirectHtml 策略：HTML 标签不保护，直接发送给引擎
-                        // 引擎原生支持 HTML 标签处理（DeepL/Google/Bing）
-                        if self.strategy == PlaceholderStrategy::DirectHtml {
-                            result.push_str(tag);
-                            remaining = &remaining[end + 1..];
-                            continue;
-                        }
-                        let placeholder = self.add_placeholder(tag);
-                        result.push_str(&placeholder);
-                        remaining = &remaining[end + 1..];
-                        continue;
-                    }
-                }
-            }
-
-            // 检测连续换行符（\N 或 \n 在 ass 中是强制换行）
-            if remaining.starts_with("\\N") || remaining.starts_with("\\n") {
-                let tag = &remaining[..2];
-                let placeholder = self.add_placeholder(tag);
-                result.push_str(&placeholder);
-                remaining = &remaining[2..];
-                continue;
-            }
-
-            // 检测真正的换行符（SRT 中的 \n 0x0A）
-            // 替换成占位符而非保留原样，避免 9b 模型把多行条目拆成多条翻译导致错位
-            if remaining.starts_with('\n') {
-                let placeholder = self.add_placeholder("\n");
-                result.push_str(&placeholder);
-                remaining = &remaining[1..];
-                continue;
-            }
-
-            // 普通字符直接输出
-            let ch = remaining.chars().next().unwrap();
-            result.push(ch);
-            remaining = &remaining[ch.len_utf8()..];
-        }
-
-        result
-    }
-
-    /// 回填占位符，将翻译后的文本中的占位符替换回原始内容
-    pub fn restore(&self, text: &str) -> String {
-        let mut result = text.to_string();
-        // 按占位符长度降序替换，避免短占位符是长占位符的前缀导致误替换
-        let mut sorted = self.placeholders.iter().collect::<Vec<_>>();
-        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-        for (placeholder, original) in &sorted {
-            result = result.replace(placeholder, original);
-        }
-        result
-    }
-
-    /// 添加占位符映射，返回占位符字符串
-    fn add_placeholder(&mut self, original: &str) -> String {
-        let index = self.placeholders.len();
-        let placeholder = match self.strategy {
-            PlaceholderStrategy::PrivateUse => {
-                if index >= 256 {
-                    tracing::warn!("占位符超过 256 个上限，直接保留原文");
-                    return original.to_string();
-                }
-                char::from_u32(PLACEHOLDER_BASE + index as u32)
-                    .unwrap_or('\u{E0FF}')
-                    .to_string()
-            }
-            PlaceholderStrategy::XmlTags => {
-                // <xN></xN> 形式：每个标签用唯一编号（全局 index）
-                // restore 按精确字符串匹配，不需要开/闭标签编号配对
-                if original.starts_with("</") {
-                    format!("</x{}>", index)
-                } else if original.starts_with('<') {
-                    format!("<x{}>", index)
-                } else {
-                    // 换行符等非标签内容
-                    format!("<x{}/>", index)
-                }
-            }
-            PlaceholderStrategy::DirectHtml => {
-                // HTML 标签不保护（在 protect 中已处理），这里只处理 ASS 标签和换行符
-                // 用私用区字符保护 ASS 标签和换行符
-                if index >= 256 {
-                    return original.to_string();
-                }
-                char::from_u32(PLACEHOLDER_BASE + index as u32)
-                    .unwrap_or('\u{E0FF}')
-                    .to_string()
-            }
-            PlaceholderStrategy::CurlyBraces => {
-                // {N}{/N} 形式：每个标签用唯一编号
-                if original.starts_with("</") {
-                    format!("{{/{}}}", index)
-                } else if original.starts_with('<') {
-                    format!("{{{}}}", index)
-                } else {
-                    format!("{{n{}}}", index)
-                }
-            }
-            PlaceholderStrategy::SquareBrackets => {
-                // [N][/N] 形式：每个标签用唯一编号
-                if original.starts_with("</") {
-                    format!("[/{}]", index)
-                } else if original.starts_with('<') {
-                    format!("[{}]", index)
-                } else {
-                    format!("[n{}]", index)
-                }
-            }
-        };
-        self.placeholders.push((placeholder.clone(), original.to_string()));
-        placeholder
-    }
-
-    /// 获取占位符数量
-    pub fn placeholder_count(&self) -> usize {
-        self.placeholders.len()
-    }
-
-    /// 回填占位符并恢复丢失的 ASS 前缀标签
-    /// 比 restore 多两步：
-    /// 1. 9b 模型可能丢弃占位符字符（U+E000~U+E0FF），导致 ASS 标签（如 {\an8}）在译文中丢失。
-    ///    此方法检测丢失的前缀 ASS 标签并加回译文开头。
-    /// 2. 9b 模型可能多输出未注册的占位符字符（如重复、错位），
-    ///    restore() 只能替换已注册的占位符，无法清除多余字符。
-    ///    此方法清除所有残留的占位符字符，避免污染译文导致 failed 误判。
-    pub fn restore_with_ass_recovery(&self, text: &str, original_text: &str) -> String {
-        let restored = self.restore(text);
-        let recovered = recover_lost_ass_prefix_tags(&restored, original_text);
-        strip_remaining_placeholders(&recovered, self.strategy)
-    }
-
-    /// 获取当前策略
-    pub fn strategy(&self) -> PlaceholderStrategy {
-        self.strategy
-    }
-}
-
-/// 清除译文中残留的占位符
-/// 9b 模型有时会多输出未注册的占位符（如重复、错位），
-/// 这些占位符无法被 restore() 替换回原始内容，会污染译文。
-fn strip_remaining_placeholders(s: &str, strategy: PlaceholderStrategy) -> String {
-    match strategy {
-        // 私用区字符和 DirectHtml（ASS 标签用私用区）：清除 U+E000~U+E0FF
-        PlaceholderStrategy::PrivateUse | PlaceholderStrategy::DirectHtml => {
-            s.chars().filter(|&ch| !('\u{E000}'..='\u{E0FF}').contains(&ch)).collect()
-        }
-        // XML 标签：清除残留的 <xN>、</xN>、<xN/>
-        PlaceholderStrategy::XmlTags => {
-            let re = regex::Regex::new(r"</?x\d+/??>").unwrap();
-            re.replace_all(s, "").to_string()
-        }
-        // 花括号：清除残留的 {N}、{/N}、{nN}
-        PlaceholderStrategy::CurlyBraces => {
-            let re = regex::Regex::new(r"\{/?\d+\}|\{n\d+\}").unwrap();
-            re.replace_all(s, "").to_string()
-        }
-        // 方括号：清除残留的 [N]、[/N]、[nN]
-        PlaceholderStrategy::SquareBrackets => {
-            let re = regex::Regex::new(r"\[/?\d+\]|\[n\d+\]").unwrap();
-            re.replace_all(s, "").to_string()
-        }
-    }
-}
-
-/// 清理译文中泄漏的 JSON 格式语法
-/// 9b 模型有时返回 JSON 数组格式（如 [{"n": 1, "t": "..."}]），但 JSON 解析因未转义引号而失败，
-/// 回退到行对齐时 JSON 语法会被当作译文文本，导致译文中出现：
-/// - 完整 JSON 包装：[{"n": 1, "t": "让我们看看发生了什么事。"}]
-/// - JSON 语法残留：译文末尾出现 '},\n  { 等字符
-/// 此函数提取 JSON 中的实际文本，剥离 JSON 语法残留。
-fn clean_json_leak(s: &str) -> String {
-    let trimmed = s.trim();
-
-    // 1. 完整 JSON 数组包装：[{"n": N, "t": "..."}]
-    // 提取 "t" 字段的值
-    if trimmed.starts_with("[{\"n\":") || trimmed.starts_with("[{ \"n\":") {
-        let re = regex::Regex::new(
-            r#""t"\s*:\s*"((?:[^"\\]|\\.)*)""#
-        ).unwrap();
-        if let Some(cap) = re.captures(trimmed) {
-            if let Some(t) = cap.get(1) {
-                let text = t.as_str()
-                    .replace("\\\"", "\"")
-                    .replace("\\\\", "\\")
-                    .replace("\\n", "\n")
-                    .replace("\\t", "\t");
-                return text.trim().to_string();
-            }
-        }
-    }
-
-    // 2. 译文末尾有 JSON 数组语法残留（如 '},\n  { 或 "},）
-    // JSON 数组元素之间是 "},\n  {" 的模式，检测并截断
-    // 匹配 JSON 对象结束符 }, 后跟空白和 {（下一个 JSON 对象的开始）
-    let re_json_sep = regex::Regex::new(r"\},\s*\{.*$").unwrap();
-    if let Some(m) = re_json_sep.find(trimmed) {
-        let before = trimmed[..m.start()].trim_end();
-        // 确保截断后仍有实质内容（含 CJK 字符，避免误截正常文本）
-        if !before.is_empty() && has_cjk(before) {
-            return before.to_string();
-        }
-    }
-
-    s.to_string()
-}
-
-/// 恢复丢失的 ASS 前缀标签
-/// 如果原文以 ASS 标签（如 {\an8}）开头但译文丢失了该标签，把丢失的前缀标签加回译文开头
-fn recover_lost_ass_prefix_tags(restored: &str, original_text: &str) -> String {
-    let orig_prefix_tags = extract_prefix_ass_tags(original_text);
-    if orig_prefix_tags.is_empty() {
-        return restored.to_string();
-    }
-
-    // 译文中已包含的 ASS 标签（不限于前缀，因为 9b 可能改变了标签位置）
-    let trans_prefix_tags = extract_prefix_ass_tags(restored);
-
-    // 找出丢失的前缀标签：原文有但译文完全没有的
-    let lost_tags: Vec<&String> = orig_prefix_tags
-        .iter()
-        .filter(|tag| !trans_prefix_tags.contains(tag) && !restored.contains(tag.as_str()))
-        .collect();
-
-    if lost_tags.is_empty() {
-        return restored.to_string();
-    }
-
-    // 把丢失的标签加到译文开头
-    let mut result = String::with_capacity(restored.len() + 16);
-    for tag in &lost_tags {
-        result.push_str(tag);
-    }
-    result.push_str(restored);
-    result
-}
-
-/// 提取文本开头的连续 ASS 标签（{\...} 格式）
-fn extract_prefix_ass_tags(s: &str) -> Vec<String> {
-    let mut tags = Vec::new();
-    let mut remaining = s;
-    while remaining.starts_with('{') {
-        if let Some(end) = remaining.find('}') {
-            tags.push(remaining[..=end].to_string());
-            remaining = &remaining[end + 1..];
-        } else {
-            break;
-        }
-    }
-    tags
-}
-
-/// 翻译分段：将长文本按句号/换行切分，确保单段不超过 max_length（按字节计）。
-/// 保留原始分隔符（. / \n / ？ / ！ / 。），避免补回错误的分隔符。
-pub fn split_text(text: &str, max_length: usize) -> Vec<String> {
-    if text.len() <= max_length {
-        return vec![text.to_string()];
-    }
-
-    // 按句子切分，保留分隔符。分隔符视为句子结尾的一部分。
-    // 句子边界字符：. ! ? 。 ！ ？ \n
-    fn is_sentence_boundary(c: char) -> bool {
-        matches!(c, '.' | '!' | '?' | '。' | '！' | '？' | '\n')
-    }
-
-    let mut sentences: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for c in text.chars() {
-        current.push(c);
-        if is_sentence_boundary(c) {
-            sentences.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() {
-        sentences.push(current);
-    }
-
-    // 贪心合并句子到段，每段不超过 max_length 字节
-    let mut segments = Vec::new();
-    let mut buf = String::new();
-    for sentence in &sentences {
-        if !buf.is_empty() && buf.len() + sentence.len() > max_length {
-            segments.push(buf.trim().to_string());
-            buf.clear();
-        }
-        if sentence.len() > max_length {
-            // 单句超限：按字符硬切
-            if !buf.is_empty() {
-                segments.push(buf.trim().to_string());
-                buf.clear();
-            }
-            let chars: Vec<char> = sentence.chars().collect();
-            let mut chunk = String::new();
-            for c in &chars {
-                let next_len = chunk.len() + c.len_utf8();
-                if next_len > max_length && !chunk.is_empty() {
-                    segments.push(chunk.clone());
-                    chunk.clear();
-                }
-                chunk.push(*c);
-            }
-            if !chunk.is_empty() {
-                buf = chunk;
-            }
-        } else {
-            buf.push_str(sentence);
-        }
-    }
-    if !buf.is_empty() {
-        segments.push(buf.trim().to_string());
-    }
-
-    segments
-}
-
-// === SECTION 2 END ===
-
 /// 百度翻译 API
 /// 文档：https://fanyi-api.baidu.com/doc/21
 /// 签名算法：MD5(appid + q + salt + secretKey)
@@ -1345,7 +575,7 @@ impl TranslateProviderTrait for BaiduProvider {
         let mut current_chunk: Vec<(usize, &String)> = Vec::new();
         let mut current_bytes = 0usize;
         for &(idx, text) in &non_empty {
-            let text_bytes = text.as_bytes().len(); // UTF-8 字节数（百度按字节计限）
+            let text_bytes = text.len(); // UTF-8 字节数（百度按字节计限）
             if !current_chunk.is_empty() && current_bytes + text_bytes + 1 > BAIDU_MAX_QUERY_BYTES {
                 chunks.push(std::mem::take(&mut current_chunk));
                 current_bytes = 0;
@@ -1957,913 +1187,6 @@ impl TranslateProviderTrait for GoogleProvider {
 
 // === SECTION 5 END ===
 
-/// OpenAI 兼容翻译 provider
-/// 通过标准 OpenAI Chat Completions 协议调用任意兼容端点：
-/// 局域网 LM Studio / Ollama / vLLM、云 API DeepSeek / Qwen / OpenAI / Kimi / 智谱 等
-/// 认证可选：api_key 留空时不带 Authorization header（适配局域网无认证场景）
-pub struct OpenAiProvider {
-    base_url: String,
-    model: String,
-    model_type: ModelType,
-    api_key: Option<String>,
-    /// 服务商显示名（如 "DeepSeek" / "LM Studio"），用于错误消息
-    service_name: String,
-    client: reqwest::Client,
-    /// 累计 token 用量（原子计数器，线程安全）
-    prompt_tokens: std::sync::atomic::AtomicU64,
-    completion_tokens: std::sync::atomic::AtomicU64,
-    total_tokens: std::sync::atomic::AtomicU64,
-    /// 译名表：(EnglishName, ChineseTranslation)，注入到 system prompt
-    glossary: Vec<(String, String)>,
-    /// 是否要求模型在译文中用 <name=EnglishName>中文</name> 标记人名
-    name_tagging: bool,
-}
-
-/// 编号行正则：匹配 "1. text" / "1、text" / "1: text" / "1) text"
-static NUMBERED_LINE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-
-impl OpenAiProvider {
-    pub fn new(
-        base_url: String,
-        model: String,
-        model_type: ModelType,
-        api_key: Option<String>,
-    ) -> Self {
-        Self::with_client(base_url, model, model_type, api_key, reqwest::Client::new())
-    }
-
-    pub fn with_client(
-        base_url: String,
-        model: String,
-        model_type: ModelType,
-        api_key: Option<String>,
-        client: reqwest::Client,
-    ) -> Self {
-        Self {
-            base_url,
-            model,
-            model_type,
-            api_key,
-            service_name: "OpenAI".to_string(),
-            client,
-            prompt_tokens: std::sync::atomic::AtomicU64::new(0),
-            completion_tokens: std::sync::atomic::AtomicU64::new(0),
-            total_tokens: std::sync::atomic::AtomicU64::new(0),
-            glossary: Vec::new(),
-            name_tagging: false,
-        }
-    }
-
-    /// 设置服务商显示名（用于错误消息中显示真实服务商名而非 "openai"）
-    pub fn with_service_name(mut self, name: String) -> Self {
-        self.service_name = name;
-        self
-    }
-
-    /// 设置译名表（注入到 system prompt，保证跨 batch 人名一致）
-    pub fn with_glossary(mut self, glossary: Vec<(String, String)>) -> Self {
-        self.glossary = glossary;
-        self
-    }
-
-    /// 启用/禁用人名标记模式（要求模型在译文中用 <name=En>Zh</name> 标记人名）
-    pub fn with_name_tagging(mut self, enabled: bool) -> Self {
-        self.name_tagging = enabled;
-        self
-    }
-
-    /// 构建 system prompt（优先远程模板，回退内置）
-    /// 如果设置了 glossary，将译名表注入到 system prompt 末尾，
-    /// 保证跨批次人名翻译一致。
-    /// 如果启用了 name_tagging，要求模型用 <name=En>Zh</name> 标记人名。
-    fn build_system_prompt(&self, source_lang: &str, target_lang: &str) -> String {
-        let src = lang_full_name(source_lang);
-        let tgt = lang_full_name(target_lang);
-        let view = PromptTemplateRegistry::get_template(&self.model_type);
-        let mut prompt = view.render_system(src, tgt);
-
-        // 注入译名表
-        if !self.glossary.is_empty() {
-            let glossary_text = self.glossary
-                .iter()
-                .map(|(en, zh)| format!("{} → {}", en, zh))
-                .collect::<Vec<_>>()
-                .join("\n");
-            prompt.push_str(&format!(
-                "\n\nGlossary (use these translations consistently for proper nouns):\n{}",
-                glossary_text
-            ));
-        }
-
-        // 注入人名标记指令
-        if self.name_tagging {
-            prompt.push_str(
-                "\n\nWhen translating a proper noun (person name) that appears in the Glossary, \
-                 wrap the translated name in tags like <name=EnglishName>ChineseName</name>. \
-                 Example: <name=Reese>里斯</name>"
-            );
-        }
-
-        prompt
-    }
-
-    /// 构建 user prompt（编号列表格式）
-    fn build_user_prompt(&self, texts: &[&String]) -> String {
-        let view = PromptTemplateRegistry::get_template(&self.model_type);
-        view.render_user(texts)
-    }
-
-    /// 解析模型返回的编号列表响应，按编号对齐回输入
-    fn parse_numbered_response(
-        content: &str,
-        expected_count: usize,
-    ) -> Result<Vec<String>, AppError> {
-        let re = NUMBERED_LINE_RE.get_or_init(|| {
-            regex::Regex::new(r"^(\d+)[.、:)]\s*(.+)$").unwrap()
-        });
-
-        // 1. 尝试解析 JSON 数组格式：[{"n": 1, "t": "..."}, ...]
-        // AI 可能用 ```json ... ``` 代码块包裹，先剥离 markdown 代码块
-        let trimmed = content.trim();
-        let json_content = strip_markdown_code_fence(trimmed);
-        if json_content.starts_with('[') {
-            // 1a. 标准 JSON 解析
-            if let Ok(json) = serde_json::from_str::<Vec<serde_json::Value>>(&json_content) {
-                let mut translations: std::collections::HashMap<usize, String> =
-                    std::collections::HashMap::new();
-                // 检测 AI 是否拆分了条目：如果返回的 n 超出 expected_count，
-                // 说明 AI 把含多行的条目拆成了多个翻译（如 "Jerry:\nUhh" → n=1 "Jerry" + n=2 "Uhh"），
-                // 导致后续所有翻译错位。此时整批对齐失败，触发降级重试（batch_size=1 时无法拆分）。
-                let mut out_of_range = false;
-                for item in json {
-                    if let (Some(n), Some(t)) = (
-                        item.get("n").and_then(|v| v.as_u64()).map(|n| n as usize),
-                        item.get("t").and_then(|v| v.as_str()).map(|s| s.trim()),
-                    ) {
-                        if n > 0 && n <= expected_count {
-                            translations.insert(n, t.to_string());
-                        } else if n > expected_count {
-                            out_of_range = true;
-                        }
-                    }
-                }
-                if out_of_range {
-                    tracing::warn!(
-                        "JSON 解析：AI 返回了超出范围的编号（n > {}），可能拆分了条目，返回对齐失败",
-                        expected_count
-                    );
-                    return Err(AppError::TranslateAlignFailed {
-                        missing: expected_count,
-                    });
-                }
-                if translations.len() == expected_count {
-                    let result: Vec<String> = (1..=expected_count)
-                        .map(|i| translations.remove(&i).unwrap_or_default())
-                        .collect();
-                    return Ok(result);
-                }
-                if !translations.is_empty() {
-                    // JSON 解析成功但数量不匹配，返回部分结果（空字符串占位）
-                    // 调度器会对空字符串的条目进行降级重试
-                    tracing::warn!(
-                        "JSON 解析数量不匹配：期望 {}，实际 {}，返回部分结果",
-                        expected_count,
-                        translations.len()
-                    );
-                    let result: Vec<String> = (1..=expected_count)
-                        .map(|i| translations.remove(&i).unwrap_or_default())
-                        .collect();
-                    return Ok(result);
-                }
-            } else {
-                // 1b. 标准 JSON 解析失败，尝试用正则从 JSON 文本中提取 {"n": N, "t": "..."} 对
-                // AI 有时会输出未转义的双引号导致 JSON 格式错误
-                let re_json = regex::Regex::new(
-                    r#""n"\s*:\s*(\d+)\s*,\s*"t"\s*:\s*"((?:[^"\\]|\\.)*)""#
-                ).unwrap();
-                let mut translations: std::collections::HashMap<usize, String> =
-                    std::collections::HashMap::new();
-                let mut out_of_range = false;
-                for cap in re_json.captures_iter(&json_content) {
-                    if let (Ok(n), Some(t)) = (cap[1].parse::<usize>(), cap.get(2)) {
-                        if n > 0 && n <= expected_count {
-                            // 反转义 JSON 字符串中的转义字符
-                            let text = t.as_str()
-                                .replace("\\\"", "\"")
-                                .replace("\\\\", "\\")
-                                .replace("\\n", "\n")
-                                .replace("\\t", "\t");
-                            translations.insert(n, text.trim().to_string());
-                        } else if n > expected_count {
-                            out_of_range = true;
-                        }
-                    }
-                }
-                if out_of_range {
-                    tracing::warn!(
-                        "JSON 正则提取：AI 返回了超出范围的编号（n > {}），可能拆分了条目，返回对齐失败",
-                        expected_count
-                    );
-                    return Err(AppError::TranslateAlignFailed {
-                        missing: expected_count,
-                    });
-                }
-                if !translations.is_empty() {
-                    tracing::warn!(
-                        "JSON 正则提取：期望 {}，提取 {}，返回部分结果",
-                        expected_count,
-                        translations.len()
-                    );
-                    let result: Vec<String> = (1..=expected_count)
-                        .map(|i| translations.remove(&i).unwrap_or_default())
-                        .collect();
-                    return Ok(result);
-                }
-            }
-        }
-
-        // 2. 尝试按编号解析（用剥离代码块后的内容，避免 ```json 行干扰）
-        let parse_content = if json_content.starts_with('[') || json_content.starts_with("```") {
-            &json_content
-        } else {
-            trimmed
-        };
-        let mut translations: std::collections::HashMap<usize, String> = std::collections::HashMap::new();
-        let mut out_of_range = false;
-        for line in parse_content.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-            if let Some(captures) = re.captures(line) {
-                let num: usize = captures[1].parse().unwrap_or(0);
-                let text = captures.get(2).map(|m| m.as_str().trim()).unwrap_or("");
-                if num > 0 && num <= expected_count {
-                    translations.insert(num, text.to_string());
-                } else if num > expected_count {
-                    out_of_range = true;
-                }
-            }
-        }
-        if out_of_range {
-            tracing::warn!(
-                "编号解析：AI 返回了超出范围的编号（n > {}），可能拆分了条目，返回对齐失败",
-                expected_count
-            );
-            return Err(AppError::TranslateAlignFailed {
-                missing: expected_count,
-            });
-        }
-
-        // 3. 按编号顺序组装结果
-        if translations.len() == expected_count {
-            let result: Vec<String> = (1..=expected_count)
-                .map(|i| translations.remove(&i).unwrap_or_default())
-                .collect();
-            return Ok(result);
-        }
-
-        // 4. 编号解析失败 → 退化为按行对齐（去掉编号前缀）
-        let lines: Vec<String> = parse_content
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .map(|l| {
-                // 去掉可能残留的编号前缀 "1. " / "1) " / "1、" 等，避免翻译结果含编号
-                re.replace(&l, "${2}").to_string()
-            })
-            .collect();
-        if lines.len() == expected_count {
-            return Ok(lines);
-        }
-
-        // 5. 行数也不对 → 返回对齐失败，由调度器触发逐条重试
-        tracing::warn!(
-            "编号解析失败：期望 {} 条，编号匹配 {} 条，行对齐 {} 行。原始输出前 500 字符: {:?}",
-            expected_count,
-            translations.len(),
-            lines.len(),
-            content.chars().take(500).collect::<String>()
-        );
-        Err(AppError::TranslateAlignFailed {
-            missing: expected_count.saturating_sub(lines.len()),
-        })
-    }
-
-    /// 单批翻译（构造 chat completion 请求）
-    async fn translate_single_batch(
-        &self,
-        texts: &[&String],
-        source_lang: &str,
-        target_lang: &str,
-    ) -> Result<Vec<String>, AppError> {
-        let system_prompt = self.build_system_prompt(source_lang, target_lang);
-        let user_prompt = self.build_user_prompt(texts);
-
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        let mut request_body = serde_json::json!({
-            "model": self.model,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user",   "content": user_prompt },
-            ],
-            "temperature": 0.3,
-            "stream": true,
-        });
-        // 智谱 GLM 关闭 thinking 模式，使用正确的参数格式
-        let is_zhipu = self.service_name.contains("智谱") || self.service_name.contains("GLM") || self.service_name.contains("zhipu");
-        if is_zhipu {
-            request_body["thinking"] = serde_json::json!({
-                "type": "disabled"
-            });
-        }
-        // 统一关闭 thinking 模式：Qwen3 / DeepSeek / Generic 均禁用推理过程
-        // 推理模型（DeepSeek-V4、Qwen3 等）会先输出大段思考过程再输出答案，
-        // 导致 stop sequences 提前触发、JSON 解析失败、响应变慢。
-        // 例外：Qwen3 "nothink" 版本本身已禁用 thinking，不支持该参数，
-        // 强行添加会导致 LM Studio 流式响应返回空内容。
-        // 云端 API（SiliconFlow 等）使用顶层 enable_thinking 参数，
-        // 本地部署（LM Studio / vLLM）使用 chat_template_kwargs.enable_thinking。
-        let skip_thinking_disable = is_zhipu
-            || (self.model_type == ModelType::Qwen3 && self.model.to_lowercase().contains("nothink"));
-        if !skip_thinking_disable {
-            if self.is_local_url() {
-                request_body["chat_template_kwargs"] = serde_json::json!({
-                    "enable_thinking": false
-                });
-            } else {
-                request_body["enable_thinking"] = serde_json::json!(false);
-            }
-        }
-        // 智谱 GLM 响应较慢，使用更长的超时
-        let timeout_secs = if self.is_local_url() { 1800 } else if is_zhipu { 180 } else { 120 };
-        let chunk_timeout_secs = if self.is_local_url() { 300 } else if is_zhipu { 60 } else { 60 };
-        let mut req = self
-            .client
-            .post(&url)
-            .timeout(std::time::Duration::from_secs(timeout_secs))
-            .json(&request_body);
-
-        // api_key 非空时才带认证头（局域网无认证场景）
-        // Azure OpenAI 使用 api-key 头而非 Authorization: Bearer
-        if let Some(ref key) = self.api_key {
-            if !key.is_empty() {
-                if self.base_url.contains("openai.azure.com") {
-                    req = req.header("api-key", key);
-                } else {
-                    req = req.header("Authorization", format!("Bearer {}", key));
-                }
-            }
-        }
-
-        // 流式日志：从 task_local 读取当前并发槽位的文件句柄
-        let stream_log_file = crate::STREAM_LOG_FILE.try_get().ok();
-        if let Some(ref log_file) = stream_log_file {
-            crate::log_stream_to_file(log_file, &format!(
-                "\n\n========== 翻译批次 ==========\n时间: {}\nProvider: {}\nModel: {}\n\n--- 请求体 ---\n{}\n\n--- 流式响应 ---\n",
-                chrono::Local::now().format("%H:%M:%S%.3f"),
-                self.service_name, self.model,
-                request_body.to_string(),
-            ));
-        }
-
-        let mut resp = req.send().await.map_err(|e| AppError::TranslateNetworkError {
-            provider: self.service_name.clone(),
-            detail: e.to_string(),
-        })?;
-
-        let status = resp.status();
-
-        // 限流
-        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(AppError::TranslateRateLimit {
-                provider: self.service_name.clone(),
-                retry_after: Some(60),
-            });
-        }
-
-        if !status.is_success() {
-            let error_body = resp.text().await.unwrap_or_default();
-            // 余额不足：优先于认证失败判断（部分服务商余额不足时返回 403 而非 402）
-            if let Some(detail) = check_insufficient_balance(status, &error_body) {
-                return Err(AppError::TranslateInsufficientBalance {
-                    provider: self.service_name.clone(),
-                    detail,
-                });
-            }
-            // 认证失败（401/403）：排除了余额不足后才判定为认证失败
-            if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-                return Err(AppError::TranslateAuthFailed {
-                    provider: self.service_name.clone(),
-                });
-            }
-            crate::log_api_debug(
-                &self.service_name, &self.model, "auto", "auto",
-                &request_body.to_string(), &error_body, status.as_u16(),
-            );
-            if let Some(ref log_file) = stream_log_file {
-                crate::log_stream_to_file(log_file, &format!(
-                    "\n[HTTP {}] {}\n\n========== 翻译批次结束（错误）==========\n",
-                    status, error_body.chars().take(200).collect::<String>(),
-                ));
-            }
-            return Err(AppError::TranslateNetworkError {
-                provider: self.service_name.clone(),
-                detail: format!("HTTP {}: {}", status, error_body.chars().take(200).collect::<String>()),
-            });
-        }
-
-        // 流式读取 SSE
-        let mut buffer = String::new();
-        let mut full_content = String::new();
-        let mut seen_content = false;
-        let mut prompt_tokens = 0u64;
-        let mut completion_tokens = 0u64;
-
-        loop {
-            let chunk_result = tokio::time::timeout(
-                std::time::Duration::from_secs(chunk_timeout_secs),
-                resp.chunk(),
-            ).await;
-
-            // 流中断时保留已收到的部分内容（而非直接返回错误）：
-            // Qwen3-8B 等小模型的流式响应经常中途断开（chunk error / timeout），
-            // 但此时可能已收到 4/5 条正确翻译。丢弃它们会导致整批重试，浪费大量 API 调用。
-            // 改为 break 跳出循环，让后续 parse_numbered_response 用正则提取已收到的部分结果。
-            let chunk = match chunk_result {
-                Ok(Ok(Some(c))) => c,       // 正常收到 chunk，继续处理
-                Ok(Ok(None)) => break,      // 流正常结束
-                Ok(Err(e)) => {
-                    // chunk 解码错误（如 "error decoding response body"）
-                    tracing::warn!(
-                        "流中断（chunk error）：已收到 {} 字符，尝试解析部分结果。错误: {}",
-                        full_content.len(), e
-                    );
-                    if let Some(ref log_file) = stream_log_file {
-                        crate::log_stream_to_file(log_file, &format!(
-                            "\n[stream interrupted: {}]\n", e
-                        ));
-                    }
-                    break; // 不返回错误，继续解析 full_content
-                }
-                Err(_) => {
-                    // chunk 超时（无数据超过 chunk_timeout_secs）
-                    tracing::warn!(
-                        "流中断（chunk timeout）：已收到 {} 字符，尝试解析部分结果",
-                        full_content.len()
-                    );
-                    if let Some(ref log_file) = stream_log_file {
-                        crate::log_stream_to_file(log_file, "\n[stream timeout]\n");
-                    }
-                    break; // 不返回错误，继续解析 full_content
-                }
-            };
-
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-            while let Some(newline_pos) = buffer.find('\n') {
-                let line = buffer[..newline_pos].trim().to_string();
-                buffer = buffer[newline_pos + 1..].to_string();
-
-                if line.is_empty() { continue; }
-
-                if let Some(json_str) = line.strip_prefix("data: ") {
-                    if json_str.trim() == "[DONE]" { continue; }
-
-                    if let Ok(chunk_json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                        let delta_obj = &chunk_json["choices"][0]["delta"];
-
-                        // Qwen3 thinking 模式：reasoning_content 实时记录到日志
-                        if let Some(reasoning) = delta_obj["reasoning_content"].as_str() {
-                            if !reasoning.is_empty() {
-                                if let Some(ref log_file) = stream_log_file {
-                                    crate::log_stream_to_file(log_file, reasoning);
-                                }
-                            }
-                        }
-
-                        // 累积 content
-                        if let Some(delta) = delta_obj["content"].as_str() {
-                            if !delta.is_empty() {
-                                if !seen_content {
-                                    seen_content = true;
-                                    if let Some(ref log_file) = stream_log_file {
-                                        crate::log_stream_to_file(log_file, "\n\n--- 最终输出 ---\n");
-                                    }
-                                }
-                                full_content.push_str(delta);
-                                if let Some(ref log_file) = stream_log_file {
-                                    crate::log_stream_to_file(log_file, delta);
-                                }
-                            }
-                        }
-
-                        // 累积 usage
-                        if let Some(usage) = chunk_json.get("usage") {
-                            prompt_tokens = usage["prompt_tokens"].as_u64().unwrap_or(0);
-                            completion_tokens = usage["completion_tokens"].as_u64().unwrap_or(0);
-                        }
-                    }
-                }
-            }
-        }
-
-        // LM Studio 流式响应可能不返回 usage，用字符数估算
-        if prompt_tokens == 0 || completion_tokens == 0 {
-            let estimated_prompt = (system_prompt.len() + user_prompt.len()) / 4;
-            let estimated_completion = full_content.len() / 3;
-            if prompt_tokens == 0 { prompt_tokens = estimated_prompt as u64; }
-            if completion_tokens == 0 { completion_tokens = estimated_completion as u64; }
-        }
-
-        // 流式日志：结束汇总
-        if let Some(ref log_file) = stream_log_file {
-            crate::log_stream_to_file(log_file, &format!(
-                "\n\n=== 翻译批次结束 ===\n总字符数: {}\nprompt_tokens: {}\ncompletion_tokens: {}\n时间: {}\n",
-                full_content.len(), prompt_tokens, completion_tokens,
-                chrono::Local::now().format("%H:%M:%S"),
-            ));
-        }
-
-        // 累计 token 用量
-        if prompt_tokens > 0 || completion_tokens > 0 {
-            use std::sync::atomic::Ordering;
-            self.prompt_tokens.fetch_add(prompt_tokens, Ordering::Relaxed);
-            self.completion_tokens.fetch_add(completion_tokens, Ordering::Relaxed);
-            self.total_tokens.fetch_add(prompt_tokens + completion_tokens, Ordering::Relaxed);
-        }
-
-        // 开发者模式：记录 API 调试日志
-        crate::log_api_debug(
-            &self.service_name,
-            &self.model,
-            "auto",
-            "auto",
-            &request_body.to_string(),
-            &full_content,
-            200,
-        );
-
-        Self::parse_numbered_response(&full_content, texts.len())
-            .map(|translations| {
-                translations
-                    .into_iter()
-                    .map(|t| clean_json_leak(&t))
-                    .collect()
-            })
-    }
-
-    /// 判断 base_url 是否为本地模型
-    fn is_local_url(&self) -> bool {
-        self.base_url.contains("localhost")
-            || self.base_url.contains("127.0.0.1")
-            || self.base_url.contains("192.168.")
-            || self.base_url.contains("10.")
-            || self.base_url.contains("172.16.")
-            || self.base_url.contains("172.17.")
-            || self.base_url.contains("172.18.")
-            || self.base_url.contains("172.19.")
-            || self.base_url.contains("172.20.")
-            || self.base_url.contains("172.21.")
-            || self.base_url.contains("172.22.")
-            || self.base_url.contains("172.23.")
-            || self.base_url.contains("172.24.")
-            || self.base_url.contains("172.25.")
-            || self.base_url.contains("172.26.")
-            || self.base_url.contains("172.27.")
-            || self.base_url.contains("172.28.")
-            || self.base_url.contains("172.29.")
-            || self.base_url.contains("172.30.")
-            || self.base_url.contains("172.31.")
-    }
-}
-
-#[async_trait::async_trait]
-impl TranslateProviderTrait for OpenAiProvider {
-    async fn translate(
-        &self,
-        texts: &[String],
-        source_lang: &str,
-        target_lang: &str,
-    ) -> Result<Vec<String>, AppError> {
-        // token 预算分块：按模型类型取预算，粗估 token = chars / 3
-        let max_input_tokens = self.model_type.max_input_tokens();
-
-        let mut chunks: Vec<Vec<&String>> = Vec::new();
-        let mut current: Vec<&String> = Vec::new();
-        let mut current_tokens = 0usize;
-        for text in texts {
-            let tokens = text.chars().count() / 3 + 1;
-            if !current.is_empty() && current_tokens + tokens > max_input_tokens {
-                chunks.push(std::mem::take(&mut current));
-                current_tokens = 0;
-            }
-            current.push(text);
-            current_tokens += tokens;
-        }
-        if !current.is_empty() {
-            chunks.push(current);
-        }
-
-        let mut results = Vec::with_capacity(texts.len());
-        for chunk in &chunks {
-            let translated = self.translate_single_batch(chunk, source_lang, target_lang).await?;
-            results.extend(translated);
-        }
-        Ok(results)
-    }
-
-    async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
-        // AI 模型支持任意语言，返回常用列表
-        Ok(vec![
-            LanguageInfo { code: "zh".into(), name: "Chinese".into(), native_name: "中文".into() },
-            LanguageInfo { code: "en".into(), name: "English".into(), native_name: "English".into() },
-            LanguageInfo { code: "ja".into(), name: "Japanese".into(), native_name: "日本語".into() },
-            LanguageInfo { code: "ko".into(), name: "Korean".into(), native_name: "한국어".into() },
-            LanguageInfo { code: "fr".into(), name: "French".into(), native_name: "Français".into() },
-            LanguageInfo { code: "de".into(), name: "German".into(), native_name: "Deutsch".into() },
-            LanguageInfo { code: "es".into(), name: "Spanish".into(), native_name: "Español".into() },
-            LanguageInfo { code: "ru".into(), name: "Russian".into(), native_name: "Русский".into() },
-            LanguageInfo { code: "it".into(), name: "Italian".into(), native_name: "Italiano".into() },
-            LanguageInfo { code: "pt".into(), name: "Portuguese".into(), native_name: "Português".into() },
-        ])
-    }
-
-    async fn test_connection(&self) -> Result<(), AppError> {
-        // 发一个最小翻译请求验证连通性
-        self.translate(&["Hello".to_string()], "en", "zh").await?;
-        Ok(())
-    }
-
-    fn token_usage(&self) -> Option<TokenUsage> {
-        use std::sync::atomic::Ordering;
-        let pt = self.prompt_tokens.load(Ordering::Relaxed);
-        let ct = self.completion_tokens.load(Ordering::Relaxed);
-        let tt = self.total_tokens.load(Ordering::Relaxed);
-        if pt == 0 && ct == 0 && tt == 0 {
-            None
-        } else {
-            Some(TokenUsage {
-                prompt_tokens: pt,
-                completion_tokens: ct,
-                total_tokens: tt,
-            })
-        }
-    }
-
-    fn max_batch_tokens(&self) -> usize {
-        self.model_type.max_input_tokens()
-    }
-
-    /// 人名提取：用自定义 system/user prompt 调用 chat completion，返回纯文本响应
-    async fn extract_names_raw(
-        &self,
-        system_prompt: &str,
-        user_prompt: &str,
-    ) -> Result<String, AppError> {
-        let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
-        
-        // 根据服务商定制 stop 序列
-        let stop_sequences = if self.service_name.contains("智谱") || self.service_name.contains("GLM") || self.service_name.contains("zhipu") {
-            // 智谱 GLM 限制最多 4 个
-            vec!["\n\n", "\nNote:", "\nLet's", "\nHowever"]
-        } else {
-            // 默认：使用 6 个
-            vec!["\n\n", "\nNote:", "\nLet's", "\nHowever", "\nBut ", "\nAlso"]
-        };
-        
-        let mut request_body = serde_json::json!({
-            "model": self.model,
-            "messages": [
-                { "role": "system", "content": system_prompt },
-                { "role": "user",   "content": user_prompt },
-            ],
-            "temperature": 0,
-            "stream": true,
-            "stop": stop_sequences,
-        });
-        // response_format: json_object 并非所有 OpenAI 兼容 API 都支持
-        // 已知支持：OpenAI、DeepSeek、通义千问
-        // 已知不支持/不确定：LM Studio、Ollama、其他本地推理引擎
-        // 对云端 API 加 response_format，对本地 URL 不加（避免 400 错误）
-        // 注意：人名提取需要返回 JSON 数组 [{...}, {...}]，而 json_object 模式
-        // 强制返回单个 JSON 对象 {}，会导致模型只输出 1 个人名。
-        // 因此人名提取不使用 response_format，依赖 prompt 约束输出格式。
-        if !self.is_local_url() {
-            // 不加 response_format，让模型自由输出 JSON 数组
-        }
-        // 智谱 GLM 关闭 thinking 模式，使用正确的参数格式
-        let is_zhipu = self.service_name.contains("智谱") || self.service_name.contains("GLM") || self.service_name.contains("zhipu");
-        if is_zhipu {
-            request_body["thinking"] = serde_json::json!({
-                "type": "disabled"
-            });
-        }
-        // 统一关闭 thinking 模式：Qwen3 / DeepSeek / Generic 均禁用推理过程
-        // 例外：Qwen3 "nothink" 版本本身已禁用，强行添加会导致空响应。
-        // 智谱 GLM 用独立的 thinking.type 参数，不走 enable_thinking。
-        let skip_thinking_disable = is_zhipu
-            || (self.model_type == ModelType::Qwen3 && self.model.to_lowercase().contains("nothink"));
-        if !skip_thinking_disable {
-            if self.is_local_url() {
-                request_body["chat_template_kwargs"] = serde_json::json!({
-                    "enable_thinking": false
-                });
-            } else {
-                request_body["enable_thinking"] = serde_json::json!(false);
-            }
-        }
-        // 智谱 GLM 响应较慢，使用更长的超时
-        let timeout_secs = if self.is_local_url() { 1800 } else if is_zhipu { 180 } else { 120 };
-        let chunk_timeout_secs = if self.is_local_url() { 300 } else if is_zhipu { 60 } else { 60 };
-        let mut req = self
-            .client
-            .post(&url)
-            .timeout(std::time::Duration::from_secs(timeout_secs))
-            .json(&request_body);
-        if let Some(ref key) = self.api_key {
-            if !key.is_empty() {
-                if self.base_url.contains("openai.azure.com") {
-                    req = req.header("api-key", key);
-                } else {
-                    req = req.header("Authorization", format!("Bearer {}", key));
-                }
-            }
-        }
-
-        // 流式实时日志：从 task_local 读取当前并发槽位的文件句柄
-        let stream_log_file = crate::STREAM_LOG_FILE.try_get().ok();
-        if let Some(ref log_file) = stream_log_file {
-            crate::log_stream_to_file(log_file, &format!(
-                "\n\n========== 人名预扫描开始 ==========\n时间: {}\nProvider: {}\nModel: {}\n\n--- 请求体 ---\n{}\n\n--- 流式响应 ---\n",
-                chrono::Local::now().format("%H:%M:%S%.3f"),
-                self.service_name, self.model,
-                request_body.to_string(),
-            ));
-        }
-
-        let mut resp = req.send().await.map_err(|e| AppError::TranslateNetworkError {
-            provider: self.service_name.clone(),
-            detail: e.to_string(),
-        })?;
-        let status = resp.status();
-
-        if !status.is_success() {
-            let error_body = resp.text().await.unwrap_or_default();
-            crate::log_api_debug(
-                &self.service_name,
-                &self.model,
-                "auto",
-                "auto",
-                &request_body.to_string(),
-                &error_body,
-                status.as_u16(),
-            );
-            if let Some(ref log_file) = stream_log_file {
-                crate::log_stream_to_file(log_file, &format!(
-                    "\n[HTTP {}] {}\n\n========== 人名预扫描结束（错误）==========\n",
-                    status, error_body,
-                ));
-            }
-            return Err(AppError::TranslateNetworkError {
-                provider: self.service_name.clone(),
-                detail: format!("HTTP {}: {}", status, error_body.chars().take(200).collect::<String>()),
-            });
-        }
-
-        // 流式读取 SSE
-        let mut buffer = String::new();
-        let mut full_content = String::new();
-        let mut seen_content = false;
-        let mut prompt_tokens = 0u64;
-        let mut completion_tokens = 0u64;
-
-        loop {
-            let chunk_result = tokio::time::timeout(
-                std::time::Duration::from_secs(chunk_timeout_secs),
-                resp.chunk(),
-            ).await.map_err(|_| {
-                crate::log_api_debug(
-                    &self.service_name,
-                    &self.model,
-                    "auto",
-                    "auto",
-                    &request_body.to_string(),
-                    &format!("[chunk timeout after {} chars, {}s no data]", full_content.len(), chunk_timeout_secs),
-                    200,
-                );
-                AppError::TranslateNetworkError {
-                    provider: self.service_name.clone(),
-                    detail: format!("stream chunk timeout: {}s no data", chunk_timeout_secs),
-                }
-            })?;
-
-            let chunk = chunk_result.map_err(|e| AppError::TranslateNetworkError {
-                provider: self.service_name.clone(),
-                detail: format!("stream chunk error: {}", e),
-            })?;
-
-            let Some(chunk) = chunk else { break; };
-
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-
-            while let Some(newline_pos) = buffer.find('\n') {
-                let line = buffer[..newline_pos].trim().to_string();
-                buffer = buffer[newline_pos + 1..].to_string();
-
-                if line.is_empty() { continue; }
-
-                if let Some(json_str) = line.strip_prefix("data: ") {
-                    if json_str.trim() == "[DONE]" { continue; }
-
-                    if let Ok(chunk_json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                        let delta_obj = &chunk_json["choices"][0]["delta"];
-
-                        // Qwen3 thinking 模式：reasoning_content 实时记录到日志
-                        if let Some(reasoning) = delta_obj["reasoning_content"].as_str() {
-                            if !reasoning.is_empty() {
-                                if let Some(ref log_file) = stream_log_file {
-                                    crate::log_stream_to_file(log_file, reasoning);
-                                }
-                            }
-                        }
-
-                        // 累积 content
-                        if let Some(delta) = delta_obj["content"].as_str() {
-                            if !delta.is_empty() {
-                                if !seen_content {
-                                    seen_content = true;
-                                    if let Some(ref log_file) = stream_log_file {
-                                        crate::log_stream_to_file(log_file, "\n\n--- 最终输出 ---\n");
-                                    }
-                                }
-                                full_content.push_str(delta);
-                                if let Some(ref log_file) = stream_log_file {
-                                    crate::log_stream_to_file(log_file, delta);
-                                }
-                            }
-                        }
-
-                        // 累积 usage
-                        if let Some(usage) = chunk_json.get("usage") {
-                            prompt_tokens = usage["prompt_tokens"].as_u64().unwrap_or(0);
-                            completion_tokens = usage["completion_tokens"].as_u64().unwrap_or(0);
-                        }
-                    }
-                }
-            }
-        }
-
-        // LM Studio 流式响应可能不返回 usage 字段，用字符数估算
-        // 估算必须在日志之前，否则日志显示的 token 数永远是 0
-        if prompt_tokens == 0 || completion_tokens == 0 {
-            // 估算：prompt token ≈ system+user 字符数 / 4，completion token ≈ 输出字符数 / 3
-            let estimated_prompt = (system_prompt.len() + user_prompt.len()) / 4;
-            let estimated_completion = full_content.len() / 3;
-            if prompt_tokens == 0 { prompt_tokens = estimated_prompt as u64; }
-            if completion_tokens == 0 { completion_tokens = estimated_completion as u64; }
-        }
-
-        // 流式日志：结束汇总
-        if let Some(ref log_file) = stream_log_file {
-            crate::log_stream_to_file(log_file, &format!(
-                "\n\n=== 人名预扫描结束 ===\n总字符数: {}\nprompt_tokens: {}\ncompletion_tokens: {}\n时间: {}\n",
-                full_content.len(), prompt_tokens, completion_tokens,
-                chrono::Local::now().format("%H:%M:%S"),
-            ));
-        }
-
-        // 累计 token 用量
-        if prompt_tokens > 0 || completion_tokens > 0 {
-            use std::sync::atomic::Ordering;
-            self.prompt_tokens.fetch_add(prompt_tokens, Ordering::Relaxed);
-            self.completion_tokens.fetch_add(completion_tokens, Ordering::Relaxed);
-            self.total_tokens.fetch_add(prompt_tokens + completion_tokens, Ordering::Relaxed);
-        }
-
-        // 开发者模式：记录 API 调试日志
-        crate::log_api_debug(
-            &self.service_name,
-            &self.model,
-            "auto",
-            "auto",
-            &request_body.to_string(),
-            &full_content,
-            200,
-        );
-
-        Ok(full_content)
-    }
-
-    fn service_name(&self) -> &str {
-        &self.service_name
-    }
-}
-
-// === SECTION 5.5 END ===
-
-/// 翻译调度器
-/// 负责缓存查询、分段、占位符保护、限流重试
 pub struct TranslateScheduler<'a> {
     db: &'a Database,
     provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
@@ -3161,10 +1484,8 @@ impl<'a> TranslateScheduler<'a> {
                         entry.text
                     );
                 }
-            } else {
-                if entry.text.contains("Waaaa") || entry.text.contains("What's your name") {
-                    eprintln!("[DEBUG CACHE] #{} cache MISS", entry.index);
-                }
+            } else if entry.text.contains("Waaaa") || entry.text.contains("What's your name") {
+                eprintln!("[DEBUG CACHE] #{} cache MISS", entry.index);
             }
 
             // 占位符保护（按引擎类型选择策略）
@@ -3288,7 +1609,7 @@ impl<'a> TranslateScheduler<'a> {
         // 2. 分批翻译（带重试），并发度由 self.concurrency 控制
         // 策略：长条目按模型配置的批次大小提高效率；短条目（<30 字节）单独按 5 条一批，
         // 避免 AI 把短句和相邻长句合并翻译导致整条批次偏移。
-        let (long_batch_size, _) = get_model_batch_sizes(&*self.model);
+        let (long_batch_size, _) = get_model_batch_sizes(&self.model);
         let short_batch_size = 5;
         let short_text_threshold = 30;
         if !to_translate.is_empty() {
@@ -3595,283 +1916,6 @@ async fn translate_with_retry_provider(
 }
 
 /// 获取模型的批次大小配置
-/// 返回 (initial_batch_size, fallback_sizes)
-/// initial_batch_size: 首次尝试的批次大小
-/// fallback_sizes: 降级时的批次大小列表
-fn get_model_batch_sizes(model: &str) -> (usize, Vec<usize>) {
-    const DEFAULT_BATCH_SIZES: [usize; 5] = [30, 10, 5, 3, 1];
-    
-    // 按模型名称匹配（优先级最高）
-    let model_lower = model.to_lowercase();
-    if model_lower.contains("glm-4.7-flash") || model_lower.contains("glm-4-7-flash") {
-        // GLM 4.7 flash 倾向于把跨条目的句子重新分配，批次越大错位范围越大
-        // 用 10 条一批减少错位影响范围，降级路径 10→5→3→1
-        return (10, vec![10, 5, 3, 1]);
-    }
-    if model_lower.contains("glm-4.5") || model_lower.contains("glm-4-5") {
-        return (100, vec![100, 30, 10, 5, 3, 1]);
-    }
-
-    // 按 API 来源匹配（智谱 GLM 官方 API）
-    if model_lower.starts_with("glm-") {
-        return (150, vec![150, 30, 10, 5, 3, 1]);
-    }
-
-    // Qwen3 小模型（8B/4B/7B 等）：参数量小，JSON 输出能力有限
-    // 实测 10 条批次失败率 43%，5 条批次成功率 76%
-    // 直接从 5 条开始，降级路径 5→3→1，减少无效的 10 条尝试
-    if model_lower.contains("qwen3") && (model_lower.contains("8b") || model_lower.contains("4b") || model_lower.contains("7b")) {
-        return (5, vec![5, 3, 1]);
-    }
-    
-    // 默认配置
-    (30, DEFAULT_BATCH_SIZES.to_vec())
-}
-
-/// 批次降级翻译：对齐失败时自动缩小批次重试（迭代实现，无递归）
-/// 顺序：根据模型配置动态决定，默认 30 -> 10 -> 5 -> 3 -> 1
-/// 每一级只重试仍然失败的条目，已成功的不重试
-/// 返回 Vec<String>，失败的条目用空字符串占位（长度始终等于输入）
-async fn translate_batch_with_fallback(
-    provider: &dyn TranslateProviderTrait,
-    texts: &[String],
-    source_lang: &str,
-    target_lang: &str,
-    model: &str,
-    cancel_counter: &std::sync::Arc<std::sync::atomic::AtomicU64>,
-    my_gen: u64,
-    rate_limit: RateLimitPolicy,
-) -> Vec<String> {
-    let (_, batch_sizes) = get_model_batch_sizes(model);
-    let min_interval = rate_limit.min_interval();
-
-    // 结果数组，初始全空；pending 记录尚未翻译成功的索引
-    let mut results: Vec<String> = vec![String::new(); texts.len()];
-    let mut pending: Vec<usize> = (0..texts.len()).collect();
-
-    for &batch_size in &batch_sizes {
-        if pending.is_empty() {
-            break;
-        }
-        if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
-            break;
-        }
-
-        let mut still_pending: Vec<usize> = Vec::new();
-
-        for chunk_indices in pending.chunks(batch_size) {
-            if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
-                break;
-            }
-            // QPS 限流：降级重试的每个子批次请求前强制等待
-            // 首批的第一个子批次已在调用方（translate_entries_full）sleep 过，跳过
-            if !min_interval.is_zero() && !(batch_size == batch_sizes[0] && chunk_indices[0] == 0) {
-                tokio::time::sleep(min_interval).await;
-            }
-            let chunk_texts: Vec<String> =
-                chunk_indices.iter().map(|&i| texts[i].clone()).collect();
-            match translate_with_retry_provider(
-                provider,
-                &chunk_texts,
-                source_lang,
-                target_lang,
-                cancel_counter,
-                my_gen,
-            )
-            .await
-            {
-                Ok(translations) if translations.len() == chunk_indices.len() => {
-                    // 完全对齐：填入结果，但检查空译文和错位译文
-                    // 错位检测：9b 模型在批次翻译时可能拆分/合并条目，
-                    // 导致翻译内容错位到相邻条目。检测到异常的条目不填入 results，
-                    // 而是放入 still_pending 进入下一级降级重试（更小批次/单条）。
-                    // 例外：batch_size == 1 时跳过错位检测——单条翻译没有相邻条目，
-                    // 不可能发生批次内错位；且确定性 API（百度/DeepL/Google 等）单条
-                    // 翻译结果就是"正确答案"。后续仍有 failed 判定（空译文/无 CJK/音效
-                    // 不一致等）兜底，不会放过真正的翻译失败。
-                    let skip_shift_check = batch_size == 1;
-                    let mut shift_detected = false;
-                    for (&idx, t) in chunk_indices.iter().zip(translations.iter()) {
-                        if t.is_empty() {
-                            continue;
-                        }
-                        let orig_text = &texts[idx];
-                        let orig_len = orig_text.chars().count().max(1);
-                        let trans_len = t.chars().count();
-                        // 模型返回原文检测：译文与原文相同（去掉标签后）时，
-                        // 模型可能直接原样返回了输入而没有翻译。
-                        // 例外：音效标记/音乐符号/非英语内容保持原样是正确行为。
-                        // 检测到时标记为待重试，进入更小批次降级。
-                        // batch_size==1 时跳过——已无更小批次可降级，接受结果即可。
-                        {
-                            let is_sound = looks_like_sound_effect(orig_text);
-                            let is_music = is_music_or_symbol_only(orig_text);
-                            let is_non_english = !has_english_word(orig_text, 3);
-                            if !skip_shift_check && !is_sound && !is_music && !is_non_english {
-                                // 去掉格式标签后比较
-                                let orig_clean = strip_format_tags(orig_text).trim().to_string();
-                                let trans_clean = strip_format_tags(t).trim().to_string();
-                                if orig_clean == trans_clean && !orig_clean.is_empty() {
-                                    tracing::warn!(
-                                        "批次未翻译检测：idx={} 译文与原文相同，标记为待重试",
-                                        idx
-                                    );
-                                    shift_detected = true;
-                                    continue; // 不填入 results，进入 still_pending
-                                }
-                            }
-                        }
-                        // 部分翻译检测：译文含 CJK 但同时残留多个英文单词
-                        // Qwen3-8B 常见模式：翻译后半部分但保留前半部分英文原文
-                        // 例外：音效标记/音乐符号/非英语内容不检测
-                        // batch_size==1 时跳过——已无更小批次可降级，
-                        // 部分翻译总比回退到原文好。
-                        {
-                            let is_sound = looks_like_sound_effect(orig_text);
-                            let is_music = is_music_or_symbol_only(orig_text);
-                            let is_non_english = !has_english_word(orig_text, 3);
-                            if !skip_shift_check && !is_sound && !is_music && !is_non_english
-                                && is_partial_translation(orig_text, t) {
-                                tracing::warn!(
-                                    "批次部分翻译检测：idx={} 译文残留多个英文单词，标记为待重试",
-                                    idx
-                                );
-                                shift_detected = true;
-                                continue; // 不填入 results，进入 still_pending
-                            }
-                        }
-                        // 跳过音效标记和音乐符号（长度比值无意义）
-                        let is_sound = looks_like_sound_effect(orig_text);
-                        let is_music = is_music_or_symbol_only(orig_text);
-                        // 单条翻译时也检测"非音效行丢失"：
-                        // 多行原文含非音效行，但译文只是音效标记（如 "from our mothers!\n[ Mup crying ]" → "[Mup 哭泣]"）
-                        // 这种情况即使单条翻译也需要重试，因为非音效行被丢失了
-                        let lost_non_sound = skip_shift_check
-                            && !is_sound
-                            && !is_music
-                            && trans_len > 0
-                            && has_lost_non_sound_lines(orig_text, t);
-                        if lost_non_sound {
-                            tracing::warn!(
-                                "单条翻译非音效行丢失：idx={} 原文含非音效行但译文仅为音效标记，标记为待重试",
-                                idx
-                            );
-                            shift_detected = true;
-                            continue; // 不填入 results，进入 still_pending
-                        }
-                        if !skip_shift_check && !is_sound && !is_music && trans_len > 0 {
-                            let ratio = trans_len as f64 / orig_len as f64;
-                            // 错位检测阈值根据原文长度动态调整：
-                            // - 长原文（≥30字符）：ratio < 0.15 表示严重偏短（如两行只翻译了第一行）
-                            //   0.15 能捕获真正的错位（ratio 通常 < 0.1），同时不误判正常的中英翻译
-                            //   注意：中英翻译压缩比通常在 0.15-0.3（中文信息密度高），
-                            //   之前的 0.25 阈值会误判正常翻译为错位，导致降级重试失败（空译文）
-                            // - 中等原文（15~29字符）：启用 ratio < 0.1 检测。
-                            //   中文信息密度高，28 字符英文 → 7 字符中文（ratio 0.25）是正常翻译，
-                            //   但 25 字符 → 2 字符（ratio 0.08）通常是错位。
-                            //   之前的固定字符差 > 20 阈值会误判 "But I have something to say."(28) → "但我有话要说。"(7)
-                            //   差 21 > 20 触发误判，导致 5 级降级重试全部失败、译文留空。
-                            // - 极短原文（<15字符）：ratio 检测不可靠（分母太小），用固定字符数差值检测：
-                            //   译文比原文少 10 字符以上才判为错位
-                            // - 长度比值 > 5.0 且 trans_len > 10：译文严重偏长（如把相邻条目合并了）
-                            // - 多行原文（含\n）但译文不含换行：可能只翻译了第一行，降级重试
-                            let short_ratio_threshold = if orig_len >= 30 { 0.15 }
-                                else if orig_len >= 15 { 0.1 }
-                                else { 0.0 };
-                            let short_char_diff = if orig_len < 15 {
-                                (orig_len as i64 - trans_len as i64) > 10
-                            } else {
-                                false
-                            };
-                            let multiline_split = orig_text.contains('\n')
-                                && !t.contains('\n')
-                                && orig_len >= 20
-                                && trans_len > 0
-                                && ratio < 0.5;
-                            if ratio < short_ratio_threshold
-                                || short_char_diff
-                                || multiline_split
-                                || (ratio > 5.0 && trans_len > 10)
-                            {
-                                tracing::warn!(
-                                    "批次错位检测：idx={} 原文{}字符→译文{}字符 ratio={:.2}，标记为待重试",
-                                    idx, orig_len, trans_len, ratio
-                                );
-                                shift_detected = true;
-                                continue; // 不填入 results，进入 still_pending
-                            }
-                        }
-                        results[idx] = t.clone();
-                    }
-                    if shift_detected && batch_size > 1 {
-                        tracing::warn!(
-                            "批次大小 {} 检测到错位，将异常条目降级到更小批次重试",
-                            batch_size
-                        );
-                    }
-                    for &idx in chunk_indices {
-                        if results[idx].is_empty() {
-                            still_pending.push(idx);
-                        }
-                    }
-                }
-                Ok(translations) => {
-                    // 数量不匹配：把非空的填入，空的留到下一级
-                    tracing::warn!(
-                        "批次降级：大小 {} 返回数量不匹配（期望 {}，实际 {}），继续降级",
-                        batch_size,
-                        chunk_indices.len(),
-                        translations.len()
-                    );
-                    for (&idx, t) in chunk_indices.iter().zip(translations.iter()) {
-                        if !t.is_empty() {
-                            results[idx] = t.clone();
-                        }
-                    }
-                    for &idx in chunk_indices {
-                        if results[idx].is_empty() {
-                            still_pending.push(idx);
-                        }
-                    }
-                }
-                Err(e) => {
-                    // 整批失败，全部留到下一级
-                    tracing::warn!(
-                        "批次降级：大小 {} 翻译失败（{}），继续降级",
-                        batch_size,
-                        e
-                    );
-                    still_pending.extend_from_slice(chunk_indices);
-                }
-            }
-        }
-
-        pending = still_pending;
-    }
-
-    // 最终兜底：经过所有降级重试（30→10→5→3→1）仍为空的条目，
-    // 用原文填充译文，确保导出时不出现空白行。
-    // 这些条目会在后续 failed 判定逻辑中被标记为 failed（译文=原文），
-    // 用户可在 UI 中看到并手动重翻译或编辑。
-    for (idx, r) in results.iter_mut().enumerate() {
-        if r.is_empty() {
-            tracing::warn!(
-                "批次降级翻译：条目 {} 经所有重试仍为空，用原文兜底",
-                idx
-            );
-            *r = texts[idx].clone();
-        }
-    }
-
-    results
-}
-
-
-// === 新增传统翻译 Provider ===
-
-/// DeepL 翻译 API
-/// 文档：https://developers.deepl.com/docs/api-reference/translate/openapi-spec-for-text-translate
-/// 认证：Authorization: DeepL-Auth-Key xxx
 /// Free 版用 https://api-free.deepl.com，Pro 版用 https://api.deepl.com
 pub struct DeepLProvider {
     auth_key: String,
@@ -4606,9 +2650,7 @@ impl TencentProvider {
         // 1. 拼接规范请求串
         let canonical_uri = "/";
         let canonical_querystring = "";
-        let canonical_headers = format!(
-            "content-type:application/json; charset=utf-8\nhost:tmt.tencentcloudapi.com\nx-tc-action:texttranslate\n"
-        );
+        let canonical_headers = "content-type:application/json; charset=utf-8\nhost:tmt.tencentcloudapi.com\nx-tc-action:texttranslate\n".to_string();
         let signed_headers = "content-type;host;x-tc-action";
         let hashed_payload = hex::encode(Sha256::digest(payload.as_bytes()));
         let canonical_request = format!(
@@ -5490,29 +3532,6 @@ impl TranslateProviderTrait for AmazonProvider {
 
 // === SECTION 14 END ===
 
-/// AI 服务 ID → 显示名映射（用于错误消息中显示真实服务商名）
-pub fn ai_service_display_name(service_id: &str) -> &'static str {
-    match service_id {
-        "deepseek" => "DeepSeek",
-        "zhipu" => "智谱GLM",
-        "siliconflow" => "硅基流动",
-        "groq" => "Groq",
-        "qwen" => "通义千问",
-        "doubao" => "豆包",
-        "hunyuan" => "混元",
-        "lingyi" => "零一万物",
-        "kimi" => "Kimi",
-        "openai" => "OpenAI",
-        "azure_openai" => "Azure OpenAI",
-        "gemini" => "Gemini",
-        "ernie" => "文心一言",
-        "ollama" => "Ollama",
-        "lmstudio" => "LM Studio",
-        "custom" => "自定义端点",
-        _ => "OpenAI",
-    }
-}
-
 /// 创建翻译 provider 实例
 pub fn create_provider(
     provider: &TranslateProvider,
@@ -5521,23 +3540,25 @@ pub fn create_provider(
     create_provider_with_proxy(provider, credentials, &ProxyConfig::default(), None, &ProviderOptions::default())
 }
 
-/// AI 翻译附加选项（glossary / name_tagging），传统翻译忽略
+/// AI 翻译附加选项（glossary / name_tagging / tpm），传统翻译忽略
 #[derive(Debug, Clone, Default)]
 pub struct ProviderOptions {
     /// 译名表：(EnglishName, ChineseTranslation)
     pub glossary: Vec<(String, String)>,
     /// 是否要求模型在译文中用 <name=En>Zh</name> 标记人名
     pub name_tagging: bool,
+    /// TPM 上限（每分钟 token 数，0 = 不限制）
+    pub tpm_limit: u64,
 }
 
 /// 创建翻译 provider 实例（带代理配置）
-/// service_name: AI 服务的显示名（如 "DeepSeek"），用于错误消息；传统翻译传 None
+/// service_id: AI 服务商标识（如 "siliconflow"），用于构造 AiService 分发行为；传统翻译传 None
 /// options: AI 翻译附加选项（glossary / name_tagging），传统翻译忽略
 pub fn create_provider_with_proxy(
     provider: &TranslateProvider,
     credentials: &ProviderCredentials,
     proxy: &ProxyConfig,
-    service_name: Option<&str>,
+    service_id: Option<&str>,
     options: &ProviderOptions,
 ) -> Result<std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>, AppError> {
     let client = proxy.build_client();
@@ -5589,12 +3610,21 @@ pub fn create_provider_with_proxy(
                 .secret_key
                 .clone()
                 .filter(|s| !s.is_empty());
-            let name = service_name.unwrap_or("OpenAI").to_string();
+            let ai_service = AiService::from_service_id(service_id.unwrap_or("custom"));
+            let name = ai_service.display_name().to_string();
+            // 优先用用户配置的 TPM，否则用服务商默认值
+            let tpm_limit = if options.tpm_limit > 0 {
+                options.tpm_limit
+            } else {
+                ai_service.default_tpm_limit()
+            };
             Ok(std::sync::Arc::new(
                 OpenAiProvider::with_client(base_url, model, model_type, api_key, client)
                     .with_service_name(name)
+                    .with_ai_service(ai_service)
                     .with_glossary(options.glossary.clone())
-                    .with_name_tagging(options.name_tagging),
+                    .with_name_tagging(options.name_tagging)
+                    .with_tpm_limit(tpm_limit),
             ))
         }
         TranslateProvider::DeepL => {
@@ -5668,1283 +3698,6 @@ pub fn create_provider_with_proxy(
 
 // === 远程 Prompt 配置 ===
 
-/// 远程 prompt 配置文件结构
-#[derive(Debug, Clone, Deserialize)]
-pub struct RemotePromptConfig {
-    pub version: String,
-    pub templates: std::collections::HashMap<String, RemotePromptTemplate>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct RemotePromptTemplate {
-    pub system: String,
-    pub user_line_format: String,
-}
-
-/// 远程 prompt 配置的 GitHub raw URL
-/// 改 prompt 只需更新此文件并 git push，所有客户端下次启动自动生效
-const REMOTE_PROMPT_URL: &str = "https://raw.githubusercontent.com/zimufan/ai-subtrans/main/config/prompts.json";
-
-/// 远程 prompt 配置缓存 key（db config 表）
-const PROMPT_CONFIG_DB_KEY: &str = "translate_prompt_remote_config";
-const PROMPT_CONFIG_VERSION_DB_KEY: &str = "translate_prompt_remote_version";
-
-/// 全局远程配置缓存（启动时拉取后写入，翻译时读取）
-static REMOTE_CONFIG: std::sync::OnceLock<std::sync::RwLock<Option<RemotePromptConfig>>> = std::sync::OnceLock::new();
-
-/// 模板视图（统一远程和内置的渲染接口）
-pub enum PromptTemplateView {
-    Builtin(&'static PromptTemplate),
-    Remote(RemotePromptTemplate),
-}
-
-impl PromptTemplateView {
-    pub fn render_system(&self, src: &str, tgt: &str) -> String {
-        match self {
-            Self::Builtin(t) => t.render_system(src, tgt),
-            Self::Remote(t) => t.system.replace("{src}", src).replace("{tgt}", tgt),
-        }
-    }
-
-    pub fn render_user(&self, texts: &[&String]) -> String {
-        match self {
-            Self::Builtin(t) => texts
-                .iter()
-                .enumerate()
-                .map(|(i, txt)| {
-                    t.user_line_format
-                        .replace("{index}", &(i + 1).to_string())
-                        .replace("{text}", txt)
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Self::Remote(t) => texts
-                .iter()
-                .enumerate()
-                .map(|(i, txt)| {
-                    t.user_line_format
-                        .replace("{index}", &(i + 1).to_string())
-                        .replace("{text}", txt)
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-        }
-    }
-}
-
-/// 模板注册表：优先远程，回退内置
-pub struct PromptTemplateRegistry;
-
-impl PromptTemplateRegistry {
-    /// 初始化（启动时调用，从 db 加载已缓存的远程配置到内存）
-    pub fn init_from_db(db: &Database) {
-        let config = db
-            .get_config(PROMPT_CONFIG_DB_KEY)
-            .ok()
-            .flatten()
-            .and_then(|json| serde_json::from_str::<RemotePromptConfig>(&json).ok());
-        let lock = REMOTE_CONFIG.get_or_init(|| std::sync::RwLock::new(None));
-        *lock.write().unwrap() = config;
-        if let Some(ref c) = *lock.read().unwrap() {
-            tracing::info!("远程 prompt 配置已加载: version={}", c.version);
-        } else {
-            tracing::info!("无远程 prompt 配置，使用内置模板");
-        }
-    }
-
-    /// 获取模板：远程优先，回退内置
-    pub fn get_template(model_type: &ModelType) -> PromptTemplateView {
-        let key = model_type.as_str();
-
-        // 尝试远程
-        if let Some(lock) = REMOTE_CONFIG.get() {
-            if let Some(ref config) = *lock.read().unwrap() {
-                if let Some(tmpl) = config.templates.get(key) {
-                    return PromptTemplateView::Remote(tmpl.clone());
-                }
-            }
-        }
-
-        // 回退内置
-        let builtin = BUILTIN_TEMPLATES
-            .iter()
-            .find(|(k, _)| *k == key)
-            .map(|(_, t)| t)
-            .unwrap_or(&BUILTIN_TEMPLATES[2].1); // 兜底 generic
-        PromptTemplateView::Builtin(builtin)
-    }
-}
-
-/// 拉取远程 prompt 配置（应用启动时调用，失败静默回退内置）
-pub async fn fetch_remote_prompt_config(db: &Database) {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .unwrap_or_default();
-
-    match client.get(REMOTE_PROMPT_URL).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.text().await {
-            Ok(text) => {
-                // 校验 JSON 合法性
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    let version = json["version"].as_str().unwrap_or("");
-                    let cached_version = db
-                        .get_config(PROMPT_CONFIG_VERSION_DB_KEY)
-                        .ok()
-                        .flatten()
-                        .unwrap_or_default();
-
-                    if version != cached_version {
-                        let _ = db.set_config(PROMPT_CONFIG_DB_KEY, &text);
-                        let _ = db.set_config(PROMPT_CONFIG_VERSION_DB_KEY, version);
-                        tracing::info!("远程 prompt 配置已更新: version={}", version);
-                    } else {
-                        tracing::info!("远程 prompt 配置版本未变: {}", version);
-                    }
-                }
-            }
-            Err(e) => tracing::warn!("远程 prompt 配置读取失败: {}", e),
-        },
-        Ok(resp) => tracing::warn!("远程 prompt 配置 HTTP {}", resp.status()),
-        Err(e) => tracing::warn!("远程 prompt 配置拉取失败（使用内置模板）: {}", e),
-    }
-    // 任何失败都静默处理，翻译时回退内置模板
-}
-
-/// 获取当前已加载的远程 prompt 配置版本（供前端显示）
-pub fn get_remote_prompt_version() -> Option<String> {
-    REMOTE_CONFIG.get().and_then(|lock| {
-        lock.read().unwrap().as_ref().map(|c| c.version.clone())
-    })
-}
-
-// === SECTION 6.5 END ===
-
-// === SECTION: 人名预扫描提取 ===
-
-/// 人名提取结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractedName {
-    pub english: String,
-    pub chinese: String,
-    /// 所有候选译名（按频率降序排列，chinese 是频率最高的）
-    pub alternatives: Vec<String>,
-}
-
-/// 人名提取的 segment 结果（含来源 segment 索引，用于频率统计）
-#[derive(Debug, Clone)]
-struct SegmentNameResult {
-    segment_idx: usize,
-    names: Vec<ExtractedName>,
-}
-
-/// 构建人名提取的 system prompt
-fn build_name_extraction_system_prompt(source_lang: &str, target_lang: &str, service_name: &str) -> String {
-    let src = lang_full_name(source_lang);
-    let tgt = lang_full_name(target_lang);
-
-    // 智谱 GLM 使用更简洁的 prompt，避免响应慢
-    if service_name.contains("智谱") || service_name.contains("GLM") || service_name.contains("zhipu") {
-        return format!(
-            "从{src}字幕中提取专有名词并翻译为{tgt}。\n\
-             只提取：人名、地名、品牌名、影视作品名、动物品种名。\n\
-             不提取：农作物、普通动物、颜色、月份、季节、单位、天气、数字、日期、形容词、动词、普通名词。\n\
-             不确定的不要提取。\n\
-             必须将每个名字翻译为{tgt}，不要输出英文。\n\n\
-             输出 JSON 数组，每个元素为 {{\"en\": \"EnglishName\", \"zh\": \"{tgt}Translation\"}}。\n\
-             品牌名（全大写或包含数字）格式：zh = \"EnglishName（中文翻译）\"，请将\"中文翻译\"替换为实际的中文翻译。\n\n\
-             示例：\n\
-             [\n\
-               {{\"en\": \"Zyx\", \"zh\": \"齐克斯\"}},\n\
-               {{\"en\": \"Q7X\", \"zh\": \"Q7X（量子7型）\"}},\n\
-               {{\"en\": \"Ploria\", \"zh\": \"普洛里亚\"}}\n\
-             ]\n\n\
-             只输出 JSON 数组，不要输出其他文字。",
-            src = src, tgt = tgt
-        );
-    }
-
-    // 默认 prompt（英文）
-    format!(
-        "Extract proper nouns from {src} subtitles and translate each to {tgt}.\n\
-         ONLY extract: person names, place/farm/field names, brand/product names, movie/TV/song/band/game titles, organization names, named animals, bird species.\n\
-         Do NOT extract: crops, generic animals, colors, months, seasons, units, weather, numbers, dates, adjectives, verbs, common nouns, farm terms.\n\
-         Do NOT extract: pronouns (I, you, he, she, it, we, they, me, my, our), prepositions (in, on, at, to, for, with, up), interjections (oh, ah, wow, hey), onomatopoeia (hmm, ugh, aah), common verbs (run, let, go, get, make), common nouns (door, room, store, engine, metal, computer, device, emergency, portal, silo, vodka, modem, fishing, bones, blood, yard, shutoff, lockdown, implants, potato distillery, hog-men, hogs, catfish, multiverse, homeworld, password man, rig, reel, fellas, dad, mom, grandpa, god, captain, level, switch, vehicle, powering, dug, crackles, roars, howdy, salud, ding, owww, ooh, oh-ho-ho, aaaaah, aaaah, hootenanny, white coat, iron giant as common noun).\n\
-         Do NOT extract stuttering patterns (M-o-o-o-ort-y, Y-o-o-ours, F-u-u-u-uck) — extract the base name instead (Morty, Yours, Fuck is not a proper noun).\n\
-         If unsure, do NOT include it.\n\
-         You MUST translate every name to {tgt}. Never output English as the translation.\n\n\
-         Output a JSON array. Each element is {{\"en\": \"EnglishName\", \"zh\": \"{tgt}Translation\"}}.\n\
-         For brand names (all-caps or containing numbers), zh = \"EnglishName（中文翻译）\" - replace \"中文翻译\" with actual Chinese translation.\n\n\
-         Example:\n\
-         [\n\
-           {{\"en\": \"Zyx\", \"zh\": \"齐克斯\"}},\n\
-           {{\"en\": \"Q7X\", \"zh\": \"Q7X（量子7型）\"}},\n\
-           {{\"en\": \"Ploria\", \"zh\": \"普洛里亚\"}}\n\
-         ]\n\n\
-         Output ONLY the JSON array. No text before or after. No explanations.",
-        src = src, tgt = tgt
-    )
-}
-
-/// 构建人名提取的 user prompt（编号格式字幕文本）
-fn build_name_extraction_user_prompt(texts: &[String]) -> String {
-    texts
-        .iter()
-        .enumerate()
-        .map(|(i, txt)| format!("{}. {}", i + 1, txt))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// 解析人名提取响应，按 `EnglishName → ChineseTranslation` 格式逐行解析
-/// 清理译名中的括号注释（如 `米奇 (Sheepdog's name)` → `米奇`）
-/// 判断字符是否为中文（CJK 统一表意文字）
-fn is_chinese_char(c: char) -> bool {
-    matches!(c,
-        '\u{4e00}'..='\u{9fff}'   // CJK 统一表意文字
-        | '\u{3400}'..='\u{4dbf}'  // CJK 扩展 A
-        | '\u{f900}'..='\u{faff}'  // CJK 兼容表意文字
-    )
-}
-
-/// 判断字符串是否纯 ASCII（无中文字符）
-fn is_pure_ascii(s: &str) -> bool {
-    s.chars().all(|c| c.is_ascii())
-}
-
-/// 从括号内提取中文翻译
-/// 模型有时输出 `EnglishName → EnglishName（中文解释）` 格式
-/// 此时括号前的部分是英文原名，中文在括号内
-/// 例如：`The FarmDroid（农场机器人）` → `农场机器人`
-///       `Mounjaro Ramp（莫努佳罗斜坡，可能指某种设备或地形特征）` → `莫努佳罗斜坡`
-fn extract_chinese_from_parenthetical(zh_raw: &str) -> Option<String> {
-    // 找到第一对括号
-    let start_idx = zh_raw.find(|c: char| c == '(' || c == '（' || c == '[' || c == '【')?;
-    let open_char = zh_raw.chars().nth(start_idx)?;
-    let close_char = match open_char {
-        '(' => ')',
-        '（' => '）',
-        '[' => ']',
-        '【' => '】',
-        _ => return None,
-    };
-    let after_open = &zh_raw[start_idx + open_char.len_utf8()..];
-    let end_idx = after_open.find(close_char)?;
-    let content = &after_open[..end_idx];
-
-    // 按逗号分割取第一段（通常是翻译，后面是解释说明）
-    let first_phrase = content
-        .split(|c: char| c == '，' || c == ',' || c == '、')
-        .next()?
-        .trim();
-
-    // 如果第一段包含中文，直接返回
-    if first_phrase.chars().any(is_chinese_char) {
-        return Some(first_phrase.to_string());
-    }
-
-    // 第一段无中文，检查整个括号内容是否有中文
-    // 提取所有中文片段（过滤掉纯英文/标点部分）
-    let chinese_only: String = content
-        .chars()
-        .filter(|c| is_chinese_char(*c) || *c == '·' || *c == '/' || *c == ' ')
-        .collect();
-    let trimmed = chinese_only.trim();
-    if !trimmed.is_empty() {
-        return Some(trimmed.to_string());
-    }
-
-    None
-}
-
-/// 判断提取的英文名是否可能是专有名词
-/// 过滤掉明显的短语、句子（9b 模型常把短语当专有名词输出）
-fn is_likely_proper_noun(english: &str) -> bool {
-    let trimmed = english.trim();
-    if trimmed.is_empty() { return false; }
-
-    // 按空格分词（连字符词算一个词）
-    let words: Vec<&str> = trimmed.split_whitespace().collect();
-    let word_count = words.len();
-
-    // 4+ 词几乎肯定是短语/句子，不是专有名词
-    if word_count > 3 {
-        return false;
-    }
-
-    // 常见功能词/虚词 - 多词条目含这些词时判定为短语
-    // 注意：冠词 the/a/an 作为首词在专有名词中常见（The Who, The FarmDroid），
-    // 只在非首词位置才算短语标志
-    let articles: &[&str] = &["the", "a", "an"];
-    let function_words: &[&str] = &[
-        "in", "on", "at", "to", "for", "of", "with", "by",
-        "is", "are", "was", "were", "will", "be", "been", "being",
-        "this", "that", "these", "those", "next", "last",
-        "and", "or", "but", "not",
-        "his", "her", "their", "our", "my", "your",
-        "up", "down", "out", "off", "back", "here", "there",
-        "when", "where", "what", "how", "why",
-        "if", "then", "so", "because",
-        "all", "some", "any", "more", "most",
-        "two", "three", "four", "five", "six",
-        "days", "weeks", "months", "years", "day", "week", "month", "year",
-        "time", "later", "ago", "ready", "stuck",
-    ];
-
-    // 多词条目：检查是否含功能词
-    if word_count > 1 {
-        for (i, word) in words.iter().enumerate() {
-            // 去掉首尾非字母数字字符后再比较
-            let lower: String = word
-                .to_lowercase()
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_string();
-            // 冠词只在非首词位置才算短语标志
-            if i == 0 && articles.contains(&lower.as_str()) {
-                continue;
-            }
-            if function_words.contains(&lower.as_str()) || articles.contains(&lower.as_str()) {
-                return false;
-            }
-        }
-    }
-
-    // 常见非专有名词黑名单（9b 模型常把普通名词当专有名词输出）
-    // 注意：鸟种名（skylark/yellowhammer/bunting 等）保留为专有名词，
-    //       因为字幕翻译中需要统一译名。
-    // 包含：农作物、颜色、月份/星期、度量单位、天气、
-    //       农业术语、状态描述、季节、通用动物名（非特定物种名）等
-    let common_nouns: &[&str] = &[
-        // 农作物/植物
-        "oats", "oat", "wheat", "wheats", "barley", "mustard", "onion", "onions",
-        "beetroot", "beetroots", "sugar", "grass", "hay", "silage", "seed", "seeds",
-        "crop", "crops", "grain", "maize", "corn", "rice", "soybean", "potato",
-        // 通用动物名（非特定物种名/品种名）
-        "cow", "cows", "cattle", "calf", "calves", "bull", "bulls", "sheep",
-        "horse", "horses", "pig", "pigs", "chicken", "chickens", "dog", "dogs",
-        "cat", "cats", "bird", "birds",
-        // 颜色
-        "red", "green", "blue", "white", "black", "yellow", "orange", "purple",
-        "brown", "grey", "gray", "pink",
-        // 月份/星期
-        "january", "february", "march", "april", "may", "june", "july", "august",
-        "september", "october", "november", "december",
-        "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-        // 度量单位
-        "inch", "inches", "millimetre", "millimetres", "millimeter", "millimeters",
-        "centimetre", "centimetres", "meter", "meters", "kilometre", "kilometres",
-        "mile", "miles", "acre", "acres", "hectare", "hectares", "ton", "tons",
-        "tonne", "tonnes", "kilo", "kilos", "kilogram", "kilograms", "gram", "grams",
-        "litre", "litres", "gallon", "gallons",
-        // 天气/自然
-        "rain", "rains", "snow", "wind", "sun", "sunshine", "drought", "flood",
-        "storm", "weather", "moisture", "water", "fire",
-        // 农业术语
-        "harvest", "field", "fields", "farm", "barn", "shed", "tractor", "machine",
-        "combine", "plough", "mower", "seeder", "chart", "callipers", "square",
-        // 状态/描述
-        "pass", "fail", "marginal", "inconclusive", "ready", "stuck", "clear",
-        "good", "bad", "sad", "happy", "angry", "worried", "fine", "okay",
-        // 通用物品
-        "food", "dinner", "lunch", "breakfast", "drink", "tea", "coffee",
-        // 季节
-        "spring", "summer", "autumn", "fall", "winter",
-        // 其他常见误提
-        "herd", "operation", "treatment", "test", "ministry", "twins",
-        "lumps", "lump", "pneumonia", "cancer", "biopsy", "medical",
-        "fraction", "twenty",
-        // 日期/年份/数字
-        "dates", "date", "2019", "2020", "2021", "2022", "2023", "2024", "2025",
-        "twelve", "twelve-twelve",
-        // 广告/通用商业词
-        "advertisement", "advertisements", "ad", "ads",
-        // 通用描述词/状态
-        "aggressive", "bovine", "cardboard", "cleaning", "clip", "decluttering",
-        "desert", "disorganised", "early", "heads", "light", "necks", "office",
-        "palatable", "peaky", "pisser", "posted", "prepped", "pub", "shop",
-        "restrictions", "slaughtered", "speedy", "recovery", "stationary", "storage",
-        "stressed", "sugars", "whispering", "shrivelled",
-        // 通用动作/状态短语
-        "big", "plan", "grain", "carting", "grains", "combine", "man",
-        "reproducing", "calves", "telehandler", "reactor",
-        // 身体部位/发型
-        "middle", "parting", "side",
-        // 通用短语组件
-        "enough", "tall", "stage", "official", "status", "free", "tb",
-        "silent", "end", "credits", "tweezer", "things",
-        "plus", "one", "two", "inches", "below",
-        "fat", "jabs",
-        "ever", "shrinking",
-    ];
-
-    // 单词条目：检查是否在常见名词黑名单中
-    if word_count == 1 {
-        let lower: String = words[0]
-            .to_lowercase()
-            .trim_matches(|c: char| !c.is_alphanumeric())
-            .to_string();
-        if common_nouns.contains(&lower.as_str()) {
-            return false;
-        }
-    } else {
-        // 多词条目：如果所有词都在黑名单中，也不是专有名词
-        let all_common = words.iter().all(|w| {
-            let lower: String = w
-                .to_lowercase()
-                .trim_matches(|c: char| !c.is_alphanumeric())
-                .to_string();
-            common_nouns.contains(&lower.as_str()) || articles.contains(&lower.as_str())
-        });
-        if all_common {
-            return false;
-        }
-        // 多词条目：如果首词是常见形容词/描述词，很可能是短语而非专有名词
-        let first_lower: String = words[0]
-            .to_lowercase()
-            .trim_matches(|c: char| !c.is_alphanumeric())
-            .to_string();
-        let adjective_starts: &[&str] = &[
-            "big", "small", "large", "tiny", "early", "late", "old", "new",
-            "young", "tall", "short", "long", "wide", "narrow", "high", "low",
-            "fat", "thin", "slim", "heavy", "light", "dark", "bright",
-            "happy", "sad", "angry", "worried", "stressed", "disorganised",
-            "aggressive", "palatable", "peaky", "stationary", "shrivelled",
-            "silent", "official", "speedy", "ever", "middle", "side",
-            "tweezer", "plus", "storage", "reproducing", "grain", "carting",
-            "combine", "fat", "cleaning", "decluttering", "whispering",
-            "hairy", "paving", "slab",
-        ];
-        if adjective_starts.contains(&first_lower.as_str()) {
-            return false;
-        }
-    }
-
-    true
-}
-
-pub fn parse_name_extraction_response(content: &str) -> Vec<ExtractedName> {
-    use std::collections::HashSet;
-    let mut names = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
-
-    // 1. 优先尝试 JSON 解析
-    let trimmed = content.trim();
-    let json_content = strip_markdown_code_fence(trimmed);
-    if json_content.starts_with('[') || json_content.starts_with("{") {
-        if let Ok(json) = serde_json::from_str::<Vec<serde_json::Value>>(&json_content) {
-            for item in json {
-                if let (Some(en), Some(zh)) = (
-                    item.get("en").and_then(|v| v.as_str()),
-                    item.get("zh").and_then(|v| v.as_str()),
-                ) {
-                    let en = en.trim();
-                    let zh = zh.trim();
-                    if !en.is_empty() && !zh.is_empty() && seen.insert(en.to_string()) {
-                        if !is_likely_proper_noun(en) {
-                            tracing::debug!("人名过滤：'{}' 不像专有名词，跳过", en);
-                            continue;
-                        }
-                        if zh.eq_ignore_ascii_case(en) || is_pure_ascii(zh) {
-                            tracing::debug!("人名过滤：'{}' 译名 '{}' 无中文，跳过", en, zh);
-                            continue;
-                        }
-                        // 按 `/` 拆分候选译名
-                        let zh_candidates: Vec<String> = zh
-                            .split('/')
-                            .map(|s| s.trim().trim_matches('"').trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .filter(|s| !s.contains("中文翻译") && !s.contains("ChineseTranslation"))
-                            // 清理括号注释：`AgBot（农业机器人）` → `农业机器人`
-                            .map(|s| {
-                                if let Some(chinese) = extract_chinese_from_parenthetical(&s) {
-                                    chinese
-                                } else {
-                                    s
-                                }
-                            })
-                            .collect();
-                        if !zh_candidates.is_empty() {
-                            names.push(ExtractedName {
-                                english: en.to_string(),
-                                chinese: zh_candidates[0].clone(),
-                                alternatives: zh_candidates.into_iter().skip(1).collect(),
-                            });
-                        }
-                    }
-                }
-            }
-            if !names.is_empty() {
-                tracing::info!("人名提取：JSON 解析成功，提取 {} 个人名", names.len());
-                return names;
-            }
-        }
-    }
-
-    // 2. 正则提取 {"en": "...", "zh": "..."} 对（对任意内容都尝试）
-    let re_json = regex::Regex::new(
-        r#""en"\s*:\s*"([^"]+)"\s*,\s*"zh"\s*:\s*"([^"]+)""#
-    ).unwrap();
-    for cap in re_json.captures_iter(content) {
-        let en = cap[1].trim();
-        let zh = cap[2].trim();
-        if !en.is_empty() && !zh.is_empty() && seen.insert(en.to_string()) {
-            if !is_likely_proper_noun(en) { continue; }
-            if zh.eq_ignore_ascii_case(en) || is_pure_ascii(zh) { continue; }
-            let zh_candidates: Vec<String> = zh
-                .split('/')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !zh_candidates.is_empty() {
-                names.push(ExtractedName {
-                    english: en.to_string(),
-                    chinese: zh_candidates[0].clone(),
-                    alternatives: zh_candidates.into_iter().skip(1).collect(),
-                });
-            }
-        }
-    }
-    if !names.is_empty() {
-        tracing::info!("人名提取：JSON 正则提取成功，提取 {} 个人名", names.len());
-        return names;
-    }
-
-    // 3. 回退到旧的 → 格式解析（兼容模型不输出 JSON 的情况）
-    tracing::warn!("人名提取：JSON 解析失败，回退到 → 格式解析");
-
-    // 9b nothink 模型的输出模式不确定：
-    // - 有时先输出干净名单，再逐行分析（思考过程在后面）
-    // - 有时先逐行分析，再输出干净名单（思考过程在前面）
-    // 策略：扫描所有行，分出多段连续的有效名单行，取最长的一段。
-    // "有效名单行"判定：含 → 或 -> 分隔符，且不含思考关键词。
-    let thinking_keywords: &[&str] = &[
-        "let's", "note:", "however,", "maybe", "i think", "i'd say",
-        "strictly", "borderline", "usually", "might be", "referring to",
-        "descriptive", "exclude", "include", "check", "re-eval", "refining",
-        "final check", "correction", "re-check", "items to", "rule says",
-        "exclude.", "generic term", "wait,", "so:", "yes.", "no.", "sure.",
-        "exclude?", "line ", "extract", "proper noun", "common noun",
-        "going through", "line by line",
-        "but ", "but,", "also,", "furthermore", "in this", "in the",
-        "for example", "for instance", "this means", "this is", "these are",
-        "those are", "i will", "i'll", "i see", "perhaps", "probably",
-        "likely", "often", "sometimes", "could be", "would be", "should be",
-        "is it", "are they", "does it", "do they",
-        "is often", "is usually", "is a generic", "is a common",
-        "is a proper", "is a specific", "is a type",
-        "treated as", "considered", "strictly speaking",
-    ];
-
-    let is_thinking_line = |lower: &str| -> bool {
-        thinking_keywords.iter().any(|kw| lower.contains(kw))
-    };
-
-    let all_lines: Vec<&str> = content.lines().collect();
-    // 分段：连续的有效名单行（允许空行间隔）为一段
-    let mut blocks: Vec<(usize, usize)> = Vec::new(); // (start, end_exclusive)
-    let mut block_start: Option<usize> = None;
-    let mut last_valid: Option<usize> = None;
-
-    for (i, line) in all_lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        let has_sep = trimmed.contains('→') || trimmed.contains("->");
-        let lower = trimmed.to_lowercase();
-        let is_thinking = is_thinking_line(&lower);
-
-        if has_sep && !is_thinking {
-            // 有效名单行
-            if block_start.is_none() {
-                block_start = Some(i);
-            }
-            last_valid = Some(i);
-        } else {
-            // 非名单行或思考行：结束当前段
-            if let (Some(start), Some(end)) = (block_start, last_valid) {
-                blocks.push((start, end + 1));
-                block_start = None;
-                last_valid = None;
-            }
-        }
-    }
-    // 收集最后一段
-    if let (Some(start), Some(end)) = (block_start, last_valid) {
-        blocks.push((start, end + 1));
-    }
-
-    // 取最长的一段
-    let effective_lines: Vec<&str> = if blocks.is_empty() {
-        all_lines.clone()
-    } else {
-        let best = blocks.iter().max_by_key(|(s, e)| e - s).unwrap();
-        all_lines[best.0..best.1].to_vec()
-    };
-
-    for line in effective_lines {
-        let trimmed = line.trim();
-        if trimmed.is_empty() { continue; }
-        // 过滤含思考关键词的行（双重检查）
-        let lower = trimmed.to_lowercase();
-        if is_thinking_line(&lower) {
-            tracing::debug!("人名过滤：行含思考关键词，跳过: {}", trimmed.chars().take(80).collect::<String>());
-            continue;
-        }
-        // 支持 → 和 -> 两种分隔符
-        let parts: Vec<&str> = if let Some(idx) = trimmed.find('→') {
-            vec![&trimmed[..idx], &trimmed[idx + '→'.len_utf8()..]]
-        } else if let Some(idx) = trimmed.find("->") {
-            vec![&trimmed[..idx], &trimmed[idx + 2..]]
-        } else {
-            // 没有分隔符，跳过
-            continue;
-        };
-        let en = parts[0].trim().trim_matches('"').trim();
-        // 清理译名中的括号注释：`米奇 (Sheepdog's name)` → `米奇`
-        // 支持中英文括号
-        let zh_raw = parts[1].trim().trim_matches('"').trim();
-        let zh_before_paren = zh_raw
-            .split(|c| c == '(' || c == '（' || c == '[' || c == '【')
-            .next()
-            .unwrap_or(zh_raw)
-            .trim()
-            .trim_matches('"')
-            .trim();
-        // 判断是否为品牌名格式：`EnglishName → EnglishName（中文翻译）`
-        // 只有括号前部分和英文名完全相同（不区分大小写）时才视为品牌名格式。
-        // 所有专有名词都只显示中文译文，不保留原文
-        let zh_candidates: Vec<String> = if zh_before_paren.eq_ignore_ascii_case(en) {
-            // 括号前=英文名（如 Endgame → Endgame（终结者））：只取括号内中文
-            if let Some(chinese) = extract_chinese_from_parenthetical(zh_raw) {
-                chinese
-                    .split('/')
-                    .map(|s| s.trim().trim_matches('"').trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            } else {
-                vec![zh_before_paren.to_string()]
-            }
-        } else {
-            zh_before_paren
-                .split('/')
-                .map(|s| s.trim().trim_matches('"').trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect()
-        };
-        if !en.is_empty() && !zh_candidates.is_empty() && seen.insert(en.to_string()) {
-            // 过滤掉明显的短语/句子（9b 模型常把短语当专有名词输出）
-            if !is_likely_proper_noun(en) {
-                tracing::debug!("人名过滤：'{}' 不像专有名词，跳过", en);
-                continue;
-            }
-            let chinese = zh_candidates[0].clone();
-            // 如果译名和英文名完全相同（或译名是纯英文/纯ASCII），说明模型没翻译
-            // 跳过这个条目，避免把英文当译名注入翻译批次
-            if chinese.eq_ignore_ascii_case(en) || is_pure_ascii(&chinese) {
-                tracing::debug!("人名过滤：'{}' 译名 '{}' 无中文，跳过", en, chinese);
-                continue;
-            }
-            let alternatives = zh_candidates.into_iter().skip(1).collect();
-            names.push(ExtractedName {
-                english: en.to_string(),
-                chinese,
-                alternatives,
-            });
-        }
-    }
-    names
-}
-
-/// 合并多段人名提取结果，同一英文名多个译名时频率优先，平局取首次出现
-fn merge_extracted_names(segment_results: &[SegmentNameResult]) -> Vec<ExtractedName> {
-    use std::collections::{HashMap, HashSet};
-    // en_name -> (zh_name -> (count, first_segment_idx))
-    let mut stats: HashMap<String, HashMap<String, (usize, usize)>> = HashMap::new();
-
-    for result in segment_results {
-        for name in &result.names {
-            let entry = stats.entry(name.english.clone()).or_default();
-            // 把主译名和候选译名都纳入统计；同一 segment 内相同译名只计一次
-            let all_zh: HashSet<&String> = std::iter::once(&name.chinese)
-                .chain(name.alternatives.iter())
-                .collect();
-            for zh in all_zh {
-                let counter = entry.entry(zh.clone()).or_insert((0, result.segment_idx));
-                counter.0 += 1;
-            }
-        }
-    }
-
-    // 每个英文名：按频率降序排列所有候选译名，频率最高的作为 chinese，其余作为 alternatives
-    let mut merged: Vec<ExtractedName> = stats
-        .iter()
-        .map(|(en, translations)| {
-            let mut sorted: Vec<(&String, &(usize, usize))> = translations.iter().collect();
-            // 按频率降序，平局取首次出现 segment 最小的
-            sorted.sort_by(|a, b| {
-                b.1.0.cmp(&a.1.0).then_with(|| a.1.1.cmp(&b.1.1))
-            });
-            let chinese = sorted.first().map(|(zh, _)| (*zh).clone()).unwrap_or_default();
-            let alternatives: Vec<String> = sorted.iter().skip(1).map(|(zh, _)| (*zh).clone()).collect();
-            ExtractedName {
-                english: en.clone(),
-                chinese,
-                alternatives,
-            }
-        })
-        .collect();
-
-    // 按英文名排序，输出稳定
-    merged.sort_by(|a, b| a.english.to_lowercase().cmp(&b.english.to_lowercase()));
-    merged
-}
-
-/// 过滤掉模型误提取的普通词汇
-/// 移除：代词、介词、感叹词、口吃模式、常见动词/名词等非专有名词
-fn filter_common_words_from_glossary(names: Vec<ExtractedName>) -> Vec<ExtractedName> {
-    // 常见英文普通词汇黑名单（小写匹配）
-    // 这些是模型容易误提取的词，不是专有名词
-    const COMMON_WORDS: &[&str] = &[
-        // 代词
-        "i", "you", "he", "she", "it", "we", "they", "me", "my", "your", "his", "her", "our", "their",
-        // 介词/连词
-        "in", "on", "at", "to", "for", "with", "up", "down", "out", "off", "over", "under", "from", "into",
-        "and", "or", "but", "so", "if", "than", "then",
-        // 感叹词/拟声词
-        "oh", "ah", "wow", "hey", "hmm", "ugh", "aah", "ooh", "ow", "oww", "owww", "aah", "aaah", "aaaah", "aaaaah",
-        "unh", "unf", "hunh", "uhh", "hnn", "mmm", "mm",
-        "haaaa", "hahaha", "glug", "chuckles", "sniff conference",
-        // 脏话/粗口
-        "asshole", "fucking", "holy shit", "piece-of-shit", "damn", "shit",
-        // 常见动词
-        "run", "let", "go", "get", "make", "do", "did", "done", "come", "take", "give", "say", "see", "know",
-        "dug", "fishing", "powering", "crackles", "roars", "wade", "squish", "stitch",
-        // 常见名词
-        "door", "room", "store", "engine", "metal", "computer", "device", "emergency", "portal", "silo",
-        "vodka", "modem", "bones", "blood", "yard", "shutoff", "lockdown", "implants", "potato", "distillery",
-        "hog-men", "hogs", "hog", "catfish", "multiverse", "homeworld", "password", "man", "rig", "reel",
-        "fellas", "dad", "mom", "grandpa", "god", "captain", "level", "switch", "vehicle", "ding",
-        "hootenanny", "white", "coat", "iron", "giant", "skyzone", "store", "metal", "metal",
-        "computer", "science", "electricity", "fishing", "wade", "store", "room",
-        "carpet", "drugs", "government", "worry", "worm", "wolves", "humans",
-        "emperor", "general", "commander", "leader", "grandfather", "honey", "sweetie",
-        "communion", "sub-hyena", "subway", "monorail", "martinis", "mech-suit",
-        "eugenics", "infinite", "super", "frankly", "racist", "bigot",
-        "client dinner", "dog commander", "dog spokesperson", "guest house",
-        "mup facility", "mup video", "mup-a-cino", "mups", "smooth jazz",
-        "surprise improv", "endgame", "countryfile",
-        // GLM-4-9B 误提取的词
-        "access", "ahh", "all", "awesome", "aye-aye, captain!", "badass",
-        "bottles", "burps", "cellphone", "champ", "computer science", "dig",
-        "emergency shutoff", "gulp", "gunfire", "hardware store", "hatch",
-        "house", "lava", "leg", "level 17", "liberation", "muffled screaming",
-        "muffled screaming continues", "neighbor", "ocean", "pipes",
-        "portal thing", "potato distillery", "raccoon", "resistance",
-        "robots", "salud", "sighs", "smiths", "threat nullified", "tools",
-        "true", "vodka hogs", "warranty", "what", "white coat",
-        "jesus fucking christ", "it guy", "oppressor", "sanchez",
-        "huge clouds metallurgy", "iron giant", "skylark", "rex",
-        "jeremy", "georgie boy", "hog planet", "hog resistance",
-        // 口吃模式（含连字符重复字母）
-        // 这些会被单独检测
-    ];
-
-    names
-        .into_iter()
-        .filter(|name| {
-            let en_lower = name.english.to_lowercase();
-            let en_lower = en_lower.trim();
-
-            // 1. 黑名单匹配
-            if COMMON_WORDS.contains(&en_lower) {
-                tracing::debug!("人名过滤: 移除普通词汇 \"{}\"", name.english);
-                return false;
-            }
-
-            // 2. 口吃模式检测：含连字符且重复字母（如 M-o-o-o-ort-y, Y-o-o-ours, F-u-u-u-uck）
-            if en_lower.contains('-') {
-                // 检查是否有重复的字母段（如 o-o-o, u-u-u）
-                let parts: Vec<&str> = en_lower.split('-').collect();
-                if parts.len() >= 3 {
-                    // 统计单字符段的出现次数
-                    let single_char_count = parts.iter().filter(|p| p.len() == 1).count();
-                    if single_char_count >= 2 {
-                        tracing::debug!("人名过滤: 移除口吃模式 \"{}\"", name.english);
-                        return false;
-                    }
-                }
-            }
-
-            // 3. 过短词（≤2字符且非已知缩写）
-            if en_lower.len() <= 2 && !en_lower.chars().all(|c| c.is_ascii_uppercase()) {
-                tracing::debug!("人名过滤: 移除过短词 \"{}\"", name.english);
-                return false;
-            }
-
-            // 4. 译文和原文完全相同（模型没翻译）
-            if name.chinese.trim() == name.english.trim() {
-                tracing::debug!("人名过滤: 移除未翻译条目 \"{}\"", name.english);
-                return false;
-            }
-
-            // 5. 全大写拉长词（如 SNOWBALLLLL, WAAAAAAAAAAAR）
-            // 原词被拉长重复字母，不是专有名词
-            if name.english.chars().all(|c| c.is_ascii_alphabetic())
-                && name.english.chars().all(|c| c.is_ascii_uppercase())
-                && name.english.len() > 8
-            {
-                // 检查是否有重复字母（拉长模式）
-                let chars: Vec<char> = name.english.chars().collect();
-                let mut repeat_count = 0;
-                for i in 1..chars.len() {
-                    if chars[i] == chars[i-1] {
-                        repeat_count += 1;
-                    }
-                }
-                if repeat_count >= 3 {
-                    tracing::debug!("人名过滤: 移除全大写拉长词 \"{}\"", name.english);
-                    return false;
-                }
-            }
-
-            // 6. 重复短语（如 "Take, take, take"）
-            if en_lower.contains(',') {
-                let parts: Vec<&str> = en_lower.split(',').map(|p| p.trim()).collect();
-                if parts.len() >= 3 {
-                    let first = parts[0];
-                    if parts.iter().all(|p| *p == first) {
-                        tracing::debug!("人名过滤: 移除重复短语 \"{}\"", name.english);
-                        return false;
-                    }
-                }
-            }
-
-            true
-        })
-        .collect()
-}
-
-/// 过滤掉未出现在字幕文本中的名字
-/// 模型可能把 system prompt 示例中的条目（如 GS4, Jeremy, Endgame, Skylark, Countryfile）
-/// 原样复制到输出中，这些名字并不在实际字幕里，应该移除。
-/// 匹配策略：大小写不敏感地检查 english 名字是否作为子串出现在任意字幕行中。
-fn filter_names_not_in_text(names: Vec<ExtractedName>, texts: &[String]) -> Vec<ExtractedName> {
-    // 预计算：把所有字幕文本拼成一个大字符串（小写），用于快速查找
-    // 字幕总量通常 ~500 条，总字符 ~50KB，拼接后查找很快
-    let all_text_lower: String = texts
-        .iter()
-        .flat_map(|t| t.chars())
-        .map(|c| c.to_ascii_lowercase())
-        .collect();
-
-    names
-        .into_iter()
-        .filter(|name| {
-            let en_lower = name.english.to_lowercase();
-            let en_lower = en_lower.trim();
-
-            // 空字符串跳过
-            if en_lower.is_empty() {
-                return false;
-            }
-
-            // 检查是否出现在字幕文本中（大小写不敏感）
-            // 对于含空格的多词名字（如 "Rick Sanchez"），检查完整短语
-            // 对于单词名字，检查单词边界以避免子串误匹配
-            if en_lower.contains(' ') {
-                // 多词：直接检查子串
-                if all_text_lower.contains(&en_lower) {
-                    return true;
-                }
-                // 可能字幕中换行了，去掉空格再查
-                let no_space = en_lower.replace(' ', "");
-                if all_text_lower.replace(' ', "").contains(&no_space) {
-                    return true;
-                }
-                tracing::debug!("人名过滤: \"{}\" 未出现在字幕文本中（多词）", name.english);
-                return false;
-            }
-
-            // 单词：检查子串出现
-            // 简单子串匹配即可，因为人名通常是独特的
-            if all_text_lower.contains(&en_lower) {
-                return true;
-            }
-
-            tracing::debug!("人名过滤: \"{}\" 未出现在字幕文本中", name.english);
-            false
-        })
-        .collect()
-}
-
-/// 从字幕文本中提取人名（分段并发扫描 + 合并去重）
-/// 返回统一的人名译名表
-/// app_handle: 用于向前端发送进度事件（extract-names-progress）
-pub async fn extract_names_from_subtitles(
-    provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
-    texts: &[String],
-    source_lang: &str,
-    target_lang: &str,
-    max_input_tokens: usize,
-    cancel_counter: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    my_gen: u64,
-    app_handle: Option<tauri::AppHandle>,
-    user_concurrency: usize,
-    rate_limit: RateLimitPolicy,
-    model: &str,
-) -> Result<Vec<ExtractedName>, AppError> {
-    if texts.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // 按 token 预算分段
-    // 9b 模型在内容过多时容易"逐行分析"产生大量思考过程，
-    // 限制每段最多 150 条字幕（约 2500-3000 token），减少 AI 的分析量。
-    // 同时保留 token 预算上限作为第二道限制。
-    //
-    // 人名提取分段上限受翻译批次大小约束：
-    // - 翻译批次大小 >= 150（默认值）时，人名提取用默认 150 条/段
-    // - 翻译批次大小 < 150（如小模型 10 条/批）时，人名提取也用更小的值
-    // 这样小模型在人名提取时也不会因单段过多导致输出错乱
-    const DEFAULT_MAX_LINES_PER_SEGMENT: usize = 150;
-    let (translation_batch_size, _) = get_model_batch_sizes(model);
-    let max_lines_per_segment = translation_batch_size.min(DEFAULT_MAX_LINES_PER_SEGMENT);
-    let segment_budget = max_input_tokens.saturating_sub(2000).max(1000).min(3500);
-    let mut segments: Vec<Vec<String>> = Vec::new();
-    let mut current: Vec<String> = Vec::new();
-    let mut current_tokens = 0usize;
-    for text in texts {
-        let tokens = text.chars().count() / 3 + 1;
-        let would_exceed_tokens = !current.is_empty() && current_tokens + tokens > segment_budget;
-        let would_exceed_lines = current.len() >= max_lines_per_segment;
-        if would_exceed_tokens || would_exceed_lines {
-            segments.push(std::mem::take(&mut current));
-            current_tokens = 0;
-        }
-        current.push(text.clone());
-        current_tokens += tokens;
-    }
-    if !current.is_empty() {
-        segments.push(current);
-    }
-
-    let total_segments = segments.len();
-    tracing::info!("人名预扫描: {} 段（token 预算: {}，每段上限: {} 条）", total_segments, segment_budget, max_lines_per_segment);
-    let scan_start = std::time::Instant::now();
-
-    // 发送初始进度事件
-    if let Some(ref handle) = app_handle {
-        let _ = handle.emit("extract-names-progress", serde_json::json!({
-            "progress": 0,
-            "total": total_segments,
-            "done": false
-        }));
-    }
-
-    // 并发扫描各段，并发数受用户配置和限流策略控制
-    let concurrency = match rate_limit {
-        RateLimitPolicy::Qps(_) => 1,
-        RateLimitPolicy::Concurrency(max_n) => segments.len().min(user_concurrency.max(1).min(max_n)),
-    };
-    let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
-    let mut join_set = tokio::task::JoinSet::new();
-    let segments_len = segments.len();
-
-    // 流式实时日志：预创建 concurrency 个文件（与翻译调度器相同的方式）
-    let stream_log_slots = std::sync::Arc::new(crate::create_stream_log_slots(concurrency));
-    let slot_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-
-    // 进度计数器
-    let completed_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-
-    // 请求间隔（Qps 模式下为 1/N 秒，Concurrency 模式下为 500ms）
-    let request_interval = rate_limit.min_interval();
-    let delay_ms = if request_interval.is_zero() {
-        500  // Concurrency 模式：500ms 间隔
-    } else {
-        request_interval.as_millis() as u64
-    };
-
-    for (idx, segment) in segments.iter().enumerate() {
-        let segment = segment.clone();
-        let source = source_lang.to_string();
-        let target = target_lang.to_string();
-        let provider = provider.clone();
-        let semaphore = semaphore.clone();
-        let stream_log_slots = stream_log_slots.clone();
-        let slot_counter = slot_counter.clone();
-        let cancel_counter = cancel_counter.clone();
-        let my_gen = my_gen;
-        let completed_count = completed_count.clone();
-        let app_handle = app_handle.clone();
-        // 本地模型（如 LM Studio）的 KV cache 可能在连续请求间被污染，
-        // 导致后续请求输出质量下降。每段请求间隔启动，给引擎时间清理缓存。
-        if idx > 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-        }
-        join_set.spawn(async move {
-            let _permit = semaphore.acquire_owned().await.unwrap();
-            // 取消检查：获取信号量后检查取消标志
-            if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
-                tracing::info!("人名预扫描段 {} 已取消", idx + 1);
-                return SegmentNameResult { segment_idx: idx, names: Vec::new() };
-            }
-            tracing::info!("人名预扫描段 {}/{}，{} 条字幕", idx + 1, segments_len, segment.len());
-            let seg_start = std::time::Instant::now();
-
-            // 分配并发槽位：取模获取 slot index，对应一个复用的日志文件
-            let slot_idx = (slot_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % stream_log_slots.len() as u64) as usize;
-            let stream_log_file = stream_log_slots[slot_idx].clone();
-
-            // 用 provider 的 extract_names_raw 方法发送自定义 prompt 请求
-            let system_prompt = build_name_extraction_system_prompt(&source, &target, provider.service_name());
-            let user_prompt = build_name_extraction_user_prompt(&segment);
-
-            // 用 task_local 传递日志文件句柄，extract_names_raw 中读取
-            let content = crate::STREAM_LOG_FILE.scope(stream_log_file, async {
-                provider.extract_names_raw(&system_prompt, &user_prompt).await
-            }).await;
-
-            let result = match content {
-                Ok(content) => {
-                    let names = parse_name_extraction_response(&content);
-                    tracing::info!("人名预扫描段 {} 提取到 {} 个人名, 耗时 {:.2}s", idx + 1, names.len(), seg_start.elapsed().as_secs_f64());
-                    SegmentNameResult { segment_idx: idx, names }
-                }
-                Err(e) => {
-                    tracing::warn!("人名预扫描段 {} 失败: {}", idx + 1, e);
-                    SegmentNameResult { segment_idx: idx, names: Vec::new() }
-                }
-            };
-
-            // 发送进度事件
-            let completed = completed_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            if let Some(ref handle) = app_handle {
-                let _ = handle.emit("extract-names-progress", serde_json::json!({
-                    "progress": completed,
-                    "total": segments_len,
-                    "done": completed >= segments_len
-                }));
-            }
-
-            result
-        });
-    }
-
-    // 收集结果（支持取消：检测到取消时立即中止剩余任务）
-    let mut segment_results = Vec::new();
-    while let Some(res) = join_set.join_next().await {
-        if let Ok(result) = res {
-            segment_results.push(result);
-        }
-        // 取消检查：收到取消信号时中止剩余任务
-        if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
-            tracing::info!("人名预扫描被取消，中止剩余任务");
-            join_set.abort_all();
-            break;
-        }
-    }
-
-    // 取消时返回空结果
-    if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
-        tracing::info!("人名预扫描已取消");
-        // 发送完成事件
-        if let Some(ref handle) = app_handle {
-            let _ = handle.emit("extract-names-progress", serde_json::json!({
-                "progress": total_segments,
-                "total": total_segments,
-                "done": true
-            }));
-        }
-        return Ok(Vec::new());
-    }
-
-    // 按 segment_idx 排序
-    segment_results.sort_by_key(|r| r.segment_idx);
-
-    let merged = merge_extracted_names(&segment_results);
-    // 后过滤：移除模型误提取的普通词汇（代词/介词/感叹词/口吃模式等）
-    let merged = filter_common_words_from_glossary(merged);
-    // 后过滤：只保留实际出现在字幕文本中的名字
-    // 模型可能把 system prompt 示例中的条目（如 GS4, Jeremy, Endgame）原样复制到输出
-    let merged = filter_names_not_in_text(merged, texts);
-    tracing::info!("人名预扫描完成: 合并后 {} 个人名, 总耗时 {:.2}s", merged.len(), scan_start.elapsed().as_secs_f64());
-
-    // 发送完成事件
-    if let Some(ref handle) = app_handle {
-        let _ = handle.emit("extract-names-progress", serde_json::json!({
-            "progress": total_segments,
-            "total": total_segments,
-            "done": true
-        }));
-    }
-
-    Ok(merged)
-}
-
-// === SECTION: 人名预扫描 END ===
-
-// === SECTION: <name> 标签后处理 ===
-
-/// <name=EnglishName>ChineseTranslation</name> 标签正则
-static NAME_TAG_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-
-/// 从译文中提取所有 <name=En>Zh</name> 标签
-/// 返回 (english_name, chinese_translation) 列表
-pub fn extract_name_tags(text: &str) -> Vec<(String, String)> {
-    let re = NAME_TAG_RE.get_or_init(|| {
-        // 容错多种变体：<name=X>Y</name>、<Name=X>Y</Name>、<name="X">Y</name>
-        regex::Regex::new(r#"(?i)<name[=\s"]*([^>"\s]+)["\s]*>(.*?)</name\s*>"#).unwrap()
-    });
-    re.captures_iter(text)
-        .filter_map(|cap| {
-            let en = cap.get(1)?.as_str().trim().to_string();
-            let zh = cap.get(2)?.as_str().trim().to_string();
-            if !en.is_empty() && !zh.is_empty() {
-                Some((en, zh))
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// 剥离译文中所有 <name=...>...</name> 标签，只保留中文部分
-pub fn strip_name_tags(text: &str) -> String {
-    let re = NAME_TAG_RE.get_or_init(|| {
-        regex::Regex::new(r#"(?i)<name[=\s"]*([^>"\s]+)["\s]*>(.*?)</name\s*>"#).unwrap()
-    });
-    re.replace_all(text, "$2").to_string()
-}
-
-/// 人名一致性后处理结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NameConsistencyResult {
-    /// 最终的译名表（合并预扫描 glossary + 标签提取的新名字）
-    pub final_glossary: Vec<ExtractedName>,
-    /// 发现的不一致人名（同一英文名有多个中文译名）
-    pub inconsistencies: Vec<NameInconsistency>,
-    /// 修正后的翻译条目（标签已剥离）
-    pub corrected_indices: Vec<(usize, String)>,
-}
-
-/// 单个人名不一致记录
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NameInconsistency {
-    pub english: String,
-    pub translations: Vec<String>,
-    /// 选定的标准译名（频率优先，平局取首次出现）
-    pub chosen: String,
-}
-
-/// 对翻译结果执行人名一致性后处理
-/// 1. 从所有译文中提取 <name=En>Zh</name> 标签
-/// 2. 合并预扫描 glossary 和标签提取的人名
-/// 3. 检测不一致（同一英文名多个中文译名）
-/// 4. 对不一致的译名执行全局替换
-/// 5. 剥离所有 <name> 标签
-pub fn post_process_name_tags(
-    translations: &mut [String],
-    pre_scan_glossary: &[(String, String)],
-) -> NameConsistencyResult {
-    use std::collections::HashMap;
-
-    // 1. 从所有译文中提取标签
-    // en_name -> (zh_name -> count)
-    let mut tag_stats: HashMap<String, HashMap<String, usize>> = HashMap::new();
-    for tr in translations.iter() {
-        for (en, zh) in extract_name_tags(tr) {
-            *tag_stats.entry(en).or_default().entry(zh).or_default() += 1;
-        }
-    }
-
-    // 2. 合并预扫描 glossary 和标签提取的人名
-    // 预扫描 glossary 优先（用户已确认），标签提取的作为补充
-    let mut final_map: HashMap<String, String> = HashMap::new();
-    // 先放预扫描结果
-    for (en, zh) in pre_scan_glossary {
-        final_map.insert(en.clone(), zh.clone());
-    }
-    // 再放标签提取的（不覆盖预扫描）
-    let mut inconsistencies: Vec<NameInconsistency> = Vec::new();
-    for (en, zh_map) in &tag_stats {
-        if final_map.contains_key(en) {
-            // 预扫描已有此名字，检查标签中的译名是否一致
-            let chosen = final_map[en].clone();
-            let mut all_translations: Vec<String> = zh_map.keys().cloned().collect();
-            if !all_translations.contains(&chosen) {
-                all_translations.push(chosen.clone());
-            }
-            if all_translations.len() > 1 {
-                inconsistencies.push(NameInconsistency {
-                    english: en.clone(),
-                    translations: all_translations,
-                    chosen: chosen.clone(),
-                });
-            }
-            // 用预扫描的译名替换标签中的不一致译名
-        } else {
-            // 预扫描没有此名字，从标签中选频率最高的
-            let best = zh_map
-                .iter()
-                .max_by_key(|(_, count)| *count)
-                .map(|(zh, _)| zh.clone())
-                .unwrap_or_default();
-            let all_translations: Vec<String> = zh_map.keys().cloned().collect();
-            if all_translations.len() > 1 {
-                inconsistencies.push(NameInconsistency {
-                    english: en.clone(),
-                    translations: all_translations.clone(),
-                    chosen: best.clone(),
-                });
-            }
-            final_map.insert(en.clone(), best);
-        }
-    }
-
-    // 3. 全局替换：把所有标签中的不一致译名替换为标准译名，然后剥离标签
-    let mut corrected_indices: Vec<(usize, String)> = Vec::new();
-    for (i, tr) in translations.iter_mut().enumerate() {
-        let original = tr.clone();
-        // 先替换标签内的不一致译名
-        let re = NAME_TAG_RE.get_or_init(|| {
-            regex::Regex::new(r#"(?i)<name[=\s"]*([^>"\s]+)["\s]*>(.*?)</name\s*>"#).unwrap()
-        });
-        let replaced = re.replace_all(tr, |caps: &regex::Captures| {
-            let en = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
-            let zh = caps.get(2).map(|m| m.as_str().trim()).unwrap_or("");
-            if let Some(standard) = final_map.get(en) {
-                format!("<name={}>{}</name>", en, standard)
-            } else {
-                format!("<name={}>{}</name>", en, zh)
-            }
-        }).to_string();
-        // 再剥离标签
-        let stripped = strip_name_tags(&replaced);
-        if stripped != original {
-            *tr = stripped.clone();
-            corrected_indices.push((i, stripped));
-        }
-    }
-
-    // 4. 构建最终 glossary
-    let mut final_glossary: Vec<ExtractedName> = final_map
-        .iter()
-        .map(|(en, zh)| ExtractedName {
-            english: en.clone(),
-            chinese: zh.clone(),
-            alternatives: Vec::new(),
-        })
-        .collect();
-    final_glossary.sort_by(|a, b| a.english.to_lowercase().cmp(&b.english.to_lowercase()));
-
-    NameConsistencyResult {
-        final_glossary,
-        inconsistencies,
-        corrected_indices,
-    }
-}
-
-// === SECTION: <name> 标签后处理 END ===
 
 #[cfg(test)]
 mod tests {
@@ -7742,6 +4495,177 @@ mod tests {
         assert_eq!(names[3].chinese, "GS4（农业系统4）");
         assert_eq!(names[4].english, "Countryfile");
         assert_eq!(names[4].chinese, "乡村档案");
+    }
+
+    #[test]
+    fn test_parse_name_extraction_all_caps_no_digit_brand() {
+        // 全大写无数字的缩写也是品牌名，应保留 `英文（中文）` 格式
+        // 防止 is_brand_name_format 退化成 AND 逻辑（要求必须有数字）
+        let content = r#"[
+            {"en": "GPS", "zh": "GPS（全球定位系统）"},
+            {"en": "NASA", "zh": "NASA（美国宇航局）"}
+        ]"#;
+        let names = parse_name_extraction_response(content);
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0].english, "GPS");
+        assert_eq!(names[0].chinese, "GPS（全球定位系统）");
+        assert_eq!(names[1].english, "NASA");
+        assert_eq!(names[1].chinese, "NASA（美国宇航局）");
+    }
+
+    #[test]
+    fn test_strip_name_tags_all_formats() {
+        // 标准格式 <name=En>Zh</name>
+        assert_eq!(translate_ai::strip_name_tags("<name=Rick>瑞克</name>"), "瑞克");
+        // 无 = 格式 <name>Zh</name>
+        assert_eq!(translate_ai::strip_name_tags("<name>瑞克</name>"), "瑞克");
+        // 英文名含空格 <name=Georgie Boy>乔治男孩</name>
+        assert_eq!(translate_ai::strip_name_tags("<name=Georgie Boy>乔治男孩</name>"), "乔治男孩");
+        // 带引号 <name="Rick">瑞克</name>
+        assert_eq!(translate_ai::strip_name_tags(r#"<name="Rick">瑞克</name>"#), "瑞克");
+        // 混合文本
+        assert_eq!(translate_ai::strip_name_tags("你好<name=Rick>瑞克</name>再见"), "你好瑞克再见");
+        // 多个标签
+        assert_eq!(translate_ai::strip_name_tags("<name=Rick>瑞克</name>和<name=Morty>莫蒂</name>"), "瑞克和莫蒂");
+        // 无标签
+        assert_eq!(translate_ai::strip_name_tags("普通文本"), "普通文本");
+    }
+
+    #[test]
+    fn test_strip_name_tags_malformed() {
+        // 9b 模型畸形标签：开标签缺少 >，但有 </name>
+        // <name=Earth</name>地球 → 移除畸形标签，保留地球
+        assert_eq!(translate_ai::strip_name_tags("<name=Earth</name>地球去。"), "地球去。");
+        // <name=weird </name>奇怪的 → 移除畸形标签，保留奇怪的
+        assert_eq!(translate_ai::strip_name_tags("<i><name=weird </name>奇怪的</i>"), "<i>奇怪的</i>");
+        // 9b 模型畸形标签：开标签缺少 > 且无 </name>，英文名和中文名连在一起
+        // <name=friends猪朋友们 → 移除 <name=friends，保留猪朋友们
+        assert_eq!(translate_ai::strip_name_tags("<name=friends猪朋友们安排了新生活。"), "猪朋友们安排了新生活。");
+        // 孤立闭标签 </name=Georgie Boy>
+        assert_eq!(translate_ai::strip_name_tags("乔治男孩! </name=Georgie Boy>乔治男孩!"), "乔治男孩! 乔治男孩!");
+        // 孤立闭标签 </name>
+        assert_eq!(translate_ai::strip_name_tags("瑞克</name>再见"), "瑞克再见");
+    }
+
+    #[test]
+    fn test_post_process_name_tags_english_in_content() {
+        // llama4 等模型输出 <name>EnglishName</name>ChineseName 格式：
+        // 标签内容是英文名，中文译名跟在标签外面。
+        // post_process_name_tags 应移除整个标签，避免译名重复。
+        let mut translations = vec![
+            "<name>Jerry</name>杰瑞的焦虑尤其如此。".to_string(),
+            "<name>Dogsss</name>狗狗们在城市里有一个繁殖计划。".to_string(),
+            "我给她取名叫 <name>Jerry</name> 杰瑞。".to_string(),
+        ];
+        let pre_scan_glossary = vec![
+            ("Jerry".to_string(), "杰瑞".to_string()),
+            ("Dogsss".to_string(), "狗狗们".to_string()),
+        ];
+        let result = translate_ai::post_process_name_tags(&mut translations, &pre_scan_glossary);
+        assert_eq!(translations[0], "杰瑞的焦虑尤其如此。");
+        assert_eq!(translations[1], "狗狗们在城市里有一个繁殖计划。");
+        assert_eq!(translations[2], "我给她取名叫杰瑞。");
+        // 确保所有条目都被修正
+        assert_eq!(result.corrected_indices.len(), 3);
+    }
+
+    #[test]
+    fn test_extract_name_tags_all_formats() {
+        // 标准格式
+        let tags = translate_ai::extract_name_tags("<name=Rick>瑞克</name>");
+        assert_eq!(tags, vec![("Rick".to_string(), "瑞克".to_string())]);
+        // 无 = 格式：en 用 zh 代替
+        let tags = translate_ai::extract_name_tags("<name>瑞克</name>");
+        assert_eq!(tags, vec![("瑞克".to_string(), "瑞克".to_string())]);
+        // 英文名含空格
+        let tags = translate_ai::extract_name_tags("<name=Georgie Boy>乔治男孩</name>");
+        assert_eq!(tags, vec![("Georgie Boy".to_string(), "乔治男孩".to_string())]);
+    }
+
+    #[test]
+    fn test_get_cached_entries_aah_failed_recovery() {
+        // 回归测试：9b 模型 "Aah!" → "Aah!"（未翻译），翻译时 failed=true，
+        // get_cached_entries 恢复时也应返回 failed=true，否则 repeated_open 检查不一致。
+        let db_path = std::env::temp_dir().join(format!("test_cache_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db_path);
+        let db = Database::open(&db_path).expect("打开测试数据库失败");
+        db.migrate().expect("数据库迁移失败");
+
+        let source_lang = "en";
+        let target_lang = "zh";
+        let provider_name = "openai-lmstudio-test";
+        let file_hash = "test_hash";
+
+        // 写入缓存：Aah! → Aah!（模拟 9b 模型未翻译的 failed 条目）
+        let cache_key = translate_cache_key("Aah!", source_lang, target_lang, provider_name, file_hash);
+        db.set_translate_cache(&cache_key, "Aah!", "Aah!", source_lang, target_lang, provider_name)
+            .unwrap();
+
+        let scheduler = TranslateScheduler::new(
+            &db,
+            std::sync::Arc::new(crate::translate::BaiduProvider::new(String::new(), String::new()))
+                as std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
+            provider_name.to_string(),
+            String::new(),
+        )
+        .with_file_hash(file_hash.to_string());
+
+        let entries = vec![crate::subtitle::SubtitleEntry {
+            index: 151,
+            start_ms: 0,
+            end_ms: 1000,
+            text: "Aah!".to_string(),
+            translated: String::new(),
+            style: None,
+            failed: false,
+            from_cache: false,
+        }];
+
+        let result = scheduler.get_cached_entries(&entries, source_lang, target_lang).unwrap();
+        assert_eq!(result.len(), 1);
+        let entry = &result[0];
+        assert!(entry.from_cache, "Should be from cache");
+        assert!(entry.failed, "Aah! → Aah! should be marked as failed during recovery");
+        assert_eq!(entry.translated, "Aah!");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn from_service_id_exhaustive_test() {
+        let known_ids = [
+            "deepseek", "zhipu", "siliconflow", "groq", "qwen", "doubao",
+            "hunyuan", "lingyi", "kimi", "openai", "azure_openai",
+            "gemini", "ernie", "ollama", "lmstudio",
+        ];
+        for id in known_ids {
+            assert_ne!(
+                AiService::from_service_id(id),
+                AiService::Custom,
+                "id \"{}\" 不应回退为 Custom，请在 from_service_id 补分支",
+                id
+            );
+        }
+        assert_eq!(AiService::from_service_id("custom"), AiService::Custom);
+    }
+
+    #[test]
+    fn display_name_exhaustive_test() {
+        let all = [
+            AiService::DeepSeek, AiService::Zhipu, AiService::SiliconFlow,
+            AiService::Groq, AiService::Qwen, AiService::Doubao,
+            AiService::Hunyuan, AiService::Lingyi, AiService::Kimi,
+            AiService::OpenAI, AiService::AzureOpenAI, AiService::Gemini,
+            AiService::Ernie, AiService::Ollama, AiService::Lmstudio,
+            AiService::Custom,
+        ];
+        for svc in all {
+            let name = svc.display_name();
+            assert!(!name.is_empty(), "{:?} 的 display_name 为空", svc);
+        }
+        assert_eq!(ai_service_display_name("deepseek"), "DeepSeek");
+        assert_eq!(ai_service_display_name("zhipu"), "智谱GLM");
+        assert_eq!(ai_service_display_name("unknown"), "自定义端点");
     }
 
     #[test]

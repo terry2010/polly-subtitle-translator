@@ -320,7 +320,7 @@ pub fn download_libmpv(
             }));
             tracing::warn!("libmpv 下载失败: code={}", ipc_err.code);
         }
-        return result;
+        result
     }
     // Windows 下载逻辑
     #[cfg(windows)]
@@ -1533,15 +1533,12 @@ pub fn clear_player_icons_cache(icons_dir: &Path) -> Result<usize, AppError> {
     let mut count = 0;
     for entry in std::fs::read_dir(icons_dir).map_err(|e| AppError::PlayerLoadFailed {
         detail: format!("读取图标目录失败: {} ({})", icons_dir.display(), e),
-    })? {
-        if let Ok(entry) = entry {
-            let path = entry.path();
-            if path.extension().map(|e| e == "png").unwrap_or(false) {
-                if std::fs::remove_file(&path).is_ok() {
-                    count += 1;
-                }
+    })?.flatten() {
+        let path = entry.path();
+        if path.extension().map(|e| e == "png").unwrap_or(false)
+            && std::fs::remove_file(&path).is_ok() {
+                count += 1;
             }
-        }
     }
     tracing::info!("clear_player_icons_cache: 清除 {} 个图标", count);
     Ok(count)

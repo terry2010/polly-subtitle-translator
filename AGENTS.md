@@ -97,3 +97,74 @@ node scripts/publish.mjs <版本号> "更新内容"
 - 私钥丢了就无法发布更新，务必备份
 - `TAURI_SIGNING_PRIVATE_KEY` 需要传私钥内容（不是路径），脚本会自动读取文件
 - `--build-only` 参数可只构建不发布（本地测试用）
+
+## 构建与测试命令
+
+### Rust 后端
+
+```bash
+# 编译检查
+cd src-tauri && cargo check --lib
+
+# 运行单元测试（260 个）
+cd src-tauri && cargo test --lib
+
+# Clippy 检查（约 28 个 warning，主要是函数参数过多/复杂类型等风格问题）
+cd src-tauri && cargo clippy --lib
+
+# 前端类型检查
+npx tsc --noEmit
+```
+
+### 翻译质量验证
+
+翻译完字幕后，用 Python 脚本检查质量：
+
+```bash
+# 检查 CJK 空格异常（GLM-5.2 常见问题，24-45% 的条目受影响）
+# cleanup_cjk_spaces() 函数在后处理中自动修复
+python3 -c "
+import re
+def is_cjk_char(c):
+    code = ord(c)
+    return (0x4E00 <= code <= 0x9FFF) or (0x3000 <= code <= 0x303F) or (0xFF00 <= code <= 0xFFEF)
+def cleanup_cjk_spaces(s):
+    chars = list(s); result = []; i = 0
+    while i < len(chars):
+        result.append(chars[i])
+        if is_cjk_char(chars[i]):
+            j = i + 1
+            while j < len(chars) and chars[j] == ' ': j += 1
+            if j < len(chars) and is_cjk_char(chars[j]): i = j
+            else: i += 1
+        else: i += 1
+    return ''.join(result)
+# ... 读取 srt 文件，对每条 zh 行调用 cleanup_cjk_spaces 对比
+"
+```
+
+### 日志位置
+
+- 应用日志：`~/Library/Application Support/com.zimufan.ai-subtrans/logs/`
+- API 调试日志（流式响应）：`~/Library/Application Support/com.zimufan.ai-subtrans/api_debug/`
+
+## 已知模型问题与修复
+
+### GLM-5.2 thinking 泄漏
+
+- **问题**：GLM-5.2 在 SiliconFlow 上 `enable_thinking:false` 间歇性失效，thinking 内容泄漏到 `content` 字段
+- **修复**：改用 `thinking.type: "disabled"` 参数（所有 GLM 模型），如仍检测到 thinking 则升级为双参数模式
+- **文件**：`translate_ai.rs` 的 `ThinkingStyle` 枚举
+
+### CJK 字符间异常空格
+
+- **问题**：GLM-5.2 在英文单词边界处插入空格，即使输出是中文（如 `我 知道 我带了`）
+- **修复**：`cleanup_cjk_spaces()` 函数移除 CJK 字符之间的空格，保留 CJK 与非 CJK（拉丁字母、标签）之间的空格
+- **文件**：`translate_utils.rs`，在 `post_process_name_tags` 和 `ipc.rs` 中调用
+
+### 音效标记半翻译
+
+- **问题**：`[ All grunting ]` → `[ 所有人发出 grunt 声 ]`，音效标记内的英文单词未翻译
+- **修复**：`is_partial_sound_effect()` 函数检测音效标记内的半翻译，触发降级重试
+- **文件**：`translate_utils.rs`，在 `translate_ai.rs` 批次处理中调用
+

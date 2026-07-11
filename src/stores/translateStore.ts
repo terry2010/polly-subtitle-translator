@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { toast } from "sonner";
 import type { TranslateResult, SubtitleEntry } from "../lib/ipc-types";
-import { api, formatIpcError } from "../lib/api";
+import { api, formatIpcError, isTimeoutError, isDailyLimitError } from "../lib/api";
 import { warn, error, log } from "../lib/logger";
 
 /** 译名表条目（含候选译名，用于弹窗编辑） */
@@ -153,6 +153,10 @@ export const useTranslateStore = create<TranslateState>()(
         } catch (e: any) {
           error("人名预扫描失败:", e);
           set({ extractingNames: false });
+          // 超时或每日限额错误：抛出让调用方停止后续翻译并弹 toast
+          if (isTimeoutError(e) || isDailyLimitError(e)) {
+            throw e;
+          }
           return null;
         } finally {
           if (unlistenProgress) unlistenProgress();
@@ -265,6 +269,10 @@ export const useTranslateStore = create<TranslateState>()(
         } catch (e: any) {
           const errMsg = formatIpcError(e);
           set({ translating: false, error: errMsg });
+          // 超时/网络错误：持久化 toast（需用户主动关闭）
+          if (isTimeoutError(e) || e?.code === "translate.networkError") {
+            toast.error(errMsg, { duration: Infinity, closeButton: true });
+          }
           return null;
         } finally {
           if (unlistenProgress) unlistenProgress();

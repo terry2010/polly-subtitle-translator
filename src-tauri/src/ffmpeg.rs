@@ -512,7 +512,7 @@ fn download_ffmpeg_inner(
     // macOS：eugeneware/ffmpeg-static 提供单独的 gzip 二进制文件，走专用下载路径
     #[cfg(target_os = "macos")]
     {
-        return download_ffmpeg_macos(&dir, proxy, app_handle);
+        download_ffmpeg_macos(&dir, proxy, app_handle)
     }
 
     // 以下为 Windows/Linux 的归档下载逻辑
@@ -1079,9 +1079,8 @@ pub fn probe_video(
         return Err(AppError::FfmpegProbeFailed {
             video_path: video_path.to_string(),
         })
-        .map_err(|e| {
+        .inspect_err(|_e| {
             tracing::error!("ffprobe 失败: {}", stderr);
-            e
         });
     }
 

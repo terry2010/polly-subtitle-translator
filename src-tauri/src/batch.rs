@@ -17,7 +17,9 @@ use tokio::sync::mpsc;
 
 /// 任务状态枚举
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub enum BatchStatus {
+    #[default]
     Queued,
     Probing,
     CheckingSubtitle,
@@ -31,24 +33,16 @@ pub enum BatchStatus {
     Cancelled,
 }
 
-impl Default for BatchStatus {
-    fn default() -> Self {
-        BatchStatus::Queued
-    }
-}
 
 /// 源文件类型
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub enum PathType {
+    #[default]
     Video,
     Subtitle,
 }
 
-impl Default for PathType {
-    fn default() -> Self {
-        PathType::Video
-    }
-}
 
 /// 单个文件任务
 #[derive(Clone, Debug, Serialize, Default)]
@@ -81,7 +75,9 @@ pub enum OutputMode {
 
 /// 工作时间设定
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Default)]
 pub enum BatchSchedule {
+    #[default]
     Always,
     TimeWindow {
         windows: Vec<(u32, u32)>,
@@ -89,11 +85,6 @@ pub enum BatchSchedule {
     },
 }
 
-impl Default for BatchSchedule {
-    fn default() -> Self {
-        BatchSchedule::Always
-    }
-}
 
 impl BatchSchedule {
     /// 判断当前时间是否在工作时间内
@@ -854,11 +845,7 @@ async fn read_file_tail(path: &str, len: usize) -> Result<Vec<u8>, std::io::Erro
     tokio::task::spawn_blocking(move || {
         let mut file = std::fs::File::open(&path)?;
         let file_size = file.metadata()?.len();
-        let start = if file_size > len as u64 {
-            file_size - len as u64
-        } else {
-            0
-        };
+        let start = file_size.saturating_sub(len as u64);
         file.seek(SeekFrom::Start(start))?;
         let mut buf = vec![0u8; len.min(file_size as usize)];
         file.read_exact(&mut buf)?;
@@ -873,7 +860,7 @@ fn identify_video_format(header: &[u8]) -> VideoFormat {
         return VideoFormat::Unknown;
     }
     // MKV / WebM: EBML header magic 1A 45 DF A3
-    if header.len() >= 4 && &header[0..4] == &[0x1A, 0x45, 0xDF, 0xA3] {
+    if header.len() >= 4 && header[0..4] == [0x1A, 0x45, 0xDF, 0xA3] {
         return VideoFormat::Mkv;
     }
     // MP4 / M4V / MOV: offset 4 处有 "ftyp"
@@ -885,18 +872,17 @@ fn identify_video_format(header: &[u8]) -> VideoFormat {
         return VideoFormat::Avi;
     }
     // FLV: 46 4C 56 01
-    if header.len() >= 4 && &header[0..4] == &[0x46, 0x4C, 0x56, 0x01] {
+    if header.len() >= 4 && header[0..4] == [0x46, 0x4C, 0x56, 0x01] {
         return VideoFormat::Flv;
     }
     // MPEG-TS: sync byte 0x47，每 188 字节重复
-    if header.len() >= 188 * 3 {
-        if header[0] == 0x47 && header[188] == 0x47 && header[376] == 0x47 {
+    if header.len() >= 188 * 3
+        && header[0] == 0x47 && header[188] == 0x47 && header[376] == 0x47 {
             return VideoFormat::Ts;
         }
-    }
     // ASF / WMV: ASF header GUID
     if header.len() >= 16
-        && &header[0..8] == &[0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11]
+        && header[0..8] == [0x30, 0x26, 0xB2, 0x75, 0x8E, 0x66, 0xCF, 0x11]
     {
         return VideoFormat::Wmv;
     }
@@ -1040,10 +1026,7 @@ async fn is_file_ready(
         Err(_) => return FileReadiness::NotReady,
     };
     let format = identify_video_format(&header);
-    match format {
-        VideoFormat::Unknown => return FileReadiness::FakeVideo,
-        _ => {}
-    }
+    if format == VideoFormat::Unknown { return FileReadiness::FakeVideo }
 
     // ── 第 2 级：文件尾完整性标记检查 ──
     let file_size = match tokio::fs::metadata(path).await {
@@ -1363,15 +1346,14 @@ fn find_video_for_subtitle(subtitle_path: &str) -> Option<String> {
         let vstem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
         // 字幕 stem 必须以视频 stem 开头，且紧跟分隔符（. - 空格）或完全相等
         // 避免字幕 "video.eng" 误匹配视频 "videox.mkv"（stem "videox"）
-        if stem.starts_with(vstem) {
-            let remaining = &stem[vstem.len()..];
+        if let Some(remaining) = stem.strip_prefix(vstem) {
             let is_valid = remaining.is_empty()
                 || remaining.starts_with('.')
                 || remaining.starts_with('-')
                 || remaining.starts_with(' ');
             if !is_valid { continue; }
             // 选最长的视频 stem（最精确匹配）
-            if best_match.as_ref().map_or(true, |(_, len)| vstem.len() > *len) {
+            if best_match.as_ref().is_none_or(|(_, len)| vstem.len() > *len) {
                 best_match = Some((p.to_string_lossy().to_string(), vstem.len()));
             }
         }

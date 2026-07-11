@@ -3,22 +3,23 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import { open, save } from "@tauri-apps/plugin-dialog";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check, Plus } from "lucide-react";
+import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check, Plus, Home } from "lucide-react";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { Button } from "../components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
-import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "../components/ui/select";
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem, SelectGroup, SelectLabel } from "../components/ui/select";
 import { Progress } from "../components/ui/progress";
 import { useVideoStore } from "../stores/videoStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
 import { useDevModeStore } from "../stores/devModeStore";
-import { api, formatIpcError } from "../lib/api";
+import { api, formatIpcError, isTimeoutError, isDailyLimitError } from "../lib/api";
 import { warn, error as logError } from "../lib/logger";
 import { withPlayerHidden } from "../lib/utils";
-import { SERVICES, encodeAiSelectValue, decodeAiSelectValue } from "../lib/services";
+import { SERVICES, encodeAiSelectValue, decodeAiSelectValue, isMaybeFreeModel, getModelPriceUrl } from "../lib/services";
 import { SubtitlePreviewPanel } from "../components/SubtitlePreviewPanel";
 import { SearchDialog } from "../components/SearchDialog";
 import { HdrNotice } from "../components/HdrNotice";
@@ -1070,7 +1071,14 @@ export default function MainView() {
           }
         }
       } catch (e: any) {
-        warn("人名预扫描失败，继续正常翻译:", e);
+        warn("人名预扫描失败:", e);
+        translateStore.setExtractingNames(false);
+        // 超时或每日限额：持久化 toast + 停止任务（不继续翻译）
+        if (isTimeoutError(e) || isDailyLimitError(e)) {
+          toast.error(formatIpcError(e), { duration: Infinity, closeButton: true });
+          return;
+        }
+        // 其他错误：短暂提示，继续正常翻译
         toast.warning(t("translate.nameExtractFailed", "人名预扫描失败，将使用正常翻译"));
       }
       translateStore.setExtractingNames(false);
@@ -1478,27 +1486,66 @@ export default function MainView() {
                     <SelectValue placeholder={t("translate.noEngineAvailable", "无可用引擎")} className="truncate min-w-0 text-muted-foreground" />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* 传统引擎：只显示已配置或当前选中的 */}
-                    {providerConfigured["baidu"] && (
-                      <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
+                    {/* 传统引擎分组 */}
+                    {(providerConfigured["baidu"] || providerConfigured["bing"] || providerConfigured["google"]) && (
+                      <SelectGroup>
+                        <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.traditionalEngines", "传统翻译")}</SelectLabel>
+                        {providerConfigured["baidu"] && (
+                          <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
+                        )}
+                        {providerConfigured["bing"] && (
+                          <SelectItem value="bing">Bing</SelectItem>
+                        )}
+                        {providerConfigured["google"] && (
+                          <SelectItem value="google">Google</SelectItem>
+                        )}
+                      </SelectGroup>
                     )}
-                    {providerConfigured["bing"] && (
-                      <SelectItem value="bing">Bing</SelectItem>
-                    )}
-                    {providerConfigured["google"] && (
-                      <SelectItem value="google">Google</SelectItem>
-                    )}
-                    {/* AI 模型：遍历所有已配置的 AI 服务 */}
-                    {aiServiceModels.map((m) => {
-                      const value = encodeAiSelectValue(m.serviceId, m.model);
-                      return (
-                        <SelectItem key={value} value={value}>
-                          <span className="block truncate" title={`AI模型 - ${m.serviceName} - ${m.model}`}>
-                            AI模型 - {m.serviceName} - {m.model}
-                          </span>
-                        </SelectItem>
-                      );
-                    })}
+                    {/* AI 模型：按服务商分组 */}
+                    {(() => {
+                      const groups = new Map<string, { serviceName: string; models: typeof aiServiceModels }>();
+                      for (const m of aiServiceModels) {
+                        let g = groups.get(m.serviceId);
+                        if (!g) { g = { serviceName: m.serviceName, models: [] }; groups.set(m.serviceId, g); }
+                        g.models.push(m);
+                      }
+                      return Array.from(groups.entries()).map(([serviceId, g]) => (
+                        <SelectGroup key={serviceId}>
+                          <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">AI翻译 - {g.serviceName}</SelectLabel>
+                          {g.models.map((m) => {
+                            const value = encodeAiSelectValue(m.serviceId, m.model);
+                            const maybeFree = isMaybeFreeModel(m.serviceId, m.model);
+                            const priceUrl = getModelPriceUrl(m.serviceId, m.model);
+                            return (
+                              <SelectItem key={value} value={value}>
+                                <span className="flex items-center gap-1.5 w-full">
+                                  <span className="truncate flex-1">{m.model}</span>
+                                  {maybeFree && (
+                                    <span
+                                      className="instant-tooltip flex-shrink-0 h-2.5 w-2.5 rounded-sm bg-green-500"
+                                      data-tooltip={t("settings.maybeFree", "可能免费，以官方价格为准")}
+                                      onPointerDown={(e) => e.stopPropagation()}
+                                      onPointerUp={(e) => e.stopPropagation()}
+                                    />
+                                  )}
+                                  {priceUrl && (
+                                    <span
+                                      className="instant-tooltip flex-shrink-0 cursor-pointer text-primary/60 hover:text-primary"
+                                      data-tooltip={t("settings.viewPrice", "查看价格")}
+                                      onPointerDown={(e) => e.stopPropagation()}
+                                      onPointerUp={(e) => e.stopPropagation()}
+                                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(priceUrl).catch(() => {}); }}
+                                    >
+                                      <Home className="h-3 w-3" />
+                                    </span>
+                                  )}
+                                </span>
+                              </SelectItem>
+                            );
+                          })}
+                        </SelectGroup>
+                      ));
+                    })()}
                     {/* 添加更多引擎 */}
                     <SelectItem value="__add_more__">
                       <span className="flex items-center gap-1 text-primary">

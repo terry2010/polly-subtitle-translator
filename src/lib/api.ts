@@ -47,9 +47,10 @@ async function callIpc<T>(cmd: string, args?: Record<string, unknown>): Promise<
     log(`[callIpc] ${cmd} 返回:`, result);
     return result as T;
   } catch (e: any) {
-    // async 命令 reject：e 是序列化后的 IpcError 对象
-    error(`[callIpc] ${cmd} 错误:`, e);
-    throw e;
+    // async 命令 reject：e 可能是 IpcError 对象，也可能是序列化后的 JSON 字符串
+    const parsed = typeof e === "string" ? safeParseIpcError(e) : e;
+    error(`[callIpc] ${cmd} 错误:`, parsed);
+    throw parsed;
   }
 }
 
@@ -66,8 +67,18 @@ async function callIpcNullable<T>(cmd: string, args?: Record<string, unknown>): 
     }
     return (result ?? null) as T | null;
   } catch (e: any) {
-    throw e;
+    const parsed = typeof e === "string" ? safeParseIpcError(e) : e;
+    throw parsed;
   }
+}
+
+/// 将序列化的 JSON 字符串解析为 IpcError 对象，解析失败则返回通用错误
+function safeParseIpcError(s: string): IpcError {
+  try {
+    const obj = JSON.parse(s);
+    if (obj && typeof obj.code === "string") return obj as IpcError;
+  } catch { /* not JSON */ }
+  return { code: "common.unknown", severity: "recoverable" };
 }
 
 /// 将 IpcError 转为可读消息（用 i18n 翻译错误码）
@@ -76,6 +87,16 @@ export function formatIpcError(error: IpcError): string {
   const translated = i18n.t(key, error.args ?? {});
   // 如果 i18n 没有找到 key，t() 返回 key 本身；此时 fallback 到 code
   return translated === key ? error.code : translated;
+}
+
+/// 判断 IpcError 是否为超时错误
+export function isTimeoutError(error: IpcError): boolean {
+  return error.code === "translate.timeout";
+}
+
+/// 判断 IpcError 是否为每日限额错误
+export function isDailyLimitError(error: IpcError): boolean {
+  return error.code === "translate.dailyLimitReached";
 }
 
 // === FFmpeg 命令 ===
@@ -182,8 +203,8 @@ export const api = {
       serviceId: serviceId ?? null,
     }),
 
-  listOpenaiModels: (baseUrl: string, apiKey?: string) =>
-    callIpc<string[]>("list_openai_models", { baseUrl, apiKey: apiKey ?? null }),
+  listOpenaiModels: (baseUrl: string, apiKey?: string, serviceId?: string) =>
+    callIpc<string[]>("list_openai_models", { baseUrl, apiKey: apiKey ?? null, serviceId: serviceId ?? null }),
 
   getSupportedTargetLangs: (provider: string) =>
     callIpc<LanguageInfo[]>("get_supported_target_langs", { provider }),
@@ -234,7 +255,7 @@ export const api = {
     callIpc<void>("save_credential", { provider, key, value }),
 
   getCredential: (provider: string, key: string, reason?: string) =>
-    callIpcNullable<string>("get_credential", { provider, key, reason: reason ?? "未指定" }),
+    callIpcNullable<string>("get_credential", { provider, key, reason: reason ?? i18n.t("common.unspecified") }),
 
   deleteCredential: (provider: string, key: string) =>
     callIpc<void>("delete_credential", { provider, key }),

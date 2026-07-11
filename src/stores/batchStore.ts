@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { BatchTask, BatchConfig, BatchStatus } from "../lib/ipc-types";
 import { api, formatIpcError } from "../lib/api";
 import { log, error } from "../lib/logger";
+import i18n from "../lib/i18n";
 
 interface BatchState {
   tasks: BatchTask[];
@@ -68,22 +69,13 @@ const defaultConfig: BatchConfig = {
 /// 获取任务状态的可读文本
 export function getStatusText(status: BatchStatus): string {
   if (typeof status === "string") {
-    const map: Record<string, string> = {
-      Queued: "排队中",
-      Probing: "探测中",
-      CheckingSubtitle: "检查字幕",
-      Parsing: "解析中",
-      Exporting: "导出中",
-      Done: "已完成",
-      Cancelled: "已取消",
-    };
-    return map[status] ?? status;
+    return i18n.t(`batch.status.${status}`, { defaultValue: status });
   }
-  if ("Extracting" in status) return `提取字幕 ${Math.round(status.Extracting * 100)}%`;
-  if ("Translating" in status) return `翻译中 ${Math.round(status.Translating * 100)}%`;
-  if ("Skipped" in status) return `跳过: ${status.Skipped}`;
-  if ("Failed" in status) return `失败: ${status.Failed}`;
-  return "未知";
+  if ("Extracting" in status) return i18n.t("batch.status.Extracting", { percent: Math.round(status.Extracting * 100) });
+  if ("Translating" in status) return i18n.t("batch.status.Translating", { percent: Math.round(status.Translating * 100) });
+  if ("Skipped" in status) return i18n.t("batch.status.Skipped", { reason: status.Skipped });
+  if ("Failed" in status) return i18n.t("batch.status.Failed", { reason: status.Failed });
+  return i18n.t("batch.status.Unknown");
 }
 
 /// 获取任务进度百分比（0-1）
@@ -367,7 +359,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     try {
       await api.startFolderWatch(paths, recursive, get().config);
       set({ isWatching: true });
-      toast.success(`已启动文件夹监视: ${paths.length} 个目录`);
+      toast.success(i18n.t("batch.watchStarted", { count: paths.length }));
     } catch (e: any) {
       toast.error(formatIpcError(e));
     }
@@ -377,7 +369,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     try {
       await api.stopFolderWatch();
       set({ isWatching: false });
-      toast.success("已停止文件夹监视");
+      toast.success(i18n.t("batch.watchStopped"));
     } catch (e: any) {
       toast.error(formatIpcError(e));
     }
@@ -394,7 +386,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   cancelScan: async () => {
     try {
       await api.cancelScan();
-      toast.success("已取消扫描检查");
+      toast.success(i18n.t("batch.scanCancelled"));
     } catch (e: any) {
       toast.error(formatIpcError(e));
     }
@@ -404,9 +396,9 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     try {
       const count = await api.addFilesToQueue(files);
       if (count > 0) {
-        toast.success(`已添加 ${count} 个文件到队列`);
+        toast.success(i18n.t("batch.filesAddedToQueue", { count }));
       } else {
-        toast.info("所选文件已在队列中");
+        toast.info(i18n.t("batch.filesAlreadyInQueue"));
       }
       return count;
     } catch (e: any) {
@@ -419,7 +411,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
     try {
       await api.saveBatchConfig(config);
       set({ config });
-      toast.success("批量翻译配置已保存");
+      toast.success(i18n.t("batch.configSaved"));
     } catch (e: any) {
       toast.error(formatIpcError(e));
     }

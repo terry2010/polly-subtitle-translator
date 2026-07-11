@@ -71,6 +71,7 @@ pub fn create_translate_provider(
             reqwest::Client::new(),
         )
         .with_service_name("LM Studio".to_string())
+        .with_ai_service(translate::AiService::Lmstudio)
         .with_glossary(glossary)
         .with_name_tagging(name_tagging);
 
@@ -104,6 +105,7 @@ pub fn create_translate_provider(
             .unwrap_or(1.0); // 默认 QPS=1.0
 
         let model_type = ModelType::from_model_id(&cfg.model_9b);
+        let ai_service = translate::AiService::from_service_id(sid);
         let provider = OpenAiProvider::with_client(
             base_url,
             cfg.model_9b.clone(),
@@ -111,7 +113,8 @@ pub fn create_translate_provider(
             Some(secret),
             reqwest::Client::new(),
         )
-        .with_service_name(format!("OpenAI ({})", sid))
+        .with_service_name(ai_service.display_name().to_string())
+        .with_ai_service(ai_service)
         .with_glossary(glossary)
         .with_name_tagging(name_tagging);
 
@@ -148,44 +151,18 @@ fn open_user_database() -> Option<Database> {
     Some(db)
 }
 
-/// 构建人名提取 system prompt（复用 translate.rs 的逻辑）
-fn build_name_extraction_system_prompt(source_lang: &str, target_lang: &str) -> String {
-    let src = translate::lang_full_name(source_lang);
-    let tgt = translate::lang_full_name(target_lang);
-    format!(
-        "Extract proper nouns from {src} subtitles and translate each to {tgt}.\n\
-         ONLY extract: person names, place/farm/field names, brand/product names, movie/TV/song/band titles, named animals, bird species.\n\
-         Do NOT extract: crops, generic animals, colors, months, seasons, units, weather, numbers, dates, adjectives, verbs, common nouns, farm terms.\n\
-         If unsure, do NOT include it.\n\
-         You MUST translate every name to {tgt}. Never output English as the translation.\n\n\
-         Output a JSON array. Each element is {{\"en\": \"EnglishName\", \"zh\": \"{tgt}Translation\"}}.\n\
-         For brand names (all-caps or containing numbers), zh = \"EnglishName（中文翻译）\".\n\n\
-         Example:\n\
-         [\n\
-           {{\"en\": \"Jeremy\", \"zh\": \"杰里米\"}},\n\
-           {{\"en\": \"Endgame\", \"zh\": \"终结者\"}},\n\
-           {{\"en\": \"Skylark\", \"zh\": \"云雀\"}},\n\
-           {{\"en\": \"GS4\", \"zh\": \"GS4（农业系统4）\"}},\n\
-           {{\"en\": \"Countryfile\", \"zh\": \"乡村档案\"}}\n\
-         ]\n\n\
-         Output ONLY the JSON array. No text before or after. No explanations.",
-        src = src, tgt = tgt
-    )
-}
-
-/// 构建人名提取 user prompt
-fn build_name_extraction_user_prompt(texts: &[String]) -> String {
-    texts
-        .iter()
-        .enumerate()
-        .map(|(i, txt)| format!("{}. {}", i + 1, txt))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 // === SECTION 2 END ===
 
-/// 人名预扫描（简化版：直接用 extract_names_raw）
+/// 人名预扫描（复用生产代码 extract_names_from_subtitles，消除 e2e 与生产行为差异）
+///
+/// 之前 e2e 有自己的简化版人名提取（手写 prompt 副本 + 固定 150 条/段 + 串行调用），
+/// 与生产代码存在 4 处差异：
+/// 1. prompt：e2e 始终用英文，生产按 AiService 切中英文（智谱用中文 prompt）
+/// 2. 分段：e2e 固定 150 条/段，生产用 get_model_batch_sizes(model).min(150)
+/// 3. 调度：e2e 串行调用 extract_names_raw，生产用并发/限流/取消/进度事件
+/// 4. 请求间隔：e2e 无间隔，生产有 rate_limit.min_interval() 间隔
+///
+/// 现在直接调用生产代码的 extract_names_from_subtitles，一次性消除所有差异。
 pub async fn extract_names(
     file: &SubtitleFile,
     cfg: &super::config::TestConfig,
@@ -193,34 +170,64 @@ pub async fn extract_names(
     target_lang: &str,
 ) -> Vec<ExtractedName> {
     // 使用 create_translate_provider 获取 provider（支持 GLM 等自定义服务）
-    let (provider, _provider_name, _rate_limit) = create_translate_provider(cfg, Vec::new(), false);
+    let (provider, _provider_name, rate_limit) = create_translate_provider(cfg, Vec::new(), false);
 
-    // 分段提取（每段最多 150 条）
-    const MAX_LINES_PER_SEGMENT: usize = 150;
     let texts: Vec<String> = file.entries.iter().map(|e| e.text.clone()).collect();
-    let mut all_names = Vec::new();
 
-    for chunk in texts.chunks(MAX_LINES_PER_SEGMENT) {
-        let system_prompt = build_name_extraction_system_prompt(source_lang, target_lang);
-        let user_prompt = build_name_extraction_user_prompt(chunk);
+    // 构造 ai_service：与 create_translate_provider 内部逻辑一致
+    let ai_service = if cfg.translate_provider == "openai" {
+        if let Some(sid) = &cfg.service_id {
+            translate::AiService::from_service_id(sid)
+        } else {
+            translate::AiService::Lmstudio
+        }
+    } else {
+        translate::AiService::Custom
+    };
 
-        match provider.extract_names_raw(&system_prompt, &user_prompt).await {
-            Ok(response) => {
-                let names = translate::parse_name_extraction_response(&response);
-                eprintln!("  [人名精译] 本段提取 {} 个人名", names.len());
-                all_names.extend(names);
-            }
-            Err(e) => {
-                eprintln!("  [人名精译] 本段提取失败: {:?}", e);
-            }
+    // model_type 用于 max_input_tokens，与生产 ipc.rs 逻辑一致
+    let model_type = ModelType::from_model_id(&cfg.model_9b);
+    let max_input_tokens = model_type.max_input_tokens();
+
+    // 取消计数器：e2e 不需要取消，用一个固定的 gen 值
+    let cancel_counter = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let my_gen = 0u64;
+
+    // 并发度：与生产 ipc.rs 的 resolve_translation_concurrency 逻辑一致
+    // Qps 模式下并发=1，Concurrency 模式下取配置值
+    let user_concurrency = match &rate_limit {
+        translate::RateLimitPolicy::Qps(_) => 1,
+        translate::RateLimitPolicy::Concurrency(n) => *n,
+    };
+
+    eprintln!("  [人名精译] 调用生产代码 extract_names_from_subtitles（ai_service={:?}, model={}, max_input_tokens={}）",
+        ai_service, cfg.model_9b, max_input_tokens);
+
+    let result = translate::extract_names_from_subtitles(
+        provider,
+        &texts,
+        source_lang,
+        target_lang,
+        max_input_tokens,
+        cancel_counter,
+        my_gen,
+        None,  // 无 app_handle，不发送进度事件
+        user_concurrency,
+        rate_limit,
+        &cfg.model_9b,
+        ai_service,
+    ).await;
+
+    match result {
+        Ok(names) => {
+            eprintln!("  [人名精译] 合并后 {} 个人名", names.len());
+            names
+        }
+        Err(e) => {
+            eprintln!("  [人名精译] 提取失败: {:?}", e);
+            Vec::new()
         }
     }
-
-    // 去重（同名取第一个）
-    let mut seen = std::collections::HashSet::new();
-    all_names.retain(|n| seen.insert(n.english.to_lowercase()));
-    eprintln!("  [人名精译] 合并后 {} 个人名", all_names.len());
-    all_names
 }
 
 // === SECTION 3 END ===
@@ -565,10 +572,54 @@ pub async fn stage_translate_batch(
     let batch_entries = &file.entries[batch_start..batch_end];
     eprintln!("  [翻译] 开始翻译 {} 条（模型: {}）...", batch_entries.len(), model_for_log);
 
-    let result = scheduler
+    let mut result = scheduler
         .translate_entries(batch_entries, &state.source_lang, &state.target_lang, 500)
         .await
         .expect("翻译失败");
+
+    // 人名标记后处理：剥离 <name> 标签 + 检测不一致 + 全局替换
+    // 与生产代码 ipc.rs translate_subtitle 的 post_process_name_tags 逻辑一致
+    if state.name_precision {
+        let mut translations: Vec<String> = result.translations.iter().map(|t| t.translated.clone()).collect();
+        let pre_scan_glossary: Vec<(String, String)> = state.names.iter()
+            .map(|n| (n.english.clone(), n.chinese.clone()))
+            .collect();
+        let consistency = translate::post_process_name_tags(&mut translations, &pre_scan_glossary);
+
+        if !consistency.inconsistencies.is_empty() {
+            eprintln!("  [人名一致性] 发现 {} 个不一致人名", consistency.inconsistencies.len());
+            for inc in &consistency.inconsistencies {
+                eprintln!("    不一致: {} → {} (候选: {:?})", inc.english, inc.chosen, inc.translations);
+            }
+        }
+        if !consistency.corrected_indices.is_empty() {
+            eprintln!("  [人名一致性] 修正了 {} 条翻译", consistency.corrected_indices.len());
+        }
+
+        // 回写修正后的翻译 + 更新缓存（与 ipc.rs 逻辑一致）
+        // post_process_name_tags 剥离 <name> 标签后，scheduler 写入的缓存还是修正前的译文，
+        // 不更新缓存会导致恢复时译文不一致（L3 batch_cache_recovery fail）
+        for (i, corrected) in &consistency.corrected_indices {
+            if let Some(entry) = result.translations.get_mut(*i) {
+                entry.translated = corrected.clone();
+                let cache_key = zimufan_lib::db::translate_cache_key(
+                    &entry.original,
+                    &state.source_lang,
+                    &state.target_lang,
+                    &provider_name_for_l3,
+                    &file.file_hash,
+                );
+                let _ = db.set_translate_cache(
+                    &cache_key,
+                    &entry.original,
+                    corrected,
+                    &state.source_lang,
+                    &state.target_lang,
+                    &provider_name_for_l3,
+                );
+            }
+        }
+    }
 
     let batch_tokens = result.token_usage.as_ref().map(|t| t.total_tokens).unwrap_or(0);
     let batch_cached = result.cached_count;

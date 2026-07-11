@@ -505,14 +505,5 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
 /// 语言类别转可读名称（i18n）
 function langDisplayName(lang: string): string {
   const key = `subtitle.langType.${lang}`;
-  const fallback: Record<string, string> = {
-    cjk: "中文/汉字",
-    hiragana: "平假名",
-    katakana: "片假名",
-    hangul: "韩文",
-    latin: "拉丁字母",
-    cyrillic: "西里尔文",
-    arabic: "阿拉伯文",
-  };
-  return i18n.exists(key) ? i18n.t(key) : (fallback[lang] ?? lang);
+  return i18n.exists(key) ? i18n.t(key) : lang;
 }
