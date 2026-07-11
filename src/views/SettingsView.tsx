@@ -29,6 +29,25 @@ const BatchView = lazy(() => import("./BatchView"));
 
 type SettingsTab = "general" | "translate" | "player" | "advanced" | "developer" | "batch" | "about";
 
+// ── SiliconFlow 免费模型列表（从官方价格页抓取，price=0 的 chat 模型）──
+const SILICONFLOW_FREE_MODELS = new Set([
+  "Qwen/Qwen2.5-7B-Instruct",
+  "Qwen/Qwen3-8B",
+  "Qwen/Qwen3.5-4B",
+  "THUDM/GLM-4-9B-0414",
+  "THUDM/GLM-Z1-9B-0414",
+  "tencent/Hunyuan-MT-7B",
+  "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
+  "PaddlePaddle/PaddleOCR-VL-1.5",
+  "deepseek-ai/DeepSeek-OCR",
+]);
+
+// 生成 SiliconFlow 模型详情页 URL（中国站，需登录）
+// 格式：https://cloud.siliconflow.cn/me/models?target=<encodeURIComponent(modelId)>
+function siliconflowModelUrl(modelId: string): string {
+  return `https://cloud.siliconflow.cn/me/models?target=${encodeURIComponent(modelId)}`;
+}
+
 export default function SettingsView() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -1144,6 +1163,16 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           {s.completelyFree ? "完全免费" : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
           {" · "}{s.price}
         </p>
+        {s.modelRecommendation && (
+          <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
+            {s.modelRecommendation.split(/<br\s*\/?>/i).map((line, i, arr) => (
+              <span key={i}>
+                {line}
+                {i < arr.length - 1 && <br />}
+              </span>
+            ))}
+          </p>
+        )}
       </div>
       <Card>
         <CardContent className="space-y-4 pt-4">
@@ -1218,12 +1247,28 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                       }
                       return filtered.map((m) => {
                         const selected = selectedModels.find((x) => x.id === m);
+                        const isSf = currentService?.id === "siliconflow";
+                        const maybeFree = isSf && SILICONFLOW_FREE_MODELS.has(m);
                         return (
-                          <div key={m} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground">
+                          <div key={m} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground group/option" title={maybeFree ? "可能免费，以官方价格为准" : undefined}>
                             <label className="flex cursor-pointer items-center gap-2 flex-1 min-w-0">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer accent-primary flex-shrink-0" checked={!!selected} onChange={() => toggleModelSelection(m)} />
                               <span className="truncate">{m}</span>
                             </label>
+                            {maybeFree && (
+                              <span className="flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">
+                                {t("settings.maybeFree", "可能免费")}
+                              </span>
+                            )}
+                            {isSf && (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(siliconflowModelUrl(m)).catch(() => {}); }}
+                                className="flex-shrink-0 cursor-pointer rounded border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:bg-primary/10 hover:underline"
+                              >
+                                {t("settings.viewPrice", "查看价格")}
+                              </button>
+                            )}
                             {selected && (
                               <select
                                 value={selected.modelType}
