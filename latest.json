@@ -1,11 +1,11 @@
 {
-  "version": "1.0.4",
-  "notes": "1. 修复个别日语翻译偶尔漏句子的情况\n2. 修复个别韩语字幕偶现翻译错位的情况",
-  "pub_date": "2026-07-08T13:00:05.720Z",
+  "version": "1.0.5",
+  "notes": "接入 GLM，针对免费的 GLM 4.7 flash 做了单独微调\n统一关闭推理模型 thinking 模式，避免推理内容干扰 JSON 解析\n优化流式响应中断处理，保留已收到的部分内容\n新增部分翻译检测：识别译文含 CJK 但残留英文单词的情况",
+  "pub_date": "2026-07-11T10:01:49.293Z",
   "platforms": {
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdHd3QnkrVk02aUFob3pkQ0hPOXFTb3JXbEsxRmw4a0RFaUc4UnE2L3c1aFFhWDl4cnBXS1c5V1h3NFY4SFRETk02ZTFkUWd6bUJxekVsQnUzc2V1R3dvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNTE1NTg0CWZpbGU6QUktU3ViVHJhbnNfMS4wLjRfeDY0LXNldHVwLmV4ZQpKRks2UlBNVzVIZHBGVytYeSt5MXYwVkRTdGIxSkdTL2RZbTdwdUJ6RndteU1IWlloY3JjUkhuVkFncUN4dmpLWTZ5eFFRdW41QTd4TysvUGJLc2VBQT09Cg==",
-      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/v1.0.4/AI-SubTrans_1.0.4_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTSFRWdGd1S0hxdCtaYTBjT1UvSmtVREdPQkdHMmxrcnJhTnhGOXlycGtEYlh5S29GN1JBaXJUTzRCRXdwTURzOUEwV3BBbjZ1SlJVYS9pQWkyUmFqVDI1UklSanlUOGdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgzNzY0MDU0CWZpbGU6QUktU3ViVHJhbnNfMS4wLjVfeDY0LXNldHVwLmV4ZQpqZEJZWUtHQ3FyWWx2YmMvMmNIUmsvanNUSzN3SENrcEZCa3dvR2tIb0FSdWYxOVVoOWt1OVFkekIwL29SRStobERzNjliaFVVbndkNklTVkZrdlJEUT09Cg==",
+      "url": "https://gh-proxy.com/https://github.com/terry2010/polly-subtitle-translator/releases/download/v1.0.5/AI-SubTrans_1.0.5_x64-setup.exe"
     }
   }
 }
