@@ -3,7 +3,7 @@
 // 统一内部结构 SubtitleEntry，对应需求文档 §7 parse_subtitle 返回值
 
 use crate::error::AppError;
-use crate::translate::looks_like_sound_effect;
+use crate::translate::{cleanup_cjk_spaces, looks_like_sound_effect};
 use serde::{Deserialize, Serialize};
 
 /// 字幕格式
@@ -728,7 +728,7 @@ pub fn parse_srt(content: &str) -> Result<SubtitleFile, AppError> {
         let end_ms = parse_srt_timecode(time_parts[1].trim())?;
 
         // 字幕文本（时间码行之后的所有行）
-        let text_lines: Vec<&str> = lines[(timecode_line_idx + 1)..].iter().copied().collect();
+        let text_lines: Vec<&str> = lines[(timecode_line_idx + 1)..].to_vec();
         let text = text_lines.join("\n");
 
         entries.push(SubtitleEntry {
@@ -876,13 +876,10 @@ pub fn parse_vtt(content: &str) -> Result<SubtitleFile, AppError> {
 
         let start_ms = parse_vtt_timecode(time_parts[0].trim())?;
         // end 部分可能带空格分隔的设置项，取第一个
-        let end_str = time_parts[1].trim().split_whitespace().next().unwrap_or("");
+        let end_str = time_parts[1].split_whitespace().next().unwrap_or("");
         let end_ms = parse_vtt_timecode(end_str)?;
 
-        let text_lines: Vec<&str> = lines[(timecode_line_idx + 1)..]
-            .iter()
-            .copied()
-            .collect();
+        let text_lines: Vec<&str> = lines[(timecode_line_idx + 1)..].to_vec();
         let text = text_lines.join("\n");
 
         entries.push(SubtitleEntry {
@@ -1130,11 +1127,11 @@ pub fn render_ass(file: &SubtitleFile) -> String {
         output.push_str("ScriptType: v4.00+\n");
         output.push_str("PlayResX: 1920\n");
         output.push_str("PlayResY: 1080\n");
-        output.push_str("\n");
+        output.push('\n');
         output.push_str("[V4+ Styles]\n");
         output.push_str("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n");
         output.push_str("Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\n");
-        output.push_str("\n");
+        output.push('\n');
     }
 
     // 输出 [Events] 区域
@@ -1259,7 +1256,7 @@ pub fn load_subtitle_file(path: &str) -> Result<SubtitleFile, AppError> {
         });
     }
 
-    let bytes = std::fs::read(path).map_err(|e| AppError::Io(e))?;
+    let bytes = std::fs::read(path).map_err(AppError::Io)?;
     let (content, encoding) = decode_bytes(&bytes)?;
 
     let format = detect_format(path)?;
@@ -1415,11 +1412,14 @@ fn build_entry_text(entry: &SubtitleEntry, options: &ExportOptions) -> String {
             let first = options.bilingual_translated_first.unwrap_or(true);
             // 合并内部换行为空格，避免多行译文/原文导致重新导入时语言检测混乱
             let collapse = |s: &str| -> String {
-                strip_inline_ass_and_html_tags(s)
-                    .replace('\n', " ")
-                    .replace("\\N", " ")
-                    .trim()
-                    .to_string()
+                cleanup_cjk_spaces(
+                    &strip_inline_ass_and_html_tags(s)
+                        .replace('\n', " ")
+                        .replace("\\N", " ")
+                        .trim()
+                        .to_string(),
+                )
+                .to_string()
             };
             let (top, bottom) = if first {
                 (collapse(&entry.translated), collapse(&entry.text))
@@ -1564,7 +1564,7 @@ fn render_ass_with_options(file: &SubtitleFile, options: &ExportOptions) -> Stri
                 } else {
                     &entry.translated
                 };
-                let text = normalize_ass_newline(&strip_inline_ass_and_html_tags(text));
+                let text = normalize_ass_newline(&cleanup_cjk_spaces(&strip_inline_ass_and_html_tags(text)));
                 s.push_str(&format!(
                     "Dialogue: 0,{},{},Default,,0,0,0,,{}\n",
                     format_ass_timecode(entry.start_ms),
@@ -1581,8 +1581,8 @@ fn render_ass_with_options(file: &SubtitleFile, options: &ExportOptions) -> Stri
                 };
                 // 剥离标签后，把内部换行合并为空格（避免 \N 与语言块分隔 \N 混淆，
                 // 导致重新导入时 split_bilingual 无法正确识别语言切换点）
-                let first = strip_inline_ass_and_html_tags(first).replace('\n', " ").replace("\\N", " ");
-                let second = strip_inline_ass_and_html_tags(second).replace('\n', " ").replace("\\N", " ");
+                let first = cleanup_cjk_spaces(&strip_inline_ass_and_html_tags(first).replace('\n', " ").replace("\\N", " "));
+                let second = cleanup_cjk_spaces(&strip_inline_ass_and_html_tags(second).replace('\n', " ").replace("\\N", " "));
                 let first_trim = first.trim();
                 let second_trim = second.trim();
                 // 翻译失败的条目：输出空的 Primary + Secondary 原文

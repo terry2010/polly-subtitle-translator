@@ -21,13 +21,15 @@ pub(crate) fn to_ipc_err(e: AppError) -> IpcError {
 }
 
 /// 计算翻译（含人名预扫描）的实际并发数
-/// 规则：用户可覆盖 provider 的默认限流策略（config key 形如 translate_openai_{sid}_qps），
-/// 再与全局 translate_concurrency 取最小值。Qps 模式下强制串行（1 并发）。
-pub(crate) fn resolve_translation_concurrency(
+/// 解析用户配置的 rate_limit（QPS 或 Concurrency），用于人名预扫描等需要遵守限流的场景
+/// 用户配置的值统一存在 {config_key} 中：
+///   - 小数（如 0.5）→ Qps 模式（每 1/N 秒 1 个请求）
+///   - 整数 >= 1 → 按默认策略处理：默认 Qps 则覆盖 QPS 值，默认 Concurrency 则覆盖并发数
+pub(crate) fn resolve_rate_limit(
     db: &Database,
     prov: &TranslateProvider,
     service_id: &Option<String>,
-) -> Result<usize, IpcError> {
+) -> translate::RateLimitPolicy {
     let default_policy = prov.rate_limit_policy();
     let config_key = if *prov == TranslateProvider::OpenAi {
         service_id.as_ref()
@@ -36,28 +38,43 @@ pub(crate) fn resolve_translation_concurrency(
     } else {
         format!("translate_{}_qps", prov.as_str())
     };
-    let user_override_qps = db.get_config(&config_key)
+    let user_value = db.get_config(&config_key)
         .ok().flatten()
         .and_then(|v| v.parse::<f64>().ok());
-    let user_override_concurrency = db.get_config(&config_key)
-        .ok().flatten()
-        .and_then(|v| v.parse::<usize>().ok());
-    let rate_limit = match default_policy {
+
+    // 小数 QPS（如 0.5）：强制 Qps 模式，无论默认策略是什么
+    if let Some(q) = user_value {
+        if q > 0.0 && q < 1.0 {
+            return translate::RateLimitPolicy::Qps(q);
+        }
+    }
+
+    match default_policy {
         translate::RateLimitPolicy::Qps(_) => {
-            if let Some(q) = user_override_qps {
+            if let Some(q) = user_value {
                 translate::RateLimitPolicy::Qps(q)
             } else {
                 default_policy
             }
         }
         translate::RateLimitPolicy::Concurrency(_) => {
-            if let Some(c) = user_override_concurrency {
+            if let Some(c) = user_value.map(|v| v as usize) {
                 translate::RateLimitPolicy::Concurrency(c)
             } else {
                 default_policy
             }
         }
-    };
+    }
+}
+
+/// 规则：用户可覆盖 provider 的默认限流策略（config key 形如 translate_openai_{sid}_qps），
+/// 再与全局 translate_concurrency 取最小值。Qps 模式下强制串行（1 并发）。
+pub(crate) fn resolve_translation_concurrency(
+    db: &Database,
+    prov: &TranslateProvider,
+    service_id: &Option<String>,
+) -> Result<usize, IpcError> {
+    let rate_limit = resolve_rate_limit(db, prov, service_id);
 
     let user_concurrency = db.get_config("translate_concurrency")
         .map_err(to_ipc_err)?
@@ -68,8 +85,8 @@ pub(crate) fn resolve_translation_concurrency(
         translate::RateLimitPolicy::Concurrency(max_n) => user_concurrency.min(*max_n).max(1),
     };
     tracing::info!(
-        "翻译并发解析: 用户配置并发={}, 限流策略={:?}, 最终并发={}, config_key={}",
-        user_concurrency, rate_limit, final_concurrency, config_key
+        "翻译并发解析: 用户配置并发={}, 限流策略={:?}, 最终并发={}",
+        user_concurrency, rate_limit, final_concurrency
     );
     Ok(final_concurrency)
 }
@@ -249,7 +266,7 @@ pub fn resolve_provider(
             if let Ok(Some(json)) = db.get_config(&types_key) {
                 if let Ok(map) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&json) {
                     if let Some(val) = map.get(m) {
-                        if let Some(s) = val.as_str() { Some(s.to_string()) } else { None }
+                        val.as_str().map(|s| s.to_string())
                     } else {
                         Some(translate::ModelType::from_model_id(m).as_str().to_string())
                     }
@@ -314,18 +331,32 @@ pub fn resolve_provider(
         _ => proxy_config,
     };
 
-    // AI 服务：用真实服务商名作为 service_name
-    let service_name = if prov == translate::TranslateProvider::OpenAi {
-        service_id.map(translate::ai_service_display_name)
+    // AI 服务：传 service_id 给 create_provider_with_proxy，内部构造 AiService
+    let service_id_for_provider = if prov == translate::TranslateProvider::OpenAi {
+        service_id
     } else {
         None
+    };
+    // 读取用户配置的 TPM 限额
+    let tpm_limit = if prov == translate::TranslateProvider::OpenAi {
+        if let Some(sid) = service_id {
+            db.get_config(&format!("translate_openai_{}_tpm", sid))
+                .ok().flatten()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    } else {
+        0
     };
     let provider_options = translate::ProviderOptions {
         glossary,
         name_tagging,
+        tpm_limit,
     };
     let prov_instance = translate::create_provider_with_proxy(
-        &prov, &credentials, &effective_proxy, service_name, &provider_options,
+        &prov, &credentials, &effective_proxy, service_id_for_provider, &provider_options,
     )?;
 
     // 缓存 key 隔离：provider_name 纳入 service_id + model
@@ -338,37 +369,8 @@ pub fn resolve_provider(
         provider.to_string()
     };
 
-    // 限流策略
-    let rate_limit = prov.rate_limit_policy();
-    let config_key = if prov == TranslateProvider::OpenAi {
-        service_id
-            .map(|sid| format!("translate_openai_{}_qps", sid))
-            .unwrap_or_else(|| "translate_openai_qps".to_string())
-    } else {
-        format!("translate_{}_qps", prov.as_str())
-    };
-    let user_override_qps = db.get_config(&config_key)
-        .ok().flatten()
-        .and_then(|v| v.parse::<f64>().ok());
-    let user_override_concurrency = db.get_config(&config_key)
-        .ok().flatten()
-        .and_then(|v| v.parse::<usize>().ok());
-    let rate_limit = match rate_limit {
-        translate::RateLimitPolicy::Qps(_) => {
-            if let Some(q) = user_override_qps {
-                translate::RateLimitPolicy::Qps(q)
-            } else {
-                rate_limit
-            }
-        }
-        translate::RateLimitPolicy::Concurrency(_) => {
-            if let Some(c) = user_override_concurrency {
-                translate::RateLimitPolicy::Concurrency(c)
-            } else {
-                rate_limit
-            }
-        }
-    };
+    // 限流策略：复用 resolve_rate_limit，确保人名预扫描和翻译阶段使用相同的限流逻辑
+    let rate_limit = resolve_rate_limit(db, &prov, &service_id.map(|s| s.to_string()));
 
     Ok(ResolvedProvider {
         instance: prov_instance,
@@ -603,9 +605,7 @@ pub fn clear_translate_cache(db: State<'_, Database>) -> IpcResult<usize> {
 pub async fn get_supported_target_langs(
     _provider: String,
 ) -> IpcResult<Vec<crate::translate::LanguageInfo>> {
-    ipc_result((|| {
-        // 返回静态语言列表（实际应从 provider 获取，但需要凭据）
-        Ok(vec![
+    ipc_result(Ok(vec![
             crate::translate::LanguageInfo {
                 code: "zh".into(),
                 name: "Chinese".into(),
@@ -646,8 +646,7 @@ pub async fn get_supported_target_langs(
                 name: "Russian".into(),
                 native_name: "Русский".into(),
             },
-        ])
-    })())
+        ]))
 }
 
 // === SECTION 2 END ===
@@ -706,6 +705,10 @@ pub async fn translate_subtitle(
         Some(h) if !h.is_empty() => h.clone(),
         _ => subtitle::compute_subtitle_hash(&entries),
     };
+
+    // clone 一份用于 post_process_name_tags 后更新缓存
+    let provider_name_for_cache = provider_name.clone();
+    let file_hash_for_cache = file_hash.clone();
 
     let scheduler = translate::TranslateScheduler::with_cancel_token(
         &db,
@@ -767,11 +770,62 @@ pub async fn translate_subtitle(
             tracing::info!("人名一致性后处理: 修正了 {} 条翻译", consistency.corrected_indices.len());
         }
 
-        // 回写修正后的翻译
+        // 回写修正后的翻译 + 更新缓存
+        // post_process_name_tags 会剥离 <name> 标签和全局替换不一致译名，
+        // 但 scheduler 在翻译时已把修正前的译文写入缓存。
+        // 如果不更新缓存，恢复时 get_cached_entries 返回的是修正前的译文（带标签），
+        // 与翻译时返回的修正后译文不一致（L3 batch_cache_recovery fail）。
         for (i, corrected) in &consistency.corrected_indices {
             if let Some(entry) = result.translations.get_mut(*i) {
                 entry.translated = corrected.clone();
+                // 更新缓存：用修正后的译文覆盖 scheduler 写入的修正前译文
+                let cache_key = crate::db::translate_cache_key(
+                    &entry.original,
+                    &source_lang,
+                    &target_lang,
+                    &provider_name_for_cache,
+                    &file_hash_for_cache,
+                );
+                let _ = db.set_translate_cache(
+                    &cache_key,
+                    &entry.original,
+                    corrected,
+                    &source_lang,
+                    &target_lang,
+                    &provider_name_for_cache,
+                );
             }
+        }
+    } else {
+        // 即使未启用人名标记，也清理 CJK 字符之间的异常空格
+        let mut cleaned_count = 0;
+        for entry in result.translations.iter_mut() {
+            let cleaned = translate::cleanup_cjk_spaces(&entry.translated);
+            if cleaned != entry.translated {
+                let orig = entry.translated.clone();
+                entry.translated = cleaned.clone();
+                cleaned_count += 1;
+                // 更新缓存
+                let cache_key = crate::db::translate_cache_key(
+                    &entry.original,
+                    &source_lang,
+                    &target_lang,
+                    &provider_name_for_cache,
+                    &file_hash_for_cache,
+                );
+                let _ = db.set_translate_cache(
+                    &cache_key,
+                    &entry.original,
+                    &cleaned,
+                    &source_lang,
+                    &target_lang,
+                    &provider_name_for_cache,
+                );
+                let _ = orig; // suppress unused warning
+            }
+        }
+        if cleaned_count > 0 {
+            tracing::info!("CJK空格清理: 修正了 {} 条翻译", cleaned_count);
         }
     }
 
@@ -804,6 +858,8 @@ pub async fn translate_subtitle(
 #[tauri::command]
 pub fn cancel_translate(cancel_token: State<'_, CancelToken>) -> IpcResult<()> {
     cancel_token.fetch_add(1, Ordering::Relaxed);
+    // 同时通知 TPM 控制器取消等待
+    translate::notify_global_cancel();
     tracing::info!("收到取消翻译请求");
     ipc_result(Ok(()))
 }
@@ -855,10 +911,7 @@ pub async fn extract_names(
         Some(sid) => format!("openai_{}", sid),
         None => "openai".to_string(),
     };
-    let api_key = match config::CredentialStore::load(&db, &keyring_provider, "secret", "人名预扫描") {
-        Ok(s) => Some(s),
-        Err(_) => None,
-    };
+    let api_key = config::CredentialStore::load(&db, &keyring_provider, "secret", "人名预扫描").ok();
 
     let base_url = base_url.ok_or_else(|| AppError::TranslateNotConfigured.to_ipc_error())?;
     let proxy_config = ProxyConfig::load_from_db(&db);
@@ -880,17 +933,36 @@ pub async fn extract_names(
         model: Some(model),
         model_type: Some(model_type.as_str().to_string()),
     };
-    let service_name = service_id.as_deref().map(translate::ai_service_display_name);
-    let provider_options = translate::ProviderOptions::default();
+    // 读取用户配置的 TPM 限额
+    let tpm_limit = if prov == translate::TranslateProvider::OpenAi {
+        if let Some(ref sid) = service_id {
+            db.get_config(&format!("translate_openai_{}_tpm", sid))
+                .ok().flatten()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+    let provider_options = translate::ProviderOptions {
+        glossary: Vec::new(),
+        name_tagging: false,
+        tpm_limit,
+    };
     let prov_instance = translate::create_provider_with_proxy(
-        &prov, &credentials, &effective_proxy, service_name, &provider_options
+        &prov, &credentials, &effective_proxy, service_id.as_deref(), &provider_options
     ).map_err(to_ipc_err)?;
 
     let max_input_tokens = model_type.max_input_tokens();
     // 人名预扫描使用与翻译阶段相同的最终并发数（QPS 上限/全局并发数取最小）
     let final_concurrency = resolve_translation_concurrency(&db, &prov, &service_id)?;
     tracing::info!("人名预扫描并发度: {}", final_concurrency);
-    let rate_limit = prov.rate_limit_policy();
+    // 使用用户配置的 rate_limit（而非 provider 默认值），确保 QPS 限速生效
+    let rate_limit = resolve_rate_limit(&db, &prov, &service_id);
+    tracing::info!("人名预扫描 rate_limit: {:?}", rate_limit);
+    let ai_service = translate::AiService::from_service_id(service_id.as_deref().unwrap_or("custom"));
     let result = translate::extract_names_from_subtitles(
         prov_instance, &texts, &source_lang, &target_lang, max_input_tokens,
         cancel_token.inner().clone(),
@@ -899,6 +971,7 @@ pub async fn extract_names(
         final_concurrency,
         rate_limit,
         &model_for_names,
+        ai_service,
     ).await.map_err(to_ipc_err)?;
 
     let elapsed = extract_start.elapsed();
@@ -1025,13 +1098,13 @@ pub async fn test_translate_connection(
         _ => proxy_config,
     };
 
-    // AI 服务：用真实服务商名作为 service_name（错误消息中显示）
-    let service_name = if prov == TranslateProvider::OpenAi {
-        service_id.as_deref().map(translate::ai_service_display_name)
+    // AI 服务：传 service_id 给 create_provider_with_proxy
+    let service_id_for_provider = if prov == TranslateProvider::OpenAi {
+        service_id.as_deref()
     } else {
         None
     };
-    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_name, &translate::ProviderOptions::default()).map_err(to_ipc_err)?;
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_id_for_provider, &translate::ProviderOptions::default()).map_err(to_ipc_err)?;
 
     // OpenAi：直接翻译测试文本，返回原文+译文
     if prov == TranslateProvider::OpenAi {
@@ -1055,28 +1128,60 @@ pub async fn test_translate_connection(
 pub async fn list_openai_models(
     base_url: String,
     api_key: Option<String>,
+    service_id: Option<String>,
+    db: State<'_, Database>,
 ) -> Result<Vec<String>, IpcError> {
+    let display_name = match &service_id {
+        Some(sid) => crate::translate::ai_service_display_name(sid).to_string(),
+        None => "AI".to_string(),
+    };
     let url = format!("{}/models", base_url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
+
+    // 按 per-provider 代理开关决定是否用代理（与 test_translate_connection 相同逻辑）
+    let proxy_config = ProxyConfig::load_from_db(&db);
+    let use_proxy_key = match &service_id {
+        Some(sid) => format!("translate_openai_{}_use_proxy", sid),
+        None => "translate_openai_use_proxy".to_string(),
+    };
+    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
+    let effective_proxy = match use_proxy.as_deref() {
+        Some("false") => ProxyConfig::default(),
+        _ => proxy_config,
+    };
+    let client = effective_proxy.build_client_builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
             .with_args(serde_json::json!({ "detail": e.to_string() })))?;
 
+    let has_key = api_key.as_ref().map(|k| !k.is_empty()).unwrap_or(false);
     let mut req = client.get(&url);
     if let Some(key) = api_key.filter(|k| !k.is_empty()) {
         req = req.header("Authorization", format!("Bearer {}", key));
     }
 
     let resp = req.send().await.map_err(|e| {
-        IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
-            .with_args(serde_json::json!({ "detail": e.to_string() }))
+        IpcError::new("translate.networkError", Severity::Recoverable)
+            .with_args(serde_json::json!({ "provider": display_name, "detail": e.to_string() }))
     })?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(IpcError::new("translate.authFailed", Severity::Recoverable)
-            .with_args(serde_json::json!({ "provider": "openai" })));
+        let body = resp.text().await.unwrap_or_default();
+        // 401 通常是真正的凭据错误；403 可能是凭据错误，也可能是 IP/地区限制
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(IpcError::new("translate.authFailed", Severity::Recoverable)
+                .with_args(serde_json::json!({ "provider": display_name })));
+        }
+        // 403：检查是否是 API key 无效（有 key 但被拒），还是 IP/地区限制（无 key 或被封锁）
+        let is_generic_forbidden = body.contains("Forbidden") || body.contains("blocked") || body.contains("region") || body.contains("access denied");
+        if has_key && !is_generic_forbidden {
+            return Err(IpcError::new("translate.authFailed", Severity::Recoverable)
+                .with_args(serde_json::json!({ "provider": display_name })));
+        }
+        // 403 + 无 key 或通用 Forbidden：网络/地区限制
+        return Err(IpcError::new("translate.networkError", Severity::Recoverable)
+            .with_args(serde_json::json!({ "provider": display_name, "detail": format!("HTTP 403 - 可能是地区限制或需要代理") })));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
@@ -1488,7 +1593,7 @@ pub fn open_path_cmd(path: String) -> IpcResult<()> {
             .map_err(|e| crate::error::AppError::PlayerLoadFailed {
                 detail: format!("open ({})", e),
             });
-        return ipc_result(result);
+        ipc_result(result)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -1533,20 +1638,19 @@ pub fn clear_crash_logs_cmd(app: tauri::AppHandle) -> IpcResult<usize> {
         .map_err(|e| crate::error::AppError::PlayerLoadFailed {
             detail: format!("获取 app_data_dir 失败: {}", e),
         });
-    let result = app_data_dir.and_then(|dir| {
+    let result = app_data_dir.map(|dir| {
         let crash_dir = dir.join("crashes");
         let mut count = 0usize;
         if let Ok(read_dir) = std::fs::read_dir(&crash_dir) {
             for entry in read_dir.flatten() {
                 let path = entry.path();
-                if path.is_file() {
-                    if std::fs::remove_file(&path).is_ok() {
+                if path.is_file()
+                    && std::fs::remove_file(&path).is_ok() {
                         count += 1;
                     }
-                }
             }
         }
-        Ok(count)
+        count
     });
     ipc_result(result)
 }
@@ -1662,20 +1766,19 @@ pub fn clear_prompt_fail_logs_cmd(app: tauri::AppHandle) -> IpcResult<usize> {
         .map_err(|e| crate::error::AppError::PlayerLoadFailed {
             detail: format!("获取 app_data_dir 失败: {}", e),
         });
-    let result = app_data_dir.and_then(|dir| {
+    let result = app_data_dir.map(|dir| {
         let fail_dir = dir.join("prompt_fails");
         let mut count = 0usize;
         if let Ok(read_dir) = std::fs::read_dir(&fail_dir) {
             for entry in read_dir.flatten() {
                 let path = entry.path();
-                if path.is_file() {
-                    if std::fs::remove_file(&path).is_ok() {
+                if path.is_file()
+                    && std::fs::remove_file(&path).is_ok() {
                         count += 1;
                     }
-                }
             }
         }
-        Ok(count)
+        count
     });
     ipc_result(result)
 }
@@ -1730,7 +1833,7 @@ pub fn list_api_debug_logs_cmd(app: tauri::AppHandle) -> IpcResult<Vec<PromptFai
         .map_err(|e| crate::error::AppError::PlayerLoadFailed {
             detail: format!("获取 app_data_dir 失败: {}", e),
         });
-    let result = app_data_dir.and_then(|dir| {
+    let result = app_data_dir.map(|dir| {
         let debug_dir = dir.join("api_debug");
         let mut entries = Vec::new();
         if let Ok(read_dir) = std::fs::read_dir(&debug_dir) {
@@ -1751,7 +1854,7 @@ pub fn list_api_debug_logs_cmd(app: tauri::AppHandle) -> IpcResult<Vec<PromptFai
         }
         // 按修改时间降序（最新的在前）
         entries.sort_by(|a, b| b.modified.cmp(&a.modified));
-        Ok(entries)
+        entries
     });
     ipc_result(result)
 }
@@ -1765,20 +1868,19 @@ pub fn clear_api_debug_logs_cmd(app: tauri::AppHandle) -> IpcResult<usize> {
         .map_err(|e| crate::error::AppError::PlayerLoadFailed {
             detail: format!("获取 app_data_dir 失败: {}", e),
         });
-    let result = app_data_dir.and_then(|dir| {
+    let result = app_data_dir.map(|dir| {
         let debug_dir = dir.join("api_debug");
         let mut count = 0usize;
         if let Ok(read_dir) = std::fs::read_dir(&debug_dir) {
             for entry in read_dir.flatten() {
                 let path = entry.path();
-                if path.is_file() {
-                    if std::fs::remove_file(&path).is_ok() {
+                if path.is_file()
+                    && std::fs::remove_file(&path).is_ok() {
                         count += 1;
                     }
-                }
             }
         }
-        Ok(count)
+        count
     });
     ipc_result(result)
 }
@@ -2379,7 +2481,7 @@ fn normalize_locale(locale: &str) -> String {
     // 同时按 '-' 和 '_' 分割，取第一段作为主语言码
     // 兼容 "en-US"、"en_US.UTF-8"、"zh_Hans_CN" 等格式
     let lang = lower
-        .split(|c| c == '-' || c == '_')
+        .split(['-', '_'])
         .next()
         .filter(|s| !s.is_empty())
         .unwrap_or("zh");

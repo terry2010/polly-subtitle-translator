@@ -145,11 +145,18 @@ pub enum AppError {
     #[error("Translation network error: {detail}")]
     TranslateNetworkError { provider: String, detail: String },
 
+    #[error("Translation timeout: {provider} did not respond within {timeout_secs}s")]
+    TranslateTimeout { provider: String, timeout_secs: u64 },
+
     #[error("Translation auth failed for {provider}")]
     TranslateAuthFailed { provider: String },
 
     #[error("Translation insufficient balance for {provider}: {detail}")]
     TranslateInsufficientBalance { provider: String, detail: String },
+
+    /// 每日 token 限额已用尽（TPD），不可重试，需等次日重置
+    #[error("Translation daily token limit reached for {provider}: {detail}")]
+    TranslateDailyLimitReached { provider: String, detail: String },
 
     #[error("Translation credentials not configured")]
     TranslateCredentialsNotConfigured,
@@ -475,10 +482,16 @@ impl AppError {
             TranslateNetworkError { provider, detail } => IpcError::new("translate.networkError", Severity::Recoverable)
                 .with_args(serde_json::json!({ "provider": provider, "detail": detail })),
 
+            TranslateTimeout { provider, timeout_secs } => IpcError::new("translate.timeout", Severity::Recoverable)
+                .with_args(serde_json::json!({ "provider": provider, "timeoutSecs": timeout_secs })),
+
             TranslateAuthFailed { provider } => IpcError::new("translate.authFailed", Severity::Recoverable)
                 .with_args(serde_json::json!({ "provider": provider })),
 
             TranslateInsufficientBalance { provider, detail } => IpcError::new("translate.insufficientBalance", Severity::Recoverable)
+                .with_args(serde_json::json!({ "provider": provider, "detail": detail })),
+
+            TranslateDailyLimitReached { provider, detail } => IpcError::new("translate.dailyLimitReached", Severity::Recoverable)
                 .with_args(serde_json::json!({ "provider": provider, "detail": detail })),
 
             TranslateCredentialsNotConfigured => IpcError::new("translate.credentialsNotConfigured", Severity::Recoverable),

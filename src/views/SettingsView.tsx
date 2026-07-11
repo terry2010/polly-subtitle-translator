@@ -7,7 +7,7 @@ import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/
 import { setWindowSizeInitialized } from "./MainView";
 import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X, Star, Plus, Bug, Terminal, FolderOpen, FileText, Layers } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import { SERVICES, ServiceDef, matchesSearch, getServiceById } from "../lib/services";
+import { SERVICES, ServiceDef, matchesSearch, getServiceById, isMaybeFreeModel, getModelPriceUrl, ERNIE_FREE_MODELS } from "../lib/services";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -19,7 +19,7 @@ import { useLibmpvStore } from "../stores/libmpvStore";
 import { useFfmpegStore } from "../stores/ffmpegStore";
 import { useUpdateStore } from "../stores/updateStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
-import { api, formatIpcError } from "../lib/api";
+import { api, formatIpcError, isTimeoutError } from "../lib/api";
 import type { PromptFailLogEntry } from "../lib/ipc-types";
 import { warn } from "../lib/logger";
 import { cn } from "../lib/utils";
@@ -30,23 +30,7 @@ const BatchView = lazy(() => import("./BatchView"));
 type SettingsTab = "general" | "translate" | "player" | "advanced" | "developer" | "batch" | "about";
 
 // ── SiliconFlow 免费模型列表（从官方价格页抓取，price=0 的 chat 模型）──
-const SILICONFLOW_FREE_MODELS = new Set([
-  "Qwen/Qwen2.5-7B-Instruct",
-  "Qwen/Qwen3-8B",
-  "Qwen/Qwen3.5-4B",
-  "THUDM/GLM-4-9B-0414",
-  "THUDM/GLM-Z1-9B-0414",
-  "tencent/Hunyuan-MT-7B",
-  "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B",
-  "PaddlePaddle/PaddleOCR-VL-1.5",
-  "deepseek-ai/DeepSeek-OCR",
-]);
-
-// 生成 SiliconFlow 模型详情页 URL（中国站，需登录）
-// 格式：https://cloud.siliconflow.cn/me/models?target=<encodeURIComponent(modelId)>
-function siliconflowModelUrl(modelId: string): string {
-  return `https://cloud.siliconflow.cn/me/models?target=${encodeURIComponent(modelId)}`;
-}
+// 已迁移至 services.ts 的 isMaybeFreeModel / getModelPriceUrl
 
 export default function SettingsView() {
   const { t } = useTranslation();
@@ -133,7 +117,7 @@ export default function SettingsView() {
     { key: "player", label: t("settings.player"), icon: <Film className="h-4 w-4" /> },
     { key: "advanced", label: t("settings.advanced"), icon: <Wrench className="h-4 w-4" /> },
     ...(devMode ? [{ key: "developer" as SettingsTab, label: t("settings.developer", "开发者选项"), icon: <Bug className="h-4 w-4" /> }] : []),
-    ...(devMode ? [{ key: "batch" as SettingsTab, label: "批量翻译", icon: <Layers className="h-4 w-4" /> }] : []),
+    ...(devMode ? [{ key: "batch" as SettingsTab, label: t("settings.batch"), icon: <Layers className="h-4 w-4" /> }] : []),
     { key: "about", label: t("settings.about"), icon: <Info className="h-4 w-4" /> },
   ];
 
@@ -202,8 +186,9 @@ export default function SettingsView() {
 
 // === 批量翻译设置（嵌入 BatchView，仅开发者模式可见）===
 function BatchSettingsContent() {
+  const { t } = useTranslation();
   return (
-    <Suspense fallback={<div className="text-center text-muted-foreground py-8">加载中...</div>}>
+    <Suspense fallback={<div className="text-center text-muted-foreground py-8">{t("common.loading")}</div>}>
       <BatchView embedded />
     </Suspense>
   );
@@ -326,6 +311,7 @@ function DefaultLangSettings() {
     }
   };
 
+  // 语言名使用各语言的原生名称（国际标准：日语显示"日本語"，不随 UI 语言变化）
   const langName = (code: string) => {
     const map: Record<string, string> = { zh: "中文", en: "English", ja: "日本語", ko: "한국어", fr: "Français", de: "Deutsch", es: "Español", ru: "Русский" };
     return map[code] ?? code;
@@ -436,6 +422,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   // AI 专属
   const [baseUrl, setBaseUrl] = useState("");
   const [qps, setQps] = useState(5.0);
+  const [tpmLimit, setTpmLimit] = useState(0);   // 0 = 不限制
   const [model, setModel] = useState("");
   const [modelList, setModelList] = useState<string[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
@@ -444,6 +431,8 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   const [modelFilter, setModelFilter] = useState("");
   const modelDropdownRef = useRef<HTMLDivElement>(null);
   const lastAutoFetchUrlRef = useRef<string>("");
+  // 跟踪当前 service ID，防止切换服务后旧 fetchModels 完成时清掉新服务的 selectedModels
+  const currentFetchServiceRef = useRef<string>("");
 
   // === SECTION 3B END ===
 
@@ -485,6 +474,8 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     const trimmedUrl = urlToFetch.trim();
     if (!trimmedUrl) return;
     try { new URL(trimmedUrl); } catch { return; }
+    const fetchServiceId = currentService?.id ?? "";
+    currentFetchServiceRef.current = fetchServiceId;
     setLoadingModels(true);
     setModelDropdownOpen(false);
     try {
@@ -507,7 +498,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       }
       const uniqueUrls = Array.from(new Set(candidateUrls));
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), 3000)
+        setTimeout(() => reject(new Error("timeout")), 12000)
       );
       let successUrl = "";
       let allModels: string[] = [];
@@ -530,6 +521,16 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       if (currentService?.id === "zhipu" && !allModels.includes("glm-4.7-flash")) {
         allModels.unshift("glm-4.7-flash");
       }
+      // 文心一言：千帆 /v2/models API 不返回免费模型，手动注入到列表顶部
+      if (currentService?.id === "ernie") {
+        for (const freeModel of ERNIE_FREE_MODELS) {
+          if (!allModels.includes(freeModel)) {
+            allModels.unshift(freeModel);
+          }
+        }
+      }
+      // 如果在 fetchModels 飞行期间用户切换了服务，丢弃本次结果
+      if (currentFetchServiceRef.current !== fetchServiceId) return;
       setModelList(allModels);
       lastAutoFetchUrlRef.current = successUrl;
       setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
@@ -538,7 +539,9 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         return prevModel;
       });
     } catch { /* 静默 */ } finally {
-      setLoadingModels(false);
+      if (currentFetchServiceRef.current === fetchServiceId) {
+        setLoadingModels(false);
+      }
     }
   }, [currentService, autoDetectModelTypeStr, api]);
 
@@ -572,7 +575,8 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         api.getConfig(`translate_openai_${sid}_qps`).catch(() => null),
         api.getConfig(`translate_openai_${sid}_use_proxy`).catch(() => null),
         api.getCredential(`openai_${sid}`, "secret", `设置页加载凭据(${sid})`).catch(() => null),
-      ]).then(([savedBaseUrl, savedSelected, savedModelTypes, savedQps, savedUseProxy, savedSecret]) => {
+        api.getConfig(`translate_openai_${sid}_tpm`).catch(() => null),
+      ]).then(([savedBaseUrl, savedSelected, savedModelTypes, savedQps, savedUseProxy, savedSecret, savedTpm]) => {
         if (savedBaseUrl) {
           setBaseUrl(savedBaseUrl);
           fetchModels(savedBaseUrl, savedSecret || undefined);
@@ -582,6 +586,8 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         if (savedQps) setQps(parseFloat(savedQps) || currentService.presetQps || 5);
         if (savedSecret) setSecretKey("••••••••");
         setUseProxy(savedUseProxy === "true" ? true : savedUseProxy === "false" ? false : null);
+        // TPM：有保存值用保存值，否则用 preset 默认值
+        setTpmLimit(savedTpm ? parseInt(savedTpm) || 0 : (currentService.presetTpm || 0));
         if (savedSelected) {
           const ids = savedSelected.split(",").filter(Boolean);
           let typeMap: Record<string, string> = {};
@@ -660,6 +666,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         selectedModels.forEach((x) => { typeMap[x.id] = x.modelType; });
         await api.setConfig(`translate_openai_${sid}_selected_model_types`, JSON.stringify(typeMap));
         await api.setConfig(`translate_openai_${sid}_qps`, String(qps));
+        await api.setConfig(`translate_openai_${sid}_tpm`, String(tpmLimit));
       } else {
         await api.setConfig(`translate_${sid}_app_id`, appId);
         await api.setConfig(`translate_${sid}_region`, region);
@@ -722,6 +729,10 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       toast.error(t("settings.appIdRequired", "请填写 App ID"));
       return;
     }
+    if (currentService.category === "ai" && selectedModels.length === 0) {
+      toast.error(t("settings.modelRequired", "请先选择模型"));
+      return;
+    }
     setTesting(true);
     setTestResult(null);
     try {
@@ -756,7 +767,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       }
     } catch (e: any) {
       setTestResult("fail");
-      toast.error(formatIpcError(e));
+      // 超时/网络错误：持久化 toast（需用户主动关闭）
+      if (isTimeoutError(e) || e?.code === "translate.networkError") {
+        toast.error(formatIpcError(e), { duration: Infinity, closeButton: true });
+      } else {
+        toast.error(formatIpcError(e));
+      }
     } finally {
       setTesting(false);
     }
@@ -773,11 +789,14 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         await api.setConfig(`translate_openai_${sid}_selected_models`, "");
         await api.setConfig(`translate_openai_${sid}_selected_model_types`, "");
         await api.setConfig(`translate_openai_${sid}_qps`, "");
+        await api.setConfig(`translate_openai_${sid}_tpm`, "");
+        await api.setConfig(`translate_openai_${sid}_use_proxy`, "");
         try { await api.deleteCredential(`openai_${sid}`, "secret"); } catch { /* ignore */ }
       } else {
         await api.setConfig(`translate_${sid}_app_id`, "");
         await api.setConfig(`translate_${sid}_region`, "");
         await api.setConfig(`translate_${sid}_qps`, "");
+        await api.setConfig(`translate_${sid}_use_proxy`, "");
         try { await api.deleteCredential(sid, "secret"); } catch { /* ignore */ }
       }
       setAppId("");
@@ -788,6 +807,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       setModelFilter("");
       setModelList([]);
       setSelectedModels([]);
+      setUseProxy(null);
       setTestResult(null);
       checkAllServiceConfigs().then(setConfiguredIds);
       toast.success(t("settings.configDeleted", "配置已删除"));
@@ -819,6 +839,8 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   const handleRefreshModels = useCallback(async () => {
     if (!currentService) return;
     const trimmedUrl = baseUrl.trim();
+    const fetchServiceId = currentService.id;
+    currentFetchServiceRef.current = fetchServiceId;
     if (!trimmedUrl) {
       toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
       return;
@@ -849,7 +871,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       }
       const uniqueUrls = Array.from(new Set(candidateUrls));
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), 3000)
+        setTimeout(() => reject(new Error("timeout")), 12000)
       );
       let lastError = "";
       let successUrl = "";
@@ -857,7 +879,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       for (const url of uniqueUrls) {
         try {
           const models = await Promise.race([
-            api.listOpenaiModels(url, actualSecret),
+            api.listOpenaiModels(url, actualSecret, currentService?.id),
             timeoutPromise,
           ]);
           if (models.length > 0) {
@@ -866,9 +888,11 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             break;
           }
         } catch (e: any) {
-          lastError = e.message === "timeout"
+          // e 可能是 IpcError 对象、JSON 字符串、或 Error("timeout")
+          const err = typeof e === "string" ? JSON.parse(e) : e;
+          lastError = err?.message === "timeout"
             ? t("settings.openaiFetchTimeout", "获取超时，请检查地址是否正确")
-            : formatIpcError(e);
+            : formatIpcError(err);
         }
       }
       if (!successUrl) {
@@ -880,6 +904,16 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       if (currentService?.id === "zhipu" && !allModels.includes("glm-4.7-flash")) {
         allModels.unshift("glm-4.7-flash");
       }
+      // 文心一言：千帆 /v2/models API 不返回免费模型，手动注入到列表顶部
+      if (currentService?.id === "ernie") {
+        for (const freeModel of ERNIE_FREE_MODELS) {
+          if (!allModels.includes(freeModel)) {
+            allModels.unshift(freeModel);
+          }
+        }
+      }
+      // 如果在 fetchModels 飞行期间用户切换了服务，丢弃本次结果
+      if (currentFetchServiceRef.current !== fetchServiceId) return;
       setModelList(allModels);
       lastAutoFetchUrlRef.current = successUrl;
       setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
@@ -888,7 +922,9 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     } catch (e: any) {
       toast.error(formatIpcError(e));
     } finally {
-      setLoadingModels(false);
+      if (currentFetchServiceRef.current === fetchServiceId) {
+        setLoadingModels(false);
+      }
     }
   }, [baseUrl, secretKey, model, t, currentService, api]);
 
@@ -924,10 +960,10 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             <span className="text-[10px] text-green-600 shrink-0">🆓</span>
           )}
           {!s.comingSoon && s.completelyFree && (
-            <span className="text-[10px] text-green-600 shrink-0">免费</span>
+            <span className="text-[10px] text-green-600 shrink-0">{t("settings.completelyFreeShort")}</span>
           )}
         </div>
-        <p className="text-[10px] text-muted-foreground line-clamp-1 leading-tight mt-0.5">
+        <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
           {s.description}
         </p>
       </button>
@@ -947,7 +983,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         <Plus className="h-3 w-3" />
         {t("settings.addApi", "添加 API")}
       </span>
-      <p className="text-[10px] text-muted-foreground line-clamp-1 leading-tight mt-0.5">
+      <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
         {category === "traditional"
           ? t("settings.addTraditionalServiceDesc", "添加百度翻译等传统翻译服务")
           : t("settings.addAiServiceDesc", "添加 DeepSeek 等 AI 大模型")}
@@ -985,7 +1021,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
               size="sm"
               onClick={() => {
                 openUrl("https://www.baidu.com").catch(() => {
-                  toast.error("无法打开浏览器");
+                  toast.error(t("settings.openBrowserFailed"));
                 });
               }}
             >
@@ -1014,7 +1050,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         <Input
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜索服务名称..."
+          placeholder={t("settings.searchServicePlaceholder")}
           className="max-w-sm"
         />
         {filtered.length === 0 ? (
@@ -1037,7 +1073,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {s.completelyFree ? "完全免费" : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
+                  {s.completelyFree ? t("settings.completelyFree") : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
                 </p>
                 <p className="text-xs text-muted-foreground">{s.price}</p>
               </button>
@@ -1056,7 +1092,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       <div>
         <h2 className="text-xl font-semibold">{s.name}</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          {s.completelyFree ? "完全免费" : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
+          {s.completelyFree ? t("settings.completelyFree") : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
           {" · "}{s.price}
         </p>
       </div>
@@ -1103,7 +1139,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             <div>
               <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
               <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDescTraditional", "该服务的请求频率上限。免费版通常为 1-5，付费版可按套餐调高。")}</p>
-              <Input type="number" step="0.1" value={qps} onChange={(e) => setQps(parseFloat(e.target.value) || 1)} min={0.1} disabled={loading} className="w-24" />
+              <Input type="number" step="0.1" value={qps} onChange={(e) => { const v = parseFloat(e.target.value); setQps(isNaN(v) ? 1 : v); }} min={0.1} disabled={loading} className="w-24" />
             </div>
             {/* 代理 */}
             <div className="flex items-center justify-between border-t pt-3">
@@ -1160,7 +1196,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       <div>
         <h2 className="text-xl font-semibold">{s.name}</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          {s.completelyFree ? "完全免费" : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
+          {s.completelyFree ? `${t("settings.completelyFree")}（${s.freeQuota}）` : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
           {" · "}{s.price}
         </p>
         {s.modelRecommendation && (
@@ -1247,10 +1283,11 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                       }
                       return filtered.map((m) => {
                         const selected = selectedModels.find((x) => x.id === m);
-                        const isSf = currentService?.id === "siliconflow";
-                        const maybeFree = isSf && SILICONFLOW_FREE_MODELS.has(m);
+                        const sid = currentService?.id || "";
+                        const maybeFree = isMaybeFreeModel(sid, m);
+                        const priceUrl = getModelPriceUrl(sid, m);
                         return (
-                          <div key={m} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground group/option" title={maybeFree ? "可能免费，以官方价格为准" : undefined}>
+                          <div key={m} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground group/option" title={maybeFree ? t("settings.maybeFreeTooltip") : undefined}>
                             <label className="flex cursor-pointer items-center gap-2 flex-1 min-w-0">
                               <input type="checkbox" className="h-4 w-4 cursor-pointer accent-primary flex-shrink-0" checked={!!selected} onChange={() => toggleModelSelection(m)} />
                               <span className="truncate">{m}</span>
@@ -1260,10 +1297,10 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                                 {t("settings.maybeFree", "可能免费")}
                               </span>
                             )}
-                            {isSf && (
+                            {priceUrl && (
                               <button
                                 type="button"
-                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(siliconflowModelUrl(m)).catch(() => {}); }}
+                                onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(priceUrl).catch(() => {}); }}
                                 className="flex-shrink-0 cursor-pointer rounded border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:bg-primary/10 hover:underline"
                               >
                                 {t("settings.viewPrice", "查看价格")}
@@ -1295,10 +1332,18 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           </div>
           {/* API Key */}
           <div>
-            <label className="text-sm font-medium">{t("settings.openaiApiKey", "API Key（可选）")}</label>
-            <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiApiKeyDesc", "局域网部署可留空；云 API 必填，加密存储在系统密钥环")}</p>
+            <label className="text-sm font-medium">
+              {s.requiresApiKey
+                ? t("settings.openaiApiKeyRequired", "API Key")
+                : t("settings.openaiApiKey", "API Key（可选）")}
+            </label>
+            <p className="text-xs text-muted-foreground mb-1">
+              {s.requiresApiKey
+                ? t("settings.openaiApiKeyRequiredDesc", "必填，加密存储在系统密钥环")
+                : t("settings.openaiApiKeyDesc", "局域网部署可留空；云 API 必填，加密存储在系统密钥环")}
+            </p>
             <div className="flex gap-2">
-              <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={t("settings.openaiApiKeyPlaceholder", "留空表示无认证")} disabled={loading} />
+              <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={s.requiresApiKey ? "API Key" : t("settings.openaiApiKeyPlaceholder", "留空表示无认证")} disabled={loading} />
               {secretKey === "••••••••" && (
                 <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
               )}
@@ -1308,8 +1353,16 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           <div>
             <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
             <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDesc", "该服务的并发请求上限。免费版通常较低，付费版可按套餐调高。")}</p>
-            <Input type="number" step="0.1" value={qps} onChange={(e) => setQps(parseFloat(e.target.value) || 1)} min={0.1} disabled={loading} className="w-24" />
+            <Input type="number" step="0.1" value={qps} onChange={(e) => { const v = parseFloat(e.target.value); setQps(isNaN(v) ? 1 : v); }} min={0.1} disabled={loading} className="w-24" />
           </div>
+          {/* TPM 限速（仅有限额的服务商显示） */}
+          {s.presetTpm && (
+            <div>
+              <label className="text-sm font-medium">{t("settings.tpmLabel", "TPM 上限")}</label>
+              <p className="text-xs text-muted-foreground mb-1">{t("settings.tpmDesc", "每分钟最多 token 数，0 = 不限制")}</p>
+              <Input type="number" step="1000" value={tpmLimit} onChange={(e) => { const v = parseInt(e.target.value); setTpmLimit(isNaN(v) ? 0 : v); }} min={0} disabled={loading} className="w-32" />
+            </div>
+          )}
           {/* 代理 */}
           <div className="flex items-center justify-between border-t pt-3">
             <div>
@@ -1394,11 +1447,11 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   };
 
   const listContent = (
-    <div className="flex-1 overflow-y-auto space-y-2 p-2">
+    <div className="flex-1 overflow-y-auto space-y-3 p-2">
       {/* 快速接入 */}
       {devMode && (
         <>
-          <p className="text-xs text-muted-foreground px-3 pt-2">快速接入</p>
+          <p className="text-xs text-muted-foreground px-3 pt-9">{t("settings.quickAccess")}</p>
           {/* 官方 API */}
           <button
             onClick={() => setSelectedServiceId(null)}
@@ -1411,7 +1464,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
               <Star className="h-4 w-4 text-yellow-500" />
               {t("settings.officialApi", "官方 API")}
             </span>
-            <p className="text-[10px] text-muted-foreground line-clamp-1 leading-tight mt-0.5">
+            <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
               {t("settings.officialApiDesc", "精译·省钱·免费")}
             </p>
           </button>
@@ -1420,14 +1473,14 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
 
       {/* 传统翻译 */}
       <div className="space-y-1">
-        <p className="text-xs text-muted-foreground px-3 pt-2">传统翻译</p>
+        <p className="text-xs text-muted-foreground px-3 pt-2">{t("settings.traditionalTranslation")}</p>
         {configuredTraditional.map(renderServiceMenuItem)}
         {renderAddCard("traditional")}
       </div>
 
       {/* AI 大模型 */}
       <div className="space-y-1">
-        <p className="text-xs text-muted-foreground px-3 pt-2">AI 大模型</p>
+        <p className="text-xs text-muted-foreground px-3 pt-2">{t("settings.aiModels")}</p>
         {configuredAi.map(renderServiceMenuItem)}
         {renderAddCard("ai")}
       </div>
@@ -1447,12 +1500,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
 // === 播放器设置 ===
 
 /// 格式化剩余时间
-function formatEta(secs: number): string {
+function formatEta(secs: number, t: (key: string, options?: any) => string): string {
   if (secs <= 0) return "--";
-  if (secs < 60) return `${Math.ceil(secs)}秒`;
+  if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
   const m = Math.floor(secs / 60);
   const s = Math.ceil(secs % 60);
-  return `${m}分${s}秒`;
+  return t("settings.etaMinSecs", { m, s });
 }
 
 function PlayerSettings() {
@@ -1580,7 +1633,7 @@ function PlayerSettings() {
               <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
                 <span className="truncate">{ffStageLabel}</span>
                 {ffStage === "downloading" && ffSpeed > 0 && (
-                  <span className="shrink-0">{ffSpeed.toFixed(1)} MB/s · {formatEta(ffEta)}</span>
+                  <span className="shrink-0">{ffSpeed.toFixed(1)} MB/s · {formatEta(ffEta, t)}</span>
                 )}
               </div>
             </div>
@@ -1644,7 +1697,7 @@ function PlayerSettings() {
               <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
                 <span className="truncate">{mpvStageLabel}</span>
                 {mpvStage === "downloading" && mpvSpeed > 0 && (
-                  <span className="shrink-0">{mpvSpeed.toFixed(1)} MB/s · {formatEta(mpvEta)}</span>
+                  <span className="shrink-0">{mpvSpeed.toFixed(1)} MB/s · {formatEta(mpvEta, t)}</span>
                 )}
               </div>
             </div>
@@ -1949,8 +2002,8 @@ function ContextMenuSettings() {
 
       <div className="border-t pt-3 flex items-center justify-between">
         <div>
-          <p className="text-sm font-medium">文件夹右键菜单</p>
-          <p className="text-xs text-muted-foreground">右键文件夹添加"批量翻译"选项，自动监视该目录</p>
+          <p className="text-sm font-medium">{t("settings.folderContextMenu")}</p>
+          <p className="text-xs text-muted-foreground">{t("settings.folderContextMenuDesc")}</p>
         </div>
         <Button
           size="sm"
@@ -2487,7 +2540,7 @@ function DeveloperSettings() {
               <Input
                 value={versionInput}
                 onChange={(e) => setVersionInput(e.target.value)}
-                placeholder={testVersionOverride || "如 1.0.0"}
+                placeholder={testVersionOverride || t("settings.testVersionPlaceholder")}
                 className="w-40"
               />
               <Button size="sm" variant="outline" onClick={handleSaveTestVersion} disabled={!versionInput.trim()}>

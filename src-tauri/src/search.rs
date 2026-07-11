@@ -342,7 +342,7 @@ pub fn simplify_keyword(filename: &str) -> String {
             continue;
         }
         // 跳过中文字幕组/标记
-        if skip_cn.iter().any(|&s| *token == s) {
+        if skip_cn.contains(token) {
             continue;
         }
         // 跳过纯数字的分辨率标记如 "1920x1080"
@@ -360,7 +360,7 @@ pub fn simplify_keyword(filename: &str) -> String {
 
     // 如果过滤后为空，返回原始名（去扩展名）
     if result.is_empty() {
-        return name.replace('.', " ").replace('_', " ").replace('-', " ");
+        return name.replace(['.', '_', '-'], " ");
     }
 
     result.join(" ")
@@ -1188,7 +1188,7 @@ fn zimuku_parse_sublist(html: &str) -> Vec<ZimukuEntry> {
                     .attr("title")
                     .or_else(|| img.value().attr("alt"))
             })
-            .map(|l| zimuku_detect_language(l))
+            .map(zimuku_detect_language)
             .unwrap_or_else(|| "unknown".to_string());
 
         // 评分 i.rating-star
@@ -1461,10 +1461,10 @@ pub fn download_subtitle_multi(
     api_key: &str,
     output_path: &std::path::Path,
 ) -> Result<(), AppError> {
-    if let Some(_) = subtitle_id.strip_prefix("subhd:") {
+    if subtitle_id.strip_prefix("subhd:").is_some() {
         return subhd_download(subtitle_id, output_path);
     }
-    if let Some(_) = subtitle_id.strip_prefix("zimuku:") {
+    if subtitle_id.strip_prefix("zimuku:").is_some() {
         return zimuku_download(subtitle_id, output_path);
     }
     // 无前缀 = OpenSubtitles

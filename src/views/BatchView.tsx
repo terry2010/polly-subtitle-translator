@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { open } from "@tauri-apps/plugin-dialog";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { listen } from "@tauri-apps/api/event";
 import {
   ArrowLeft,
@@ -19,6 +20,7 @@ import {
   GripVertical,
   Plus,
   Search,
+  Home,
 } from "lucide-react";
 import {
   DndContext,
@@ -37,7 +39,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { SERVICES, encodeAiSelectValue, decodeAiSelectValue } from "../lib/services";
+import { SERVICES, encodeAiSelectValue, decodeAiSelectValue, isMaybeFreeModel, getModelPriceUrl } from "../lib/services";
 import { api } from "../lib/api";
 import { Button } from "../components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -48,6 +50,8 @@ import {
   SelectValue,
   SelectContent,
   SelectItem,
+  SelectGroup,
+  SelectLabel,
 } from "../components/ui/select";
 import { useBatchStore, getStatusText, getTaskProgress } from "../stores/batchStore";
 import { toast } from "sonner";
@@ -1081,6 +1085,7 @@ function BatchEngineSelect({ config, update }: {
   config: BatchConfig;
   update: (patch: Partial<BatchConfig>) => void;
 }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [providerConfigured, setProviderConfigured] = useState<Record<string, boolean>>({});
   const [aiServiceModels, setAiServiceModels] = useState<{ serviceId: string; serviceName: string; model: string; modelType: string }[]>([]);
@@ -1185,25 +1190,66 @@ function BatchEngineSelect({ config, update }: {
           <SelectValue placeholder="无可用引擎" />
         </SelectTrigger>
         <SelectContent>
-          {providerConfigured["baidu"] && (
-            <SelectItem value="baidu">百度翻译</SelectItem>
+          {/* 传统引擎分组 */}
+          {(providerConfigured["baidu"] || providerConfigured["bing"] || providerConfigured["google"]) && (
+            <SelectGroup>
+              <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">传统翻译</SelectLabel>
+              {providerConfigured["baidu"] && (
+                <SelectItem value="baidu">百度翻译</SelectItem>
+              )}
+              {providerConfigured["bing"] && (
+                <SelectItem value="bing">Bing</SelectItem>
+              )}
+              {providerConfigured["google"] && (
+                <SelectItem value="google">Google</SelectItem>
+              )}
+            </SelectGroup>
           )}
-          {providerConfigured["bing"] && (
-            <SelectItem value="bing">Bing</SelectItem>
-          )}
-          {providerConfigured["google"] && (
-            <SelectItem value="google">Google</SelectItem>
-          )}
-          {aiServiceModels.map((m) => {
-            const value = encodeAiSelectValue(m.serviceId, m.model);
-            return (
-              <SelectItem key={value} value={value}>
-                <span className="block truncate" title={`AI模型 - ${m.serviceName} - ${m.model}`}>
-                  AI模型 - {m.serviceName} - {m.model}
-                </span>
-              </SelectItem>
-            );
-          })}
+          {/* AI 模型：按服务商分组 */}
+          {(() => {
+            const groups = new Map<string, { serviceName: string; models: typeof aiServiceModels }>();
+            for (const m of aiServiceModels) {
+              let g = groups.get(m.serviceId);
+              if (!g) { g = { serviceName: m.serviceName, models: [] }; groups.set(m.serviceId, g); }
+              g.models.push(m);
+            }
+            return Array.from(groups.entries()).map(([serviceId, g]) => (
+              <SelectGroup key={serviceId}>
+                <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">AI翻译 - {g.serviceName}</SelectLabel>
+                {g.models.map((m) => {
+                  const value = encodeAiSelectValue(m.serviceId, m.model);
+                  const maybeFree = isMaybeFreeModel(m.serviceId, m.model);
+                  const priceUrl = getModelPriceUrl(m.serviceId, m.model);
+                  return (
+                    <SelectItem key={value} value={value}>
+                      <span className="flex items-center gap-1.5 w-full">
+                        <span className="truncate flex-1">{m.model}</span>
+                        {maybeFree && (
+                          <span
+                            className="instant-tooltip flex-shrink-0 h-2.5 w-2.5 rounded-sm bg-green-500"
+                            data-tooltip={t("settings.maybeFree", "可能免费，以官方价格为准")}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onPointerUp={(e) => e.stopPropagation()}
+                          />
+                        )}
+                        {priceUrl && (
+                          <span
+                            className="instant-tooltip flex-shrink-0 cursor-pointer text-primary/60 hover:text-primary"
+                            data-tooltip={t("settings.viewPrice", "查看价格")}
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onPointerUp={(e) => e.stopPropagation()}
+                            onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(priceUrl).catch(() => {}); }}
+                          >
+                            <Home className="h-3 w-3" />
+                          </span>
+                        )}
+                      </span>
+                    </SelectItem>
+                  );
+                })}
+              </SelectGroup>
+            ));
+          })()}
           <SelectItem value="__add_more__">
             <span className="flex items-center gap-1 text-primary">
               <Plus className="h-3 w-3" />

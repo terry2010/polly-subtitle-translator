@@ -189,6 +189,21 @@ export default function App() {
     return () => { window.removeEventListener("contextmenu", handler, true); };
   }, []);
 
+  // 禁用 Backspace 返回上一页（WebView 默认行为）
+  // 例外：input/textarea/contenteditable 中保留正常退格编辑功能
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== "Backspace") return;
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return; // 输入框内允许正常退格
+      }
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", handler, true);
+    return () => { window.removeEventListener("keydown", handler, true); };
+  }, []);
+
   // 前端初始加载完成，通知后端可以显示/置顶窗口
   useEffect(() => {
     emit("app://ready", {});

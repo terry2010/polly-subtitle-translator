@@ -388,7 +388,7 @@ pub fn get_app_data_dir() -> Option<std::path::PathBuf> {
                     .join("com.zimufan.ai-subtrans"),
             );
         }
-        return None;
+        None
     }
     // Linux/其他: XDG_CONFIG_HOME 或 ~/.config
     #[cfg(not(any(windows, target_os = "macos")))]
