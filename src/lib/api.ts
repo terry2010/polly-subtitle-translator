@@ -85,8 +85,10 @@ function safeParseIpcError(s: string): IpcError {
 export function formatIpcError(error: IpcError): string {
   const key = `error.${error.code}`;
   const translated = i18n.t(key, error.args ?? {});
-  // 如果 i18n 没有找到 key，t() 返回 key 本身；此时 fallback 到 code
-  return translated === key ? error.code : translated;
+  if (translated !== key) return translated;
+  // i18n 没有找到 key，fallback：显示 code + detail（如果有）
+  const detail = (error.args as any)?.detail;
+  return detail ? `${error.code}: ${detail}` : error.code;
 }
 
 /// 判断 IpcError 是否为超时错误
@@ -97,6 +99,11 @@ export function isTimeoutError(error: IpcError): boolean {
 /// 判断 IpcError 是否为每日限额错误
 export function isDailyLimitError(error: IpcError): boolean {
   return error.code === "translate.dailyLimitReached";
+}
+
+/// 判断 IpcError 是否为余额不足/接口未授权错误
+export function isInsufficientBalanceError(error: IpcError): boolean {
+  return error.code === "translate.insufficientBalance";
 }
 
 // === FFmpeg 命令 ===
@@ -191,6 +198,7 @@ export const api = {
     model?: string,
     modelType?: string,
     serviceId?: string,
+    useProxy?: boolean | null,
   ) =>
     callIpc<TestConnectionResult>("test_translate_connection", {
       provider,
@@ -201,10 +209,11 @@ export const api = {
       model: model ?? null,
       modelType: modelType ?? null,
       serviceId: serviceId ?? null,
+      useProxyOverride: useProxy ?? null,
     }),
 
-  listOpenaiModels: (baseUrl: string, apiKey?: string, serviceId?: string) =>
-    callIpc<string[]>("list_openai_models", { baseUrl, apiKey: apiKey ?? null, serviceId: serviceId ?? null }),
+  listOpenaiModels: (baseUrl: string, apiKey?: string, serviceId?: string, useProxy?: boolean | null) =>
+    callIpc<string[]>("list_openai_models", { baseUrl, apiKey: apiKey ?? null, serviceId: serviceId ?? null, useProxyOverride: useProxy ?? null }),
 
   getSupportedTargetLangs: (provider: string) =>
     callIpc<LanguageInfo[]>("get_supported_target_langs", { provider }),

@@ -796,11 +796,41 @@ pub async fn translate_subtitle(
                 );
             }
         }
+        // 统一音效括号【】→[]（对所有人名标记模式的译文都生效）
+        let mut bracket_count = 0;
+        for entry in result.translations.iter_mut() {
+            let normalized = translate::normalize_sound_effect_brackets(&entry.translated);
+            if normalized != entry.translated {
+                let orig = entry.translated.clone();
+                entry.translated = normalized.clone();
+                bracket_count += 1;
+                let cache_key = crate::db::translate_cache_key(
+                    &entry.original,
+                    &source_lang,
+                    &target_lang,
+                    &provider_name_for_cache,
+                    &file_hash_for_cache,
+                );
+                let _ = db.set_translate_cache(
+                    &cache_key,
+                    &entry.original,
+                    &normalized,
+                    &source_lang,
+                    &target_lang,
+                    &provider_name_for_cache,
+                );
+                let _ = orig;
+            }
+        }
+        if bracket_count > 0 {
+            tracing::info!("音效括号统一: 修正了 {} 条翻译", bracket_count);
+        }
     } else {
-        // 即使未启用人名标记，也清理 CJK 字符之间的异常空格
+        // 即使未启用人名标记，也清理 CJK 字符之间的异常空格 + 统一音效括号
         let mut cleaned_count = 0;
         for entry in result.translations.iter_mut() {
-            let cleaned = translate::cleanup_cjk_spaces(&entry.translated);
+            let step1 = translate::normalize_sound_effect_brackets(&entry.translated);
+            let cleaned = translate::cleanup_cjk_spaces(&step1);
             if cleaned != entry.translated {
                 let orig = entry.translated.clone();
                 entry.translated = cleaned.clone();
@@ -1043,6 +1073,7 @@ pub async fn test_translate_connection(
     model: Option<String>,
     model_type: Option<String>,
     service_id: Option<String>,
+    use_proxy_override: Option<bool>,
     db: State<'_, Database>,
 ) -> Result<TestConnectionResult, IpcError> {
     let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
@@ -1073,6 +1104,7 @@ pub async fn test_translate_connection(
         secret_key
     };
 
+    let model_for_log = model.clone();
     let credentials = ProviderCredentials {
         app_id,
         secret_key,
@@ -1083,20 +1115,10 @@ pub async fn test_translate_connection(
     };
 
     // 测试连接也按 per-provider 代理开关决定是否用代理
-    let proxy_config = ProxyConfig::load_from_db(&db);
-    let use_proxy_key = if prov == TranslateProvider::OpenAi {
-        match &service_id {
-            Some(sid) => format!("translate_openai_{}_use_proxy", sid),
-            None => format!("translate_{}_use_proxy", provider),
-        }
-    } else {
-        format!("translate_{}_use_proxy", provider)
-    };
-    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
-    let effective_proxy = match use_proxy.as_deref() {
-        Some("false") => ProxyConfig::default(),
-        _ => proxy_config,
-    };
+    // 优先用前端传来的 use_proxy_override（用户当前 UI 选择，可能尚未保存）
+    let effective_proxy = resolve_effective_proxy(
+        &db, use_proxy_override, service_id.as_deref(), Some(&provider),
+    );
 
     // AI 服务：传 service_id 给 create_provider_with_proxy
     let service_id_for_provider = if prov == TranslateProvider::OpenAi {
@@ -1104,12 +1126,18 @@ pub async fn test_translate_connection(
     } else {
         None
     };
-    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_id_for_provider, &translate::ProviderOptions::default()).map_err(to_ipc_err)?;
+    let prov_instance = translate::create_provider_with_proxy(&prov, &credentials, &effective_proxy, service_id_for_provider, &translate::ProviderOptions::default()).map_err(|e| {
+        tracing::error!("测试连接失败（创建 provider）: service_id={:?} provider={} err={}", service_id_for_provider, provider, e);
+        to_ipc_err(e)
+    })?;
 
     // OpenAi：直接翻译测试文本，返回原文+译文
     if prov == TranslateProvider::OpenAi {
         let test_text = "Hello";
-        let translated = prov_instance.translate(&[test_text.to_string()], "en", "zh").await.map_err(to_ipc_err)?;
+        let translated = prov_instance.translate(&[test_text.to_string()], "en", "zh").await.map_err(|e| {
+            tracing::error!("测试连接失败（翻译测试）: service_id={:?} model={:?} err={}", service_id_for_provider, model_for_log, e);
+            to_ipc_err(e)
+        })?;
         let translated_text = translated.into_iter().next().unwrap_or_default();
         return Ok(TestConnectionResult {
             original: Some(test_text.to_string()),
@@ -1118,8 +1146,51 @@ pub async fn test_translate_connection(
     }
 
     // 其他 provider：仅测试连通性
-    prov_instance.test_connection().await.map_err(to_ipc_err)?;
+    prov_instance.test_connection().await.map_err(|e| {
+        tracing::error!("测试连接失败: provider={} err={}", provider, e);
+        to_ipc_err(e)
+    })?;
     Ok(TestConnectionResult { original: None, translated: None })
+}
+
+/// 解析生效的代理配置。
+/// 优先级：前端 override（用户当前 UI 选择，可能尚未保存）> 数据库 per-provider 配置 > 全局代理配置。
+/// - `use_proxy_override = Some(false)`：用户明确选了"禁用代理" → 直连（ProxyConfig::default）
+/// - `use_proxy_override = Some(true)`：用户明确选了"启用代理" → 用全局代理
+/// - `use_proxy_override = None`：用户选了"跟随"或未设置 → 查数据库，数据库也无则用全局代理
+/// `service_id` 用于 AI 服务（如 "deepseek"），`provider_fallback` 用于传统引擎（如 "baidu"）。
+fn resolve_effective_proxy(
+    db: &Database,
+    use_proxy_override: Option<bool>,
+    service_id: Option<&str>,
+    provider_fallback: Option<&str>,
+) -> ProxyConfig {
+    // 前端 override 优先
+    if let Some(force_proxy) = use_proxy_override {
+        if !force_proxy {
+            tracing::info!("代理决策: 前端 override=禁用，使用直连");
+            return ProxyConfig::default();
+        }
+        tracing::info!("代理决策: 前端 override=启用，使用全局代理");
+        return ProxyConfig::load_from_db(db);
+    }
+    // fallback 到数据库 per-provider 配置
+    let use_proxy_key = match (service_id, provider_fallback) {
+        (Some(sid), _) => format!("translate_openai_{}_use_proxy", sid),
+        (None, Some(prov)) => format!("translate_{}_use_proxy", prov),
+        (None, None) => "translate_openai_use_proxy".to_string(),
+    };
+    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
+    match use_proxy.as_deref() {
+        Some("false") => {
+            tracing::info!("代理决策: 数据库={}→禁用，使用直连", use_proxy_key);
+            ProxyConfig::default()
+        }
+        Some("true") | _ => {
+            tracing::info!("代理决策: 数据库={}→启用/跟随，使用全局代理", use_proxy_key);
+            ProxyConfig::load_from_db(db)
+        }
+    }
 }
 
 /// list_openai_models：调用 GET {base_url}/models 拉取可用模型列表
@@ -1129,6 +1200,7 @@ pub async fn list_openai_models(
     base_url: String,
     api_key: Option<String>,
     service_id: Option<String>,
+    use_proxy_override: Option<bool>,
     db: State<'_, Database>,
 ) -> Result<Vec<String>, IpcError> {
     let display_name = match &service_id {
@@ -1137,22 +1209,18 @@ pub async fn list_openai_models(
     };
     let url = format!("{}/models", base_url.trim_end_matches('/'));
 
-    // 按 per-provider 代理开关决定是否用代理（与 test_translate_connection 相同逻辑）
-    let proxy_config = ProxyConfig::load_from_db(&db);
-    let use_proxy_key = match &service_id {
-        Some(sid) => format!("translate_openai_{}_use_proxy", sid),
-        None => "translate_openai_use_proxy".to_string(),
-    };
-    let use_proxy = db.get_config(&use_proxy_key).ok().flatten();
-    let effective_proxy = match use_proxy.as_deref() {
-        Some("false") => ProxyConfig::default(),
-        _ => proxy_config,
-    };
+    // 代理决策：优先用前端传来的 use_proxy_override（用户当前 UI 选择，可能尚未保存），
+    // fallback 到数据库已保存的 per-provider 配置。
+    // 这样用户在 UI 选了"禁用代理"但还没保存时，刷新模型也能正确走直连。
+    let effective_proxy = resolve_effective_proxy(&db, use_proxy_override, service_id.as_deref(), None);
     let client = effective_proxy.build_client_builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|e| IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
-            .with_args(serde_json::json!({ "detail": e.to_string() })))?;
+        .map_err(|e| {
+            tracing::error!("获取模型列表失败（构建 HTTP 客户端）: url={} err={}", url, e);
+            IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": e.to_string() }))
+        })?;
 
     let has_key = api_key.as_ref().map(|k| !k.is_empty()).unwrap_or(false);
     let mut req = client.get(&url);
@@ -1160,7 +1228,10 @@ pub async fn list_openai_models(
         req = req.header("Authorization", format!("Bearer {}", key));
     }
 
+    tracing::info!("获取模型列表: {} service_id={:?}", url, service_id);
+
     let resp = req.send().await.map_err(|e| {
+        tracing::error!("获取模型列表失败（网络请求）: url={} err={}", url, e);
         IpcError::new("translate.networkError", Severity::Recoverable)
             .with_args(serde_json::json!({ "provider": display_name, "detail": e.to_string() }))
     })?;
@@ -1168,6 +1239,7 @@ pub async fn list_openai_models(
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         let body = resp.text().await.unwrap_or_default();
+        tracing::error!("获取模型列表认证失败: url={} status={} body={}", url, status, body);
         // 401 通常是真正的凭据错误；403 可能是凭据错误，也可能是 IP/地区限制
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(IpcError::new("translate.authFailed", Severity::Recoverable)
@@ -1185,6 +1257,7 @@ pub async fn list_openai_models(
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
+        tracing::error!("获取模型列表失败: url={} status={} body={}", url, status, body);
         return Err(IpcError::new("openai.modelsFetchFailed", Severity::Recoverable)
             .with_args(serde_json::json!({ "detail": format!("HTTP {}: {}", status, body) })));
     }

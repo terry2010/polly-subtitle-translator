@@ -7,7 +7,7 @@ import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/
 import { setWindowSizeInitialized } from "./MainView";
 import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X, Star, Plus, Bug, Terminal, FolderOpen, FileText, Layers } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
-import { SERVICES, ServiceDef, matchesSearch, getServiceById, isMaybeFreeModel, getModelPriceUrl, ERNIE_FREE_MODELS } from "../lib/services";
+import { SERVICES, ServiceDef, matchesSearch, getServiceById, isMaybeFreeModel, isKnownPaidModel, getModelPriceUrl, ERNIE_FREE_MODELS } from "../lib/services";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -19,7 +19,7 @@ import { useLibmpvStore } from "../stores/libmpvStore";
 import { useFfmpegStore } from "../stores/ffmpegStore";
 import { useUpdateStore } from "../stores/updateStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
-import { api, formatIpcError, isTimeoutError } from "../lib/api";
+import { api, formatIpcError, isTimeoutError, isInsufficientBalanceError } from "../lib/api";
 import type { PromptFailLogEntry } from "../lib/ipc-types";
 import { warn } from "../lib/logger";
 import { cn } from "../lib/utils";
@@ -376,9 +376,15 @@ async function checkAllServiceConfigs(): Promise<Set<string>> {
   const configured = new Set<string>();
   const traditional = SERVICES.filter((s) => s.category === "traditional" && !s.comingSoon);
   await Promise.all(traditional.map(async (s) => {
-    const appId = await api.getConfig(`translate_${s.id}_app_id`).catch(() => null);
-    // 只要 App ID 存在即认为已添加；密钥用于翻译时后端校验
-    if (appId) configured.add(s.id);
+    if (s.appIdLabel) {
+      // 双字段引擎（百度/有道/腾讯/火山/阿里/AWS）：检查 app_id
+      const appId = await api.getConfig(`translate_${s.id}_app_id`).catch(() => null);
+      if (appId) configured.add(s.id);
+    } else {
+      // 单密钥引擎（Bing/Google/DeepL/彩云/小牛）：检查密钥
+      const secret = await api.getCredential(s.id, "secret", `检查配置状态(${s.id})`).catch(() => null);
+      if (secret) configured.add(s.id);
+    }
   }));
   const ai = SERVICES.filter((s) => s.category === "ai");
   await Promise.all(ai.map(async (s) => {
@@ -411,7 +417,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   // 表单状态
   const [appId, setAppId] = useState("");
   const [secretKey, setSecretKey] = useState("");
-  const [region, setRegion] = useState("global");
+  const [region, setRegion] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<"ok" | "fail" | null>(null);
   const [loading, setLoading] = useState(true);
@@ -433,6 +439,9 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   const lastAutoFetchUrlRef = useRef<string>("");
   // 跟踪当前 service ID，防止切换服务后旧 fetchModels 完成时清掉新服务的 selectedModels
   const currentFetchServiceRef = useRef<string>("");
+  // 持有最新的 fetchModels 引用，供加载配置的 useEffect 调用而不触发重渲染
+  // 避免 useProxy 变 → fetchModels 重建 → useEffect 重跑 → 从 DB 重置 useProxy 的死循环
+  const fetchModelsRef = useRef<(url: string, key?: string, isManual?: boolean) => Promise<void>>(async () => {});
 
   // === SECTION 3B END ===
 
@@ -470,10 +479,13 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   }, []);
 
   // AI：刷新模型列表核心逻辑
-  const fetchModels = useCallback(async (urlToFetch: string, keyForFetch?: string) => {
+  const fetchModels = useCallback(async (urlToFetch: string, keyForFetch?: string, isManual = false) => {
     const trimmedUrl = urlToFetch.trim();
     if (!trimmedUrl) return;
-    try { new URL(trimmedUrl); } catch { return; }
+    try { new URL(trimmedUrl); } catch {
+      if (isManual) toast.error(t("settings.openaiInvalidUrl", "API 地址格式无效"));
+      return;
+    }
     const fetchServiceId = currentService?.id ?? "";
     currentFetchServiceRef.current = fetchServiceId;
     setLoadingModels(true);
@@ -483,7 +495,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       let actualKey = keyForFetch;
       if (!actualKey && currentService?.requiresApiKey) {
         const providerKey = currentService.category === "ai" ? `openai_${currentService.id}` : currentService.id;
-        const loaded = await api.getCredential(providerKey, "secret", "自动加载凭据").catch(() => null);
+        const loaded = await api.getCredential(providerKey, "secret", isManual ? "刷新模型加载凭据" : "自动加载凭据").catch(() => null);
         actualKey = loaded ?? undefined;
       }
       const candidateUrls: string[] = [];
@@ -502,10 +514,11 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       );
       let successUrl = "";
       let allModels: string[] = [];
+      let lastError: any = null;
       for (const url of uniqueUrls) {
         try {
           const models = await Promise.race([
-            api.listOpenaiModels(url, actualKey),
+            api.listOpenaiModels(url, actualKey, currentService?.id, useProxy),
             timeoutPromise,
           ]);
           if (models.length > 0) {
@@ -513,9 +526,23 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             allModels = models;
             break;
           }
-        } catch { /* 静默 */ }
+        } catch (e: any) {
+          const err = typeof e === "string" ? JSON.parse(e) : e;
+          lastError = err?.message === "timeout"
+            ? t("settings.openaiFetchTimeout", "获取超时，请检查地址是否正确")
+            : err;
+          // 认证失败（401/403）或空模型列表：直接返回，不需要尝试其他候选 URL
+          if (err?.code === "translate.authFailed" || err?.code === "openai.noModels") break;
+        }
       }
-      if (!successUrl) return;
+      if (!successUrl) {
+        // 所有候选 URL 都失败，显示错误信息
+        if (isManual) {
+          const msg = typeof lastError === "string" ? lastError : (lastError ? formatIpcError(lastError) : "");
+          toast.error(msg || t("settings.openaiNoModels", "未能获取模型列表"));
+        }
+        return;
+      }
       if (successUrl !== trimmedUrl) setBaseUrl(successUrl);
       // 智谱 GLM：认证成功后，强制添加 glm-4.7-flash 到模型列表第一个位置
       if (currentService?.id === "zhipu" && !allModels.includes("glm-4.7-flash")) {
@@ -538,12 +565,20 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         if (prevModel && !allModels.includes(prevModel)) return "";
         return prevModel;
       });
+      if (isManual) {
+        toast.success(t("settings.openaiModelsLoaded", "已加载 {{count}} 个模型", { count: allModels.length }));
+      }
     } catch { /* 静默 */ } finally {
       if (currentFetchServiceRef.current === fetchServiceId) {
         setLoadingModels(false);
       }
     }
-  }, [currentService, autoDetectModelTypeStr, api]);
+  }, [currentService, useProxy, autoDetectModelTypeStr, api, t]);
+
+  // 同步 fetchModels 到 ref，供加载配置的 useEffect 使用（不触发重渲染）
+  useEffect(() => {
+    fetchModelsRef.current = fetchModels;
+  }, [fetchModels]);
 
   // 选中服务变化时加载配置
   useEffect(() => {
@@ -554,7 +589,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     setLoading(true);
     setAppId("");
     setSecretKey("");
-    setRegion("global");
+    setRegion("");
     setModel("");
     setModelList([]);
     setModelFilter("");
@@ -579,7 +614,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       ]).then(([savedBaseUrl, savedSelected, savedModelTypes, savedQps, savedUseProxy, savedSecret, savedTpm]) => {
         if (savedBaseUrl) {
           setBaseUrl(savedBaseUrl);
-          fetchModels(savedBaseUrl, savedSecret || undefined);
+          fetchModelsRef.current(savedBaseUrl, savedSecret || undefined);
         } else if (currentService.presetBaseUrl) {
           setBaseUrl(currentService.presetBaseUrl);
         }
@@ -617,7 +652,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         setLoading(false);
       });
     }
-  }, [selectedServiceId, currentService, fetchModels, autoDetectModelTypeStr]);
+  }, [selectedServiceId, currentService, autoDetectModelTypeStr]);
 
   // 加载软件代理模式
   useEffect(() => {
@@ -652,9 +687,14 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         return;
       }
     }
-    // 传统翻译需要 app_id（百度/有道等）
-    if (currentService.category === "traditional" && !appId.trim()) {
+    // 传统翻译：有 appIdLabel 的引擎需要 app_id（百度/有道/腾讯/火山/阿里/AWS）
+    if (currentService.category === "traditional" && currentService.appIdLabel && !appId.trim()) {
       toast.error(t("settings.appIdRequired", "请填写 App ID"));
+      return;
+    }
+    // 需要区域的引擎（Bing/AWS）：区域必填
+    if (currentService.hasRegion && !region.trim()) {
+      toast.error(t("settings.regionRequired", "请填写区域"));
       return;
     }
 
@@ -725,8 +765,22 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         return;
       }
     }
-    if (currentService.category === "traditional" && !appId.trim()) {
+    // 单密钥传统引擎（无 appIdLabel）：必须填密钥
+    if (currentService.category === "traditional" && !currentService.appIdLabel) {
+      const isMasked = secretKey === "••••••••";
+      if (!isMasked && !secretKey.trim()) {
+        toast.error(t("settings.secretKeyRequired", "请填写 API Key"));
+        return;
+      }
+    }
+    // 双字段传统引擎（有 appIdLabel）：必须填 app_id
+    if (currentService.category === "traditional" && currentService.appIdLabel && !appId.trim()) {
       toast.error(t("settings.appIdRequired", "请填写 App ID"));
+      return;
+    }
+    // 需要区域的引擎（Bing/AWS）：区域必填
+    if (currentService.hasRegion && !region.trim()) {
+      toast.error(t("settings.regionRequired", "请填写区域"));
       return;
     }
     if (currentService.category === "ai" && selectedModels.length === 0) {
@@ -754,6 +808,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         currentService.category === "ai" ? (selectedModels[0]?.id || undefined) : undefined,
         currentService.category === "ai" ? (selectedModels[0]?.modelType || undefined) : undefined,
         serviceId,
+        useProxy,
       );
       setTestResult("ok");
       if (result.original && result.translated) {
@@ -767,8 +822,8 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       }
     } catch (e: any) {
       setTestResult("fail");
-      // 超时/网络错误：持久化 toast（需用户主动关闭）
-      if (isTimeoutError(e) || e?.code === "translate.networkError") {
+      // 致命错误（超时/网络错误/余额不足/接口未授权）：持久化 toast（需用户主动关闭）
+      if (isTimeoutError(e) || isInsufficientBalanceError(e) || e?.code === "translate.networkError") {
         toast.error(formatIpcError(e), { duration: Infinity, closeButton: true });
       } else {
         toast.error(formatIpcError(e));
@@ -776,7 +831,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     } finally {
       setTesting(false);
     }
-  }, [currentService, appId, secretKey, region, baseUrl, selectedModels, t]);
+  }, [currentService, appId, secretKey, region, baseUrl, selectedModels, useProxy, t]);
 
   // 删除配置
   const handleDeleteConfig = useCallback(async () => {
@@ -801,7 +856,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       }
       setAppId("");
       setSecretKey("");
-      setRegion("global");
+      setRegion("");
       setBaseUrl("");
       setModel("");
       setModelFilter("");
@@ -835,98 +890,17 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     );
   }, []);
 
-  // AI：手动刷新模型列表
+  // AI：手动刷新模型列表（复用 fetchModels，isManual=true 显示 toast）
   const handleRefreshModels = useCallback(async () => {
     if (!currentService) return;
     const trimmedUrl = baseUrl.trim();
-    const fetchServiceId = currentService.id;
-    currentFetchServiceRef.current = fetchServiceId;
     if (!trimmedUrl) {
       toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
       return;
     }
-    try { new URL(trimmedUrl); } catch {
-      toast.error(t("settings.openaiInvalidUrl", "API 地址格式无效"));
-      return;
-    }
-    setLoadingModels(true);
-    setModelDropdownOpen(false);
-    try {
-      // 如果 API Key 是掩码显示，从数据库重新加载真实值
-      let actualSecret = secretKey === "••••••••" ? undefined : secretKey;
-      if (!actualSecret && currentService?.requiresApiKey) {
-        const providerKey = currentService.category === "ai" ? `openai_${currentService.id}` : currentService.id;
-        const loaded = await api.getCredential(providerKey, "secret", "刷新模型加载凭据").catch(() => null);
-        actualSecret = loaded ?? undefined;
-      }
-      const candidateUrls: string[] = [];
-      const normalized = trimmedUrl.replace(/\/$/, "");
-      if (normalized.includes("/v1")) {
-        candidateUrls.push(normalized);
-        const withoutV1 = normalized.replace(/\/v1\/?$/, "");
-        if (withoutV1 && withoutV1 !== normalized) candidateUrls.push(withoutV1);
-      } else {
-        candidateUrls.push(normalized);
-        candidateUrls.push(`${normalized}/v1`);
-      }
-      const uniqueUrls = Array.from(new Set(candidateUrls));
-      const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("timeout")), 12000)
-      );
-      let lastError = "";
-      let successUrl = "";
-      let allModels: string[] = [];
-      for (const url of uniqueUrls) {
-        try {
-          const models = await Promise.race([
-            api.listOpenaiModels(url, actualSecret, currentService?.id),
-            timeoutPromise,
-          ]);
-          if (models.length > 0) {
-            successUrl = url;
-            allModels = models;
-            break;
-          }
-        } catch (e: any) {
-          // e 可能是 IpcError 对象、JSON 字符串、或 Error("timeout")
-          const err = typeof e === "string" ? JSON.parse(e) : e;
-          lastError = err?.message === "timeout"
-            ? t("settings.openaiFetchTimeout", "获取超时，请检查地址是否正确")
-            : formatIpcError(err);
-        }
-      }
-      if (!successUrl) {
-        toast.error(lastError || t("settings.openaiNoModels", "未能获取模型列表"));
-        return;
-      }
-      if (successUrl !== trimmedUrl) setBaseUrl(successUrl);
-      // 智谱 GLM：认证成功后，强制添加 glm-4.7-flash 到模型列表第一个位置
-      if (currentService?.id === "zhipu" && !allModels.includes("glm-4.7-flash")) {
-        allModels.unshift("glm-4.7-flash");
-      }
-      // 文心一言：千帆 /v2/models API 不返回免费模型，手动注入到列表顶部
-      if (currentService?.id === "ernie") {
-        for (const freeModel of ERNIE_FREE_MODELS) {
-          if (!allModels.includes(freeModel)) {
-            allModels.unshift(freeModel);
-          }
-        }
-      }
-      // 如果在 fetchModels 飞行期间用户切换了服务，丢弃本次结果
-      if (currentFetchServiceRef.current !== fetchServiceId) return;
-      setModelList(allModels);
-      lastAutoFetchUrlRef.current = successUrl;
-      setSelectedModels((prev) => prev.filter((sm) => allModels.includes(sm.id)));
-      if (model && !allModels.includes(model)) setModel("");
-      toast.success(t("settings.openaiModelsLoaded", "已加载 {{count}} 个模型", { count: allModels.length }));
-    } catch (e: any) {
-      toast.error(formatIpcError(e));
-    } finally {
-      if (currentFetchServiceRef.current === fetchServiceId) {
-        setLoadingModels(false);
-      }
-    }
-  }, [baseUrl, secretKey, model, t, currentService, api]);
+    const actualSecret = secretKey === "••••••••" ? undefined : secretKey;
+    await fetchModels(trimmedUrl, actualSecret, true);
+  }, [baseUrl, secretKey, currentService, t, fetchModels]);
 
   const handleBaseUrlBlur = useCallback(() => {
     const trimmedUrl = baseUrl.trim();
@@ -1095,6 +1069,9 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           {s.completelyFree ? t("settings.completelyFree") : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
           {" · "}{s.price}
         </p>
+        {s.description && (
+          <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{s.description}</p>
+        )}
       </div>
       {s.comingSoon ? (
         <Card>
@@ -1105,34 +1082,65 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       ) : (
         <Card>
           <CardContent className="space-y-4 pt-4">
-            {s.docUrl && (
-              <a href={s.docUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                {t("settings.getApiKeyPrefix", "获取")} {s.name} API Key
-                <ExternalLink className="h-3 w-3" />
-              </a>
-            )}
-            {s.appIdLabel && (
-              <div>
-                <label className="text-sm font-medium">{s.appIdLabel}</label>
-                <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc", "翻译服务的 App ID / API Key")}</p>
-                <Input value={appId} onChange={(e) => setAppId(e.target.value)} placeholder={s.appIdPlaceholder} disabled={loading} />
-              </div>
-            )}
-            <div>
-              <label className="text-sm font-medium">{t("settings.secretKey", "密钥")}</label>
-              <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc", "API 密钥，加密存储在系统密钥环")}</p>
-              <div className="flex gap-2">
-                <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder="Secret Key" disabled={loading} />
-                {secretKey === "••••••••" && (
-                  <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
-                )}
-              </div>
+            <div className="flex items-center gap-4 flex-wrap">
+              {s.docUrl && (
+                <a href={s.docUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                  {t("settings.getApiKeyPrefix", "获取")} {s.name} API Key
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+              {s.quotaUrl && configuredIds.has(s.id) && (
+                <a href={s.quotaUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                  查看免费额度余量
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
             </div>
+            {/* 小牛翻译：API-KEY 在前，APPID 在后；其他引擎：App ID 在前，密钥在后 */}
+            {s.id === "niutrans" ? (
+              <>
+                <div>
+                  <label className="text-sm font-medium">API-KEY</label>
+                  <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc", "API 密钥，加密存储在系统密钥环")}</p>
+                  <div className="flex gap-2">
+                    <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder="API-KEY" disabled={loading} />
+                    {secretKey === "••••••••" && (
+                      <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">APPID</label>
+                  <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc", "翻译服务的 App ID / API Key")}</p>
+                  <Input value={appId} onChange={(e) => setAppId(e.target.value)} placeholder="APPID" disabled={loading} />
+                </div>
+              </>
+            ) : (
+              <>
+                {s.appIdLabel && (
+                  <div>
+                    <label className="text-sm font-medium">{s.appIdLabel}</label>
+                    <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc", "翻译服务的 App ID / API Key")}</p>
+                    <Input value={appId} onChange={(e) => setAppId(e.target.value)} placeholder={s.appIdPlaceholder} disabled={loading} />
+                  </div>
+                )}
+                <div>
+                  <label className="text-sm font-medium">{s.appIdLabel ? t("settings.secretKey", "密钥") : t("settings.apiKey", "API Key")}</label>
+                  <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc", "API 密钥，加密存储在系统密钥环")}</p>
+                  <div className="flex gap-2">
+                    <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={s.appIdLabel ? "Secret Key" : "API Key"} disabled={loading} />
+                    {secretKey === "••••••••" && (
+                      <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
             {s.hasRegion && (
               <div>
-                <label className="text-sm font-medium">{t("settings.region", "区域")}</label>
-                <p className="text-xs text-muted-foreground mb-1">{t("settings.regionDesc", "Azure 区域，如 global 或 china")}</p>
-                <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="global / china" />
+                <label className="text-sm font-medium">{t("settings.region", "区域")} <span className="text-destructive">*</span></label>
+                <p className="text-xs text-muted-foreground mb-1">{t("settings.regionDesc", "Azure 资源区域，如 eastasia、global、japaneast。请填写创建资源时选择的位置")}</p>
+                <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="eastasia / global / japaneast" />
               </div>
             )}
             {/* QPS / 并发上限 */}
@@ -1199,6 +1207,9 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           {s.completelyFree ? `${t("settings.completelyFree")}（${s.freeQuota}）` : s.hasFreeTier ? `🆓 ${s.freeQuota}` : s.freeQuota}
           {" · "}{s.price}
         </p>
+        {s.description && (
+          <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{s.description}</p>
+        )}
         {s.modelRecommendation && (
           <p className="text-xs text-muted-foreground mt-2 leading-relaxed">
             {s.modelRecommendation.split(/<br\s*\/?>/i).map((line, i, arr) => (
@@ -1285,6 +1296,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                         const selected = selectedModels.find((x) => x.id === m);
                         const sid = currentService?.id || "";
                         const maybeFree = isMaybeFreeModel(sid, m);
+                        const knownPaid = isKnownPaidModel(sid, m);
                         const priceUrl = getModelPriceUrl(sid, m);
                         return (
                           <div key={m} className="flex w-full items-center gap-2 px-3 py-2 text-sm hover:bg-accent hover:text-accent-foreground group/option" title={maybeFree ? t("settings.maybeFreeTooltip") : undefined}>
@@ -1295,6 +1307,11 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                             {maybeFree && (
                               <span className="flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">
                                 {t("settings.maybeFree", "可能免费")}
+                              </span>
+                            )}
+                            {knownPaid && !maybeFree && (
+                              <span className="flex-shrink-0 rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-medium text-orange-700 dark:bg-orange-900/40 dark:text-orange-400">
+                                {t("settings.paid", "收费")}
                               </span>
                             )}
                             {priceUrl && (
@@ -1354,6 +1371,19 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
             <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDesc", "该服务的并发请求上限。免费版通常较低，付费版可按套餐调高。")}</p>
             <Input type="number" step="0.1" value={qps} onChange={(e) => { const v = parseFloat(e.target.value); setQps(isNaN(v) ? 1 : v); }} min={0.1} disabled={loading} className="w-24" />
+            {s.id === "gemini" && (
+              <p className="text-xs text-muted-foreground mt-1">
+                {t("settings.geminiRateLimitNote", "Google 不同模型的 RPM/TPM/RPD 限制逻辑较复杂，且会动态调整。建议先在 Google AI Studio 查看当前账号的实际速率限制，再设置合适的 QPS。")}
+                {" "}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); openUrl("https://aistudio.google.com/app/rate-limit?timeRange=last-28-days").catch(() => {}); }}
+                  className="cursor-pointer text-primary hover:underline"
+                >
+                  {t("settings.geminiRateLimitLink", "查看当前账号速率限制")}
+                </button>
+              </p>
+            )}
           </div>
           {/* TPM 限速（仅有限额的服务商显示） */}
           {s.presetTpm && (
@@ -1404,22 +1434,6 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
               </span>
             )}
           </div>
-          {/* 删除确认弹窗 */}
-          <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-            <DialogContent className="max-w-sm">
-              <DialogHeader>
-                <DialogTitle>{t("settings.deleteConfigConfirm", "确认删除配置？")}</DialogTitle>
-              </DialogHeader>
-              <p className="text-sm text-muted-foreground">{t("settings.deleteConfigDesc", "将清除当前引擎的所有配置和凭据，此操作不可撤销。")}</p>
-              <div className="flex justify-end gap-2 pt-2">
-                <Button size="sm" variant="outline" onClick={() => setDeleteConfirmOpen(false)}>{t("common.cancel", "取消")}</Button>
-                <Button size="sm" variant="destructive" onClick={handleDeleteConfig} disabled={deleting}>
-                  {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-                  {t("common.confirm", "确认删除")}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
         </CardContent>
       </Card>
     </div>
@@ -1491,6 +1505,22 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     <>
       {listContainer && createPortal(listContent, listContainer)}
       {renderRightPanel()}
+      {/* 删除确认弹窗（传统翻译和 AI 共用） */}
+      <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{t("settings.deleteConfigConfirm", "确认删除配置？")}</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">{t("settings.deleteConfigDesc", "将清除当前引擎的所有配置和凭据，此操作不可撤销。")}</p>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button size="sm" variant="outline" onClick={() => setDeleteConfirmOpen(false)}>{t("common.cancel", "取消")}</Button>
+            <Button size="sm" variant="destructive" onClick={handleDeleteConfig} disabled={deleting}>
+              {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              {t("common.confirm", "确认删除")}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

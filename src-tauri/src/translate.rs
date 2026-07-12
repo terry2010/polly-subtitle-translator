@@ -27,6 +27,7 @@ pub use translate_ai::{
     PromptTemplateView, RemotePromptConfig, ThinkingStyle, post_process_name_tags, strip_name_tags,
 };
 pub use translate_utils::cleanup_cjk_spaces;
+pub use translate_utils::normalize_sound_effect_brackets;
 // parse_name_extraction_response 被 e2e 集成测试（tests/e2e.rs）调用，
 // 不能用 #[cfg(test)]（integration test 编译 lib 时不启用 test cfg）也不能用 pub(crate)，
 // 必须 pub use 让外部 crate 可见
@@ -247,7 +248,7 @@ impl TranslateProvider {
             TranslateProvider::Google => RateLimitPolicy::Concurrency(10),
             TranslateProvider::Bing => RateLimitPolicy::Concurrency(10),
             TranslateProvider::Caiyun => RateLimitPolicy::Qps(5.0),
-            TranslateProvider::Niutrans => RateLimitPolicy::Concurrency(5),
+            TranslateProvider::Niutrans => RateLimitPolicy::Qps(5.0),
             TranslateProvider::Tencent => RateLimitPolicy::Qps(5.0),
             TranslateProvider::Volcengine => RateLimitPolicy::Qps(5.0),
             TranslateProvider::Aliyun => RateLimitPolicy::Qps(50.0),
@@ -337,15 +338,26 @@ pub struct ProviderCredentials {
     pub model_type: Option<String>,
 }
 
-/// 检测响应是否为余额不足/额度耗尽
-/// 返回 Some(detail) 表示余额不足，None 表示不是
+/// 检测响应是否为余额不足/额度耗尽/接口未授权
+/// 返回 Some(detail) 表示需要用户到控制台处理，None 表示不是
 pub fn check_insufficient_balance(status: reqwest::StatusCode, body: &str) -> Option<String> {
-    // HTTP 402 Payment Required
-    if status == reqwest::StatusCode::PAYMENT_REQUIRED {
-        return Some(extract_error_message(body));
+    let lower = body.to_lowercase();
+    let is_endpoint_inactive = lower.contains("endpoint is inactive")
+        || lower.contains("endpoint inactive")
+        || lower.contains("401006");
+
+    // HTTP 402 Payment Required：可能是余额不足，也可能是接口未激活（如 TokenHub）
+    if status == reqwest::StatusCode::PAYMENT_REQUIRED || is_endpoint_inactive {
+        let msg = extract_error_message(body);
+        if is_endpoint_inactive {
+            return Some(format!(
+                "接口未激活，请前往服务商控制台开通/授权该模型后重试：{}",
+                msg
+            ));
+        }
+        return Some(msg);
     }
     // 响应体关键词检测（各服务商余额不足时的常见关键词）
-    let lower = body.to_lowercase();
     let keywords = [
         "insufficient balance",
         "insufficient_balance",
@@ -847,8 +859,8 @@ impl TranslateProviderTrait for BaiduProvider {
 
 // === SECTION 3 END ===
 
-/// Bing 翻译 API（Azure Cognitive Services Translator）
-/// 文档：https://learn.microsoft.com/en-us/azure/ai-services/translator/
+/// Bing 翻译 API（Azure Translator 2026-06-06）
+/// 文档：https://learn.microsoft.com/en-us/azure/ai-services/translator/text-translation/2026-06-06/translate-api
 /// 认证：Ocp-Apim-Subscription-Key + region（Ocp-Apim-Subscription-Region）
 pub struct BingProvider {
     api_key: String,
@@ -872,17 +884,18 @@ impl BingProvider {
         target_lang: &str,
     ) -> Result<Vec<String>, AppError> {
         let url = "https://api.cognitive.microsofttranslator.com/translate";
-        let params = [
-            ("api-version", "3.0"),
-            ("from", source_lang),
-            ("to", target_lang),
-        ];
+        let params = [("api-version", "2026-06-06")];
 
-        // Bing 接受数组形式的 body，每个元素含 Text
-        let body: Vec<serde_json::Value> = texts
+        // 2026-06-06 新格式：inputs 数组，每个元素含 text + language + targets
+        let inputs: Vec<serde_json::Value> = texts
             .iter()
-            .map(|t| serde_json::json!({ "Text": t.as_str() }))
+            .map(|t| serde_json::json!({
+                "text": t.as_str(),
+                "language": source_lang,
+                "targets": [{ "language": target_lang }]
+            }))
             .collect();
+        let body = serde_json::json!({ "inputs": inputs });
 
         let resp = self
             .client
@@ -935,9 +948,10 @@ impl BingProvider {
             }
         })?;
 
-        // Bing 返回 [{ "translations": [{ "text": "..." }] }, ...]
+        // 2026-06-06 响应格式：{ "value": [{ "translations": [{ "text": "..." }] }, ...] }
         let translations = result
-            .as_array()
+            .get("value")
+            .and_then(|v| v.as_array())
             .ok_or_else(|| AppError::TranslateAlignFailed {
                 missing: texts.len(),
             })?;
@@ -1533,15 +1547,25 @@ impl<'a> TranslateScheduler<'a> {
                 let orig_is_sound = looks_like_sound_effect(&entry.text);
                 let restored_is_sound = looks_like_sound_effect(&restored);
                 let sound_mismatch = orig_is_sound != restored_is_sound;
-                // 长度比值异常：短原文被翻译成长译文（批次错位）
-                let orig_len = entry.text.chars().count().max(1);
-                let trans_len = restored.chars().count();
-                let length_ratio_abnormal = trans_len > 0 && {
-                    let ratio = trans_len as f64 / orig_len as f64;
-                    ratio > 5.0 && trans_len > 10
+                // 传统翻译引擎（Google/Bing/DeepL/百度/腾讯等）是确定性的，
+                // 不会错位/合并条目，AI 错位检测（部分翻译、长度比值）对传统引擎会误判。
+                let is_traditional = self.model.is_empty();
+                // 长度比值异常：短原文被翻译成长译文（批次错位），仅对 AI 引擎检测
+                let length_ratio_abnormal = if is_traditional {
+                    false
+                } else {
+                    let orig_len = entry.text.chars().count().max(1);
+                    let trans_len = restored.chars().count();
+                    trans_len > 0 && {
+                        let ratio = trans_len as f64 / orig_len as f64;
+                        ratio > 5.0 && trans_len > 10
+                    }
                 };
                 // failed 判定：与批次模式一致，排除非英语/音乐/音效内容
-                let partial_trans = !is_non_english && !is_music_or_sfx
+                // 传统引擎跳过 AI 部分翻译检测（保留英文术语如 alpha、beta 是正常翻译）
+                let partial_trans = !is_traditional
+                    && !is_non_english
+                    && !is_music_or_sfx
                     && is_partial_translation(&entry.text, &restored);
                 let failed = any_failed
                     || combined.is_empty()
@@ -1612,6 +1636,8 @@ impl<'a> TranslateScheduler<'a> {
         let (long_batch_size, _) = get_model_batch_sizes(&self.model);
         let short_batch_size = 5;
         let short_text_threshold = 30;
+        // 致命错误（余额不足/接口未授权/每日限额/认证失败）：记录后中止所有批次并返回
+        let mut fatal_error: Option<AppError> = None;
         if !to_translate.is_empty() {
             let (short_entries, long_entries): (
                 Vec<(usize, String, String, PlaceholderProtector)>,
@@ -1652,7 +1678,7 @@ impl<'a> TranslateScheduler<'a> {
                     // 这样 while join_next 循环能立即开始处理已完成的结果
                     let _permit = semaphore.acquire_owned().await.unwrap();
                     if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
-                        return (batch_idx, vec![]);
+                        return (batch_idx, Ok(vec![]));
                     }
                     // QPS 模式：获取信号量后，发请求前强制等待 min_interval
                     // 信号量只保证不并发，但不保证请求间隔；降级重试会发多个请求，
@@ -1679,18 +1705,35 @@ impl<'a> TranslateScheduler<'a> {
                             rate_limit,
                         ).await
                     }).await;
+                    // result 现在是 Result<Vec<String>, AppError>
+                    // 致命错误（余额不足等）由外层 join_next 循环处理
                     (batch_idx, result)
                 });
             }
 
             // 批次完成即处理（不要求顺序）：立即回调 on_entry_done / on_progress，
             // 避免 head-of-line blocking（batch 0 慢时后续批次全部等待导致进度卡 0）
+            // 致命错误（余额不足/接口未授权/每日限额/认证失败）：立即中止所有批次并返回错误
             while let Some(res) = join_set.join_next().await {
-                let (batch_idx, translations) = match res {
+                let (batch_idx, batch_result) = match res {
                     Ok(item) => item,
                     Err(e) => {
                         tracing::warn!("join 任务异常: {}", e);
                         continue;
+                    }
+                };
+                // 检查是否为致命错误
+                let translations = match batch_result {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::error!(
+                            "翻译批次 {} 遇到致命错误，中止所有批次: {}",
+                            batch_idx + 1,
+                            e
+                        );
+                        fatal_error = Some(e);
+                        join_set.abort_all();
+                        break;
                     }
                 };
                 if self.is_cancelled() {
@@ -1727,7 +1770,16 @@ impl<'a> TranslateScheduler<'a> {
                 for ((index, orig_text, _protected_text, protector), translated) in
                     batch.iter().zip(final_translations.iter())
                 {
-                    let restored = protector.restore_with_ass_recovery(translated, orig_text);
+                    let mut restored = protector.restore_with_ass_recovery(translated, orig_text);
+                    // 兜底：经所有降级重试后译文仍为空（如模型持续返回空/占位符恢复失败），
+                    // 用原文填充并标记失败，避免导出/保存时出现空白中文行。
+                    if restored.trim().is_empty() && !orig_text.trim().is_empty() {
+                        tracing::warn!(
+                            "字幕 #{} 经降级重试后译文仍为空，用原文兜底",
+                            index
+                        );
+                        restored = orig_text.clone();
+                    }
                     // 翻译失败判定：
                     // 1. 译文为空
                     // 2. 译文与原文相同（AI 未实际翻译，原样返回）
@@ -1738,13 +1790,21 @@ impl<'a> TranslateScheduler<'a> {
                     let restored_is_sound = looks_like_sound_effect(&restored);
                     let sound_mismatch = orig_is_sound != restored_is_sound;
 
+                    // 传统翻译引擎（Google/Bing/DeepL/百度/腾讯等）是确定性的，
+                    // 不会错位/合并条目，跳过 AI 错位检测（部分翻译、长度比值）。
+                    let is_traditional = self.model.is_empty();
+
                     // 4. 长度比值异常：短原文被翻译成长译文（如 "♪♪" → "Titus：哦，该死！\n♪♪"），
-                    // 通常是批次错位翻译，不应缓存。
-                    let orig_len = orig_text.chars().count().max(1);
-                    let trans_len = restored.chars().count();
-                    let length_ratio_abnormal = trans_len > 0 && {
-                        let ratio = trans_len as f64 / orig_len as f64;
-                        ratio > 5.0 && trans_len > 10
+                    // 通常是批次错位翻译，不应缓存。仅对 AI 引擎检测。
+                    let length_ratio_abnormal = if is_traditional {
+                        false
+                    } else {
+                        let orig_len = orig_text.chars().count().max(1);
+                        let trans_len = restored.chars().count();
+                        trans_len > 0 && {
+                            let ratio = trans_len as f64 / orig_len as f64;
+                            ratio > 5.0 && trans_len > 10
+                        }
                     };
 
                     // 非英语内容检测：原文本身不含英语字母（如拼写字母 "G-O-R..."、
@@ -1759,6 +1819,15 @@ impl<'a> TranslateScheduler<'a> {
                     // 译文含音乐符号（歌词/拟声词，无法翻译）：不算无 CJK 失败
                     let trans_has_music = has_music_symbols(&restored);
 
+                    // 部分翻译检测：译文含 CJK 但同时残留英文单词或音效标记问题
+                    // 与单条翻译路径（translate_entries_full 的分段翻译）一致
+                    // 例外：音效标记/音乐符号/非英语内容不检测
+                    // 传统引擎跳过该检测（保留英文术语如 alpha、beta 是正常翻译）
+                    let partial_trans = !is_traditional
+                        && !is_non_english
+                        && !is_music_or_sfx
+                        && is_partial_translation(orig_text, &restored);
+
                     let failed = restored.is_empty()
                         || (!is_non_english && !is_music_or_sfx && restored.trim() == orig_text.trim())
                         || (target_lang.starts_with("zh")
@@ -1769,7 +1838,8 @@ impl<'a> TranslateScheduler<'a> {
                             && !trans_has_music)
                         || sound_mismatch
                         || batch_count_mismatch
-                        || length_ratio_abnormal;
+                        || length_ratio_abnormal
+                        || partial_trans;
 
                     // 数量不匹配的批次整批不缓存（防止错位译文污染缓存）
                     // 例外：以下 failed 条目也写入缓存，保证 get_cached_entries 恢复时译文一致：
@@ -1835,6 +1905,12 @@ impl<'a> TranslateScheduler<'a> {
             }
         }
 
+        // 致命错误（余额不足/接口未授权/每日限额/认证失败）：返回错误，让前端弹 toast
+        if let Some(e) = fatal_error {
+            tracing::error!("翻译因致命错误中止: {}", e);
+            return Err(e);
+        }
+
         // 按 index 排序
         results.sort_by_key(|r| r.index);
 
@@ -1896,7 +1972,17 @@ async fn translate_with_retry_provider(
                         provider,
                         retry_after: Some(*delay),
                     });
-                    tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+                    // 可取消的 sleep：每 100ms 检查取消标志
+                    let total_ms = *delay * 1000;
+                    let mut waited = 0u64;
+                    while waited < total_ms {
+                        let chunk = std::cmp::min(100, total_ms - waited);
+                        tokio::time::sleep(std::time::Duration::from_millis(chunk)).await;
+                        waited += chunk;
+                        if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
+                            return Err(AppError::TranslateRetriesExhausted);
+                        }
+                    }
                 }
                 Err(AppError::TranslateNetworkError { provider, detail }) => {
                     tracing::warn!(
@@ -1906,7 +1992,17 @@ async fn translate_with_retry_provider(
                         delay
                     );
                     last_error = Some(AppError::TranslateNetworkError { provider, detail });
-                    tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+                    // 可取消的 sleep：每 100ms 检查取消标志
+                    let total_ms = *delay * 1000;
+                    let mut waited = 0u64;
+                    while waited < total_ms {
+                        let chunk = std::cmp::min(100, total_ms - waited);
+                        tokio::time::sleep(std::time::Duration::from_millis(chunk)).await;
+                        waited += chunk;
+                        if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
+                            return Err(AppError::TranslateRetriesExhausted);
+                        }
+                    }
                 }
                 Err(e) => return Err(e), // 鉴权失败等不重试
             }
@@ -2118,7 +2214,8 @@ impl TranslateProviderTrait for DeepLProvider {
 
 /// 有道翻译 API
 /// 文档：https://ai.youdao.com/DOCSIRMA/html/trans/api/wbfy/index.html
-/// 签名算法：SHA256(appKey + q + salt + curtime + appSecret)
+/// 签名算法：SHA256(appKey + input + salt + curtime + appSecret)
+/// 其中 input = q前10字符 + q长度 + q后10字符（q长度>20时），否则 input = q
 pub struct YoudaoProvider {
     app_key: String,
     app_secret: String,
@@ -2135,9 +2232,21 @@ impl YoudaoProvider {
 
     fn sign(&self, query: &str, salt: &str, curtime: &str) -> String {
         use sha2::{Digest, Sha256};
-        let input = format!("{}{}{}{}{}", self.app_key, query, salt, curtime, self.app_secret);
+        // 有道签名算法要求对 query 做 truncate 处理生成 input：
+        // 当 q 长度 > 20：input = q前10字符 + q长度 + q后10字符
+        // 当 q 长度 <= 20：input = q 完整字符串
+        let input = if query.chars().count() > 20 {
+            let chars: Vec<char> = query.chars().collect();
+            let len = chars.len();
+            let first10: String = chars[..10].iter().collect();
+            let last10: String = chars[len - 10..].iter().collect();
+            format!("{}{}{}", first10, len, last10)
+        } else {
+            query.to_string()
+        };
+        let sign_input = format!("{}{}{}{}{}", self.app_key, input, salt, curtime, self.app_secret);
         let mut hasher = Sha256::new();
-        hasher.update(input.as_bytes());
+        hasher.update(sign_input.as_bytes());
         format!("{:x}", hasher.finalize())
     }
 
@@ -2469,20 +2578,47 @@ impl TranslateProviderTrait for CaiyunProvider {
 
 // === SECTION 9 END ===
 
-/// 小牛翻译 API
-/// 文档：https://niutrans.com/Document
-/// 认证：apikey 参数
+/// 小牛翻译 API（V2）
+/// 文档：https://niutrans.com/documents/contents/transapi_text_v2
+/// 认证：appId + apikey → MD5 签名生成 authStr（权限字符串）
+/// 签名规则：将 apikey 及所有发送参数（除 authStr、空值外）按参数名 ASCII 排序，
+/// 拼成 "k1=v1&k2=v2&..." 后 MD5，得到 authStr。
 pub struct NiutransProvider {
+    app_id: String,
     api_key: String,
     client: reqwest::Client,
 }
 
 impl NiutransProvider {
-    pub fn new(api_key: String) -> Self {
-        Self::with_client(api_key, reqwest::Client::new())
+    pub fn new(app_id: String, api_key: String) -> Self {
+        Self::with_client(app_id, api_key, reqwest::Client::new())
     }
-    pub fn with_client(api_key: String, client: reqwest::Client) -> Self {
-        Self { api_key, client }
+    pub fn with_client(app_id: String, api_key: String, client: reqwest::Client) -> Self {
+        Self { app_id, api_key, client }
+    }
+
+    /// 生成权限字符串 authStr
+    /// 步骤：apikey + 所有发送参数（除 authStr、空值外）按参数名 ASCII 排序拼接 → MD5
+    fn generate_auth_str(&self, params: &[(&str, &str)]) -> String {
+        use md5::{Digest, Md5};
+        // 构造 (key, value) 列表，加入 apikey（apikey 不随请求发送，只参与签名）
+        let mut all: Vec<(String, String)> = params
+            .iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        all.push(("apikey".to_string(), self.api_key.clone()));
+        // 按 key ASCII 排序
+        all.sort_by(|a, b| a.0.cmp(&b.0));
+        // 拼接 "k1=v1&k2=v2&..."
+        let param_str: String = all
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("&");
+        let mut hasher = Md5::new();
+        hasher.update(param_str.as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 
     /// 小牛翻译语言码映射
@@ -2515,18 +2651,41 @@ impl NiutransProvider {
         let from = Self::to_niutrans_lang(source_lang);
         let to = Self::to_niutrans_lang(target_lang);
 
-        let body = serde_json::json!({
-            "apikey": self.api_key,
-            "src_text": text,
-            "from": from,
-            "to": to,
-        });
+        // 时间戳（秒级，官方 Python/C# demo 均用秒级，文档表格"毫秒数"描述有误）
+        let timestamp = format!(
+            "{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+        );
+
+        // 参与签名的参数（不含 authStr，空值不参与）
+        let sign_params: Vec<(&str, &str)> = vec![
+            ("from", from),
+            ("to", to),
+            ("appId", &self.app_id),
+            ("srcText", text),
+            ("timestamp", &timestamp),
+        ];
+        let auth_str = self.generate_auth_str(&sign_params);
+
+        // 请求参数（camelCase 字段名，apikey 不发送）
+        // 使用 form-urlencoded（与官方 Python demo 一致），避免 JSON 编码导致的签名不一致
+        let form_params: [(&str, &str); 6] = [
+            ("from", from),
+            ("to", to),
+            ("appId", &self.app_id),
+            ("srcText", text),
+            ("timestamp", &timestamp),
+            ("authStr", &auth_str),
+        ];
 
         let resp = self
             .client
-            .post("https://nmt-api.niutrans.com/NMT/translate")
-            .header("Content-Type", "application/json")
-            .json(&body)
+            .post("https://api.niutrans.com/v2/text/translate")
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .form(&form_params)
             .send()
             .await
             .map_err(|e| AppError::TranslateNetworkError {
@@ -2557,15 +2716,23 @@ impl NiutransProvider {
             }
         })?;
 
-        // 检查错误码
-        if let Some(code) = result.get("error_code").and_then(|c| c.as_i64()) {
-            if code != 0 {
-                let msg = result.get("error_msg").and_then(|m| m.as_str()).unwrap_or("unknown");
-                let full_msg = format!("error_code: {}, error_msg: {}", code, msg);
-                if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
+        // V2 返回 camelCase 错误字段：errorCode / errorMsg
+        if let Some(code) = result.get("errorCode").and_then(|c| c.as_str()) {
+            if !code.is_empty() && code != "0" {
+                let msg = result.get("errorMsg").and_then(|m| m.as_str()).unwrap_or("unknown");
+                let full_msg = format!("errorCode: {}, errorMsg: {}", code, msg);
+                // 13001: 字符流量不足或没有访问权限
+                if code == "13001" {
                     return Err(AppError::TranslateInsufficientBalance {
                         provider: "niutrans".to_string(),
-                        detail,
+                        detail: full_msg,
+                    });
+                }
+                // 20001: 鉴权失败
+                if code == "20001" {
+                    return Err(AppError::TranslateNetworkError {
+                        provider: "niutrans".to_string(),
+                        detail: format!("{}（请检查 App ID 和 API Key 是否正确）", full_msg),
                     });
                 }
                 return Err(AppError::TranslateNetworkError {
@@ -2575,7 +2742,7 @@ impl NiutransProvider {
             }
         }
 
-        let tgt = result["tgt_text"]
+        let tgt = result["tgtText"]
             .as_str()
             .unwrap_or("");
 
@@ -2650,7 +2817,7 @@ impl TencentProvider {
         // 1. 拼接规范请求串
         let canonical_uri = "/";
         let canonical_querystring = "";
-        let canonical_headers = "content-type:application/json; charset=utf-8\nhost:tmt.tencentcloudapi.com\nx-tc-action:texttranslate\n".to_string();
+        let canonical_headers = "content-type:application/json; charset=utf-8\nhost:tmt.tencentcloudapi.com\nx-tc-action:texttranslatebatch\n".to_string();
         let signed_headers = "content-type;host;x-tc-action";
         let hashed_payload = hex::encode(Sha256::digest(payload.as_bytes()));
         let canonical_request = format!(
@@ -2725,6 +2892,7 @@ impl TencentProvider {
             .header("X-TC-Action", "TextTranslateBatch")
             .header("X-TC-Version", "2018-03-21")
             .header("X-TC-Timestamp", timestamp.to_string())
+            .header("X-TC-Region", "ap-beijing")
             .body(payload)
             .send()
             .await
@@ -3129,12 +3297,14 @@ impl AliyunProvider {
             url_encode(&canonicalized)
         );
 
-        // 4. HMAC-SHA1
+        // 4. HMAC-SHA1，key 为 AccessKeySecret + "&"
         let key = format!("{}&", self.access_key_secret);
         let mut mac = HmacSha1::new_from_slice(key.as_bytes()).unwrap();
         mac.update(string_to_sign.as_bytes());
         let signature = mac.finalize().into_bytes();
-        base64_url::encode(&signature)
+        // 阿里云要求 Base64 编码（标准 Base64，不是 hex）
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode(signature)
     }
 
     async fn translate_batch(
@@ -3247,33 +3417,20 @@ impl AliyunProvider {
     }
 }
 
-/// URL 编码（阿里云要求特殊编码规则）
+/// URL 编码（阿里云要求 RFC3986 编码规则）
 fn url_encode(s: &str) -> String {
     let mut result = String::new();
     for byte in s.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'*' => {
                 result.push(byte as char);
             }
-            b'*' => result.push_str("%2A"),
             _ => {
                 result.push_str(&format!("%{:02X}", byte));
             }
         }
     }
     result
-}
-
-/// 简单 base64 URL-safe 编码
-mod base64_url {
-    pub fn encode(data: &[u8]) -> String {
-        use std::fmt::Write;
-        let mut result = String::new();
-        for byte in data {
-            write!(result, "{:02x}", byte).unwrap();
-        }
-        result
-    }
 }
 
 #[async_trait::async_trait]
@@ -3649,10 +3806,13 @@ pub fn create_provider_with_proxy(
             Ok(std::sync::Arc::new(CaiyunProvider::with_client(token, client)))
         }
         TranslateProvider::Niutrans => {
+            let app_id = credentials.app_id.clone().ok_or_else(|| {
+                AppError::StorageCredentialNotFound { provider: "niutrans".to_string() }
+            })?;
             let api_key = credentials.secret_key.clone().ok_or_else(|| {
                 AppError::StorageCredentialNotFound { provider: "niutrans".to_string() }
             })?;
-            Ok(std::sync::Arc::new(NiutransProvider::with_client(api_key, client)))
+            Ok(std::sync::Arc::new(NiutransProvider::with_client(app_id, api_key, client)))
         }
         TranslateProvider::Tencent => {
             let secret_id = credentials.app_id.clone().ok_or_else(|| {
@@ -4691,6 +4851,37 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_name_extraction_json_mixed_latin_chinese_skipped() {
+        // JSON 中译名为拉丁词+中文混合（如 nipple酒），应跳过
+        let content = r#"[
+          {"en": "Jeremy", "zh": "杰里米"},
+          {"en": "Nipslip Vodka", "zh": "nipple酒"}
+        ]"#;
+        let names = parse_name_extraction_response(content);
+        assert_eq!(names.len(), 1, "混合拉丁词+中文译名应被跳过");
+        assert_eq!(names[0].english, "Jeremy");
+    }
+
+    #[test]
+    fn test_parse_name_extraction_arrow_mixed_latin_chinese_skipped() {
+        // → 格式中译名为拉丁词+中文混合，应跳过
+        let content = "Jeremy → 杰里米\nNipslip Vodka → nipple酒";
+        let names = parse_name_extraction_response(content);
+        assert_eq!(names.len(), 1, "混合拉丁词+中文译名应被跳过");
+        assert_eq!(names[0].english, "Jeremy");
+    }
+
+    #[test]
+    fn test_parse_name_extraction_brand_with_paren_not_filtered() {
+        // 品牌名格式（含括号分隔）不应被过滤
+        let content = r#"[
+          {"en": "Nipslip Vodka", "zh": "Nipslip Vodka（尼普斯利普伏特加）"}
+        ]"#;
+        let names = parse_name_extraction_response(content);
+        assert_eq!(names.len(), 1, "品牌名括号格式不应被过滤");
+    }
+
+    #[test]
     fn test_parse_name_extraction_json_slash_alternatives() {
         // JSON 中 zh 含 `/` 分隔的多个候选译名
         let content = r#"[
@@ -4835,5 +5026,105 @@ Hitler → 希特勒"#;
         assert_eq!(names[0].english, "Jeremy");
         assert_eq!(names[1].english, "Kaleb");
         assert_eq!(names[2].english, "Skylark");
+    }
+
+    #[test]
+    fn test_check_insufficient_balance_endpoint_inactive() {
+        // TokenHub 接口未激活：HTTP 402 + endpoint is inactive
+        let body = r#"{"error":{"message":"endpoint is inactive","code":"401006","type":"gateway_error","request_id":"abc"}}"#;
+        let detail = check_insufficient_balance(reqwest::StatusCode::PAYMENT_REQUIRED, body)
+            .expect("应识别为余额/授权问题");
+        assert!(detail.contains("接口未激活"), "detail={}", detail);
+        assert!(detail.contains("endpoint is inactive"), "detail={}", detail);
+
+        // 余额不足：HTTP 402 + 普通余额不足消息
+        let body2 = r#"{"error":{"message":"insufficient balance"}}"#;
+        let detail2 = check_insufficient_balance(reqwest::StatusCode::PAYMENT_REQUIRED, body2)
+            .expect("应识别为余额问题");
+        assert!(!detail2.contains("接口未激活"), "detail2={}", detail2);
+
+        // 非 402 且无关键词：不应识别
+        assert!(check_insufficient_balance(reqwest::StatusCode::OK, "some random error").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_traditional_provider_skip_partial_translation_detection() {
+        // 回归测试：传统翻译引擎（如 Google）不应被 AI 部分翻译检测误判。
+        // 原文含英文术语 alpha，Google 正确翻译为 "一个洞？这根本不是alpha版本。"，
+        // 残留英文 token "alpha" 是正常借词保留，不应标记 failed=true。
+        // 若标记 failed，导出双语 SRT 会丢弃译文，导致编辑器有中文但文件只有英文。
+        use std::collections::HashMap;
+
+        struct MockProvider {
+            translations: HashMap<String, String>,
+        }
+
+        #[async_trait::async_trait]
+        impl TranslateProviderTrait for MockProvider {
+            async fn translate(
+                &self,
+                texts: &[String],
+                _source_lang: &str,
+                _target_lang: &str,
+            ) -> Result<Vec<String>, AppError> {
+                Ok(texts
+                    .iter()
+                    .map(|t| self.translations.get(t).cloned().unwrap_or_default())
+                    .collect())
+            }
+
+            async fn supported_target_langs(&self) -> Result<Vec<LanguageInfo>, AppError> {
+                Ok(vec![])
+            }
+
+            async fn test_connection(&self) -> Result<(), AppError> {
+                Ok(())
+            }
+        }
+
+        let db_path = std::env::temp_dir()
+            .join(format!("test_trad_partial_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db_path);
+        let db = Database::open(&db_path).unwrap();
+
+        let mut translations = HashMap::new();
+        translations.insert(
+            "A hole? This isn't alpha at all.".to_string(),
+            "一个洞？这根本不是alpha版本。".to_string(),
+        );
+
+        let provider = std::sync::Arc::new(MockProvider { translations });
+        let scheduler = TranslateScheduler::new(
+            &db,
+            provider,
+            "google".to_string(),
+            String::new(), // 空 model = 传统引擎
+        )
+        .with_file_hash("test_hash".to_string());
+
+        let entries = vec![crate::subtitle::SubtitleEntry {
+            index: 226,
+            start_ms: 0,
+            end_ms: 1000,
+            text: "A hole? This isn't alpha at all.".to_string(),
+            translated: String::new(),
+            style: None,
+            failed: false,
+            from_cache: false,
+        }];
+
+        let result = scheduler
+            .translate_entries_full(&entries, "en", "zh", 5000, None, None, false)
+            .await
+            .unwrap();
+        assert_eq!(result.translations.len(), 1);
+        let tr = &result.translations[0];
+        assert_eq!(tr.translated, "一个洞？这根本不是alpha版本。");
+        assert!(
+            !tr.failed,
+            "传统引擎不应因残留英文术语 alpha 被误判为 partial translation"
+        );
+
+        let _ = std::fs::remove_file(&db_path);
     }
 }

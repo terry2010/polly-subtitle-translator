@@ -317,6 +317,8 @@
     "qpsLabel": "QPS / 并发上限",
     "qpsDesc": "该服务的并发请求上限。免费版通常较低，付费版可按套餐调高。",
     "qpsDescTraditional": "该服务的请求频率上限。免费版通常为 1-5，付费版可按套餐调高。",
+    "geminiRateLimitNote": "Google 不同模型的 RPM/TPM/RPD 限制逻辑较复杂，且会动态调整。建议先在 Google AI Studio 查看当前账号的实际速率限制，再设置合适的 QPS。",
+    "geminiRateLimitLink": "查看当前账号速率限制",
     "tpmLabel": "TPM 上限",
     "tpmDesc": "每分钟最多 token 数，0 = 不限制",
     "resetBaseUrl": "重置为默认",
@@ -356,7 +358,8 @@
     "appIdDesc": "翻译服务的 App ID / API Key",
     "secretKeyDesc": "API 密钥，加密存储在系统密钥环",
     "edit": "修改",
-    "regionDesc": "Azure 区域，如 global 或 china",
+    "regionDesc": "Azure 资源区域，如 eastasia、global、japaneast。请填写创建资源时选择的位置",
+    "regionRequired": "请填写区域（Azure 资源的位置，如 eastasia）",
     "saved": "已保存",
     "searchDesc": "配置 OpenSubtitles API 密钥以启用在线字幕搜索",
     "apiKeyDesc": "在 opensubtitles.com 注册获取 API 密钥",
@@ -432,6 +435,7 @@
     "searchServicePlaceholder": "搜索服务名称...",
     "maybeFree": "可能免费",
     "maybeFreeTooltip": "可能免费，以官方价格为准",
+    "paid": "收费",
     "quickAccess": "快速接入",
     "traditionalTranslation": "传统翻译",
     "aiModels": "AI 大模型",
@@ -603,7 +607,8 @@
       "networkError": "翻译网络错误（{{provider}}）：{{detail}}",
       "timeout": "{{provider}} 翻译超时（{{timeoutSecs}}秒无响应），任务已停止。请检查网络或更换模型",
       "authFailed": "{{provider}} 翻译认证失败",
-      "insufficientBalance": "{{provider}} 账户余额不足，请充值后重试（{{detail}}）",
+      "modelUnavailable": "{{provider}} 模型 {{model}} 对当前账号不可用，请在下拉列表中换一个模型",
+      "insufficientBalance": "{{provider}} 账户额度或接口授权异常，请前往控制台充值/授权后重试（{{detail}}）",
       "dailyLimitReached": "{{provider}} 每日翻译额度已用尽，请明日再试或更换服务商（{{detail}}）",
       "credentialsNotConfigured": "未配置翻译 API 凭据，请先在设置中配置",
       "notConfigured": "未配置翻译 API",
@@ -614,6 +619,10 @@
       "responseParseFailed": "翻译响应解析失败：{{detail}}",
       "retriesExhausted": "翻译重试耗尽",
       "unknownProvider": "未知翻译引擎：{{provider}}"
+    },
+    "openai": {
+      "modelsFetchFailed": "获取模型列表失败：{{detail}}",
+      "noModels": "连接成功，但未找到任何模型。请检查 API 地址是否正确，或确认服务端已加载模型"
     },
     "player": {
       "libmpvNotDownloaded": "播放器组件未下载",

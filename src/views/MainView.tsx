@@ -16,7 +16,7 @@ import { useVideoStore } from "../stores/videoStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
 import { useDevModeStore } from "../stores/devModeStore";
-import { api, formatIpcError, isTimeoutError, isDailyLimitError } from "../lib/api";
+import { api, formatIpcError, isTimeoutError, isDailyLimitError, isInsufficientBalanceError } from "../lib/api";
 import { warn, error as logError } from "../lib/logger";
 import { withPlayerHidden } from "../lib/utils";
 import { SERVICES, encodeAiSelectValue, decodeAiSelectValue, isMaybeFreeModel, getModelPriceUrl } from "../lib/services";
@@ -235,15 +235,21 @@ export default function MainView() {
     };
   }, [probeResult, subtitleStore.file]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 鼠标进入卡片：展开 + 取消收起定时器
+  // 鼠标进入顶部卡片：展开 + 取消收起定时器
   const handleCardMouseEnter = useCallback(() => {
     setCardHovered(true);
     if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
     setCardExpanded(true);
   }, []);
 
-  // 鼠标离开卡片：如果不是因为视频信息遮罩，则收起
-  const handleCardMouseLeave = useCallback(() => {
+  // 鼠标进入右栏容器（非卡片区域）：只阻止收起，不展开
+  const handlePanelMouseEnter = useCallback(() => {
+    setCardHovered(true);
+    if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
+  }, []);
+
+  // 鼠标离开右栏容器：如果不是因为视频信息遮罩，则收起
+  const handlePanelMouseLeave = useCallback(() => {
     setCardHovered(false);
     if (videoInfoOverlay) return; // 视频信息展示中，不收起
     if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
@@ -544,19 +550,22 @@ export default function MainView() {
 
   // 查询各翻译引擎是否已配置凭据
   useEffect(() => {
-    // 传统翻译：baidu/bing/google
-    const traditionalProviders = ["baidu", "bing", "google"];
+    // 传统翻译：从 SERVICES 动态获取所有传统引擎
+    const traditionalProviders = SERVICES.filter((s) => s.category === "traditional").map((s) => s.id);
     // AI 服务：遍历所有 AI 服务定义，检查 per-service 配置
     const aiServices = SERVICES.filter((s) => s.category === "ai");
 
     const traditionalPromise = Promise.all(traditionalProviders.map(async (p) => {
       try {
+        const service = SERVICES.find((s) => s.id === p);
         const [appId, secretKeyring, secretConfig] = await Promise.all([
           api.getConfig(`translate_${p}_app_id`).catch(() => null),
           api.getCredential(p, "secret", `启动检查配置状态(${p})`).catch(() => null),
           api.getConfig(`translate_${p}_secret`).catch(() => null),
         ]);
-        const configured = !!(appId && (secretKeyring || secretConfig));
+        const hasSecret = !!(secretKeyring || secretConfig);
+        // 双字段引擎：需要 app_id + secret；单密钥引擎：只需要 secret
+        const configured = service?.appIdLabel ? !!(appId && hasSecret) : hasSecret;
         return [p, configured] as [string, boolean];
       } catch {
         return [p, false] as [string, boolean];
@@ -1073,8 +1082,8 @@ export default function MainView() {
       } catch (e: any) {
         warn("人名预扫描失败:", e);
         translateStore.setExtractingNames(false);
-        // 超时或每日限额：持久化 toast + 停止任务（不继续翻译）
-        if (isTimeoutError(e) || isDailyLimitError(e)) {
+        // 致命错误（超时/每日限额/余额不足/接口未授权）：持久化 toast + 停止任务（不继续翻译）
+        if (isTimeoutError(e) || isDailyLimitError(e) || isInsufficientBalanceError(e)) {
           toast.error(formatIpcError(e), { duration: Infinity, closeButton: true });
           return;
         }
@@ -1319,13 +1328,16 @@ export default function MainView() {
         </div>
 
         {/* 右栏：文件信息 + 快捷操作 + 字幕操作区 */}
-        <div className="w-80 border-l overflow-auto p-3 space-y-3 flex-shrink-0">
+        <div
+          className="w-80 border-l overflow-auto p-3 space-y-3 flex-shrink-0"
+          onMouseEnter={handlePanelMouseEnter}
+          onMouseLeave={handlePanelMouseLeave}
+        >
           {/* 视频信息卡（可展开/收起，hover 展开，5秒后自动收起） */}
           {probeResult && (
             <Card
               className={`relative transition-all duration-300 overflow-hidden ${videoInfoOverlay ? "z-[60]" : ""}`}
               onMouseEnter={handleCardMouseEnter}
-              onMouseLeave={handleCardMouseLeave}
             >
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-1 text-sm">
@@ -1358,7 +1370,6 @@ export default function MainView() {
             <Card
               className="relative transition-all duration-300 overflow-hidden"
               onMouseEnter={handleCardMouseEnter}
-              onMouseLeave={handleCardMouseLeave}
             >
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-1 text-sm">
@@ -1486,21 +1497,20 @@ export default function MainView() {
                     <SelectValue placeholder={t("translate.noEngineAvailable", "无可用引擎")} className="truncate min-w-0 text-muted-foreground" />
                   </SelectTrigger>
                   <SelectContent>
-                    {/* 传统引擎分组 */}
-                    {(providerConfigured["baidu"] || providerConfigured["bing"] || providerConfigured["google"]) && (
-                      <SelectGroup>
-                        <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.traditionalEngines", "传统翻译")}</SelectLabel>
-                        {providerConfigured["baidu"] && (
-                          <SelectItem value="baidu">{t("settings.baidu")}</SelectItem>
-                        )}
-                        {providerConfigured["bing"] && (
-                          <SelectItem value="bing">Bing</SelectItem>
-                        )}
-                        {providerConfigured["google"] && (
-                          <SelectItem value="google">Google</SelectItem>
-                        )}
-                      </SelectGroup>
-                    )}
+                    {/* 传统引擎分组：从 SERVICES 动态渲染已配置的传统翻译引擎 */}
+                    {(() => {
+                      const traditionalServices = SERVICES.filter((s) => s.category === "traditional");
+                      const configuredTraditional = traditionalServices.filter((s) => providerConfigured[s.id]);
+                      if (configuredTraditional.length === 0) return null;
+                      return (
+                        <SelectGroup>
+                          <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.traditionalEngines", "传统翻译")}</SelectLabel>
+                          {configuredTraditional.map((s) => (
+                            <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                          ))}
+                        </SelectGroup>
+                      );
+                    })()}
                     {/* AI 模型：按服务商分组 */}
                     {(() => {
                       const groups = new Map<string, { serviceName: string; models: typeof aiServiceModels }>();

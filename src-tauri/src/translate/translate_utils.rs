@@ -203,6 +203,12 @@ pub(crate) fn is_partial_translation(orig: &str, trans: &str) -> bool {
     // 去掉 name 标签（保留中文）、ASS 标签、占位符标签
     let cleaned = strip_name_tags_inline(trans);
     let cleaned = strip_format_tags(&cleaned);
+    // 检测混合行中的未翻译音效标记（如 "[ Crash ] 泰特斯: 哦，该死！"）
+    // 原文含 [...] 音效标记，译文也含 [...] 但内容仍为英文（无 CJK）
+    // 这种情况说明 AI 翻译了对白但跳过了音效标记
+    if has_untranslated_sound_effect_in_mixed_line(orig, trans) {
+        return true;
+    }
     // 去掉音效标记 [...] 中的内容
     let cleaned = regex::Regex::new(r"\[[^\]]*\]")
         .unwrap()
@@ -229,6 +235,82 @@ pub(crate) fn is_partial_translation(orig: &str, trans: &str) -> bool {
     }
     // 全大写 → 缩写或感叹，跳过
     // 首字母大写 → 可能是专有名词，跳过
+    false
+}
+
+/// 检测混合行（音效标记 + 对白）中的音效标记问题
+/// 检测以下问题：
+/// 1. 未翻译：译文 [...] 内容与原文相同（仍为英文）
+/// 2. 损坏：译文 [...] 内容为纯英文但与原文不同（如 [SSEARCH] 代替 [ Sighs ]）
+/// 3. 空括号：译文有 [] 但原文括号内有内容
+/// 4. 丢失：原文有 [...] 但译文完全没有方括号
+fn has_untranslated_sound_effect_in_mixed_line(orig: &str, trans: &str) -> bool {
+    // 原文不能是纯音效标记（纯音效标记由 is_partial_sound_effect 处理）
+    if looks_like_sound_effect(orig) {
+        return false;
+    }
+    // 原文必须含 [...] 音效标记
+    let re_bracket = regex::Regex::new(r"\[([^\]]*)\]").unwrap();
+    let orig_brackets: Vec<String> = re_bracket
+        .captures_iter(orig)
+        .map(|c| c[1].trim().to_string())
+        .collect();
+    if orig_brackets.is_empty() {
+        return false;
+    }
+    // 原文括号内必须有英文单词（≥3 字母字符）或 CJK（音效标记）
+    let has_content_in_brackets = orig_brackets
+        .iter()
+        .any(|b| !b.is_empty() && (extract_english_tokens(b, 3).iter().any(|t| !t.is_empty()) || has_cjk(b)));
+    if !has_content_in_brackets {
+        return false;
+    }
+    // 译文清理：去掉 name 标签和格式标签
+    let trans_cleaned = strip_name_tags_inline(trans);
+    let trans_cleaned = strip_format_tags(&trans_cleaned);
+    let trans_brackets: Vec<String> = re_bracket
+        .captures_iter(&trans_cleaned)
+        .map(|c| c[1].trim().to_string())
+        .collect();
+
+    // 问题 4：原文有 [...] 但译文完全没有方括号（音效被丢弃）
+    // 译文必须含 CJK（说明模型确实翻译了对白部分，只是丢了音效）
+    if trans_brackets.is_empty() {
+        if has_cjk(&trans_cleaned) {
+            return true;
+        }
+        return false;
+    }
+
+    // 检查译文的每个括号内容
+    for tb in &trans_brackets {
+        // 问题 3：空括号（原文括号有内容，译文括号为空）
+        if tb.is_empty() {
+            return true;
+        }
+        // 跳过含 CJK 的括号（已翻译）
+        if has_cjk(tb) {
+            continue;
+        }
+        // 译文的括号内容与原文某个括号内容相同（问题 1：未翻译）
+        if orig_brackets.iter().any(|ob| ob.eq_ignore_ascii_case(tb)) {
+            // 但跳过全大写缩写（如 [CEO], [MPS]）
+            let tokens = extract_english_tokens(tb, 3);
+            let has_lowercase = tokens.iter().any(|t| {
+                t.chars().filter(|c| c.is_ascii_alphabetic()).any(|c| c.is_ascii_lowercase())
+            });
+            if has_lowercase {
+                return true;
+            }
+            continue;
+        }
+        // 译文的括号内容与原文任何括号都不匹配（问题 2：损坏）
+        // 且括号内容含英文单词（不是纯符号）
+        let tokens = extract_english_tokens(tb, 3);
+        if !tokens.is_empty() {
+            return true;
+        }
+    }
     false
 }
 
@@ -313,6 +395,16 @@ pub fn cleanup_cjk_spaces(s: &str) -> String {
         }
     }
     result
+}
+
+/// 统一音效标记的括号格式：将中文全角括号【】转为半角方括号 []
+/// 部分翻译引擎（如小牛翻译）会把 [ Error dings ] 翻译成 【错误叮当声】，
+/// 导致音效标记格式不一致，影响后续的音效检测和导出逻辑。
+/// 只替换包裹音效内容的 【...】 → [...]，不影响其他用途的【】
+pub fn normalize_sound_effect_brackets(s: &str) -> String {
+    // 简单替换：【 → [，】 → ]
+    // 音效标记的【】只出现在译文中，且整段被【】包裹，直接替换即可
+    s.replace('【', "[").replace('】', "]")
 }
 
 /// 检测多行原文中非音效行是否在译文中丢失
@@ -797,6 +889,20 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_sound_effect_brackets() {
+        // 全角【】→ 半角[]
+        assert_eq!(normalize_sound_effect_brackets("【错误叮当声】"), "[错误叮当声]");
+        assert_eq!(normalize_sound_effect_brackets("【电噼啪声】哦!"), "[电噼啪声]哦!");
+        // 混合场景：音效标记 + 正文
+        assert_eq!(normalize_sound_effect_brackets("【错误的事情】啊!啊!"), "[错误的事情]啊!啊!");
+        // 无【】的文本不变
+        assert_eq!(normalize_sound_effect_brackets("[错误叮当声]"), "[错误叮当声]");
+        assert_eq!(normalize_sound_effect_brackets("你好世界"), "你好世界");
+        // 多个【】
+        assert_eq!(normalize_sound_effect_brackets("【音效1】【音效2】"), "[音效1][音效2]");
+    }
+
+    #[test]
     fn test_cleanup_cjk_spaces_mixed() {
         // 混合场景
         assert_eq!(cleanup_cjk_spaces("我只喝了几杯 酒而已，莫蒂！"), "我只喝了几杯酒而已，莫蒂！");
@@ -830,6 +936,75 @@ mod tests {
         assert!(!is_partial_sound_effect("[ Sweet Marie screams ]", "[<name=Sweet Marie>甜玛丽</name>尖叫]"));
         // <name>EnglishName</name>ChineseName 格式也不应误判
         assert!(!is_partial_sound_effect("[ Sweet Marie screams ]", "[<name>Sweet Marie</name>甜玛丽尖叫]"));
+    }
+
+    #[test]
+    fn test_is_partial_translation_untranslated_sound_effect() {
+        // 混合行：音效标记未翻译，对白已翻译
+        // "[ Crash ] Titus: Oh, shit!" → "[ Crash ] 泰特斯: 哦，该死！"
+        assert!(is_partial_translation(
+            "[ Crash ] Titus: Oh, shit!",
+            "[ Crash ] 泰特斯: 哦，该死！"
+        ));
+        // "[ Tires screech ] God damn it!" → "[ Tires screech ] 该死！"
+        assert!(is_partial_translation(
+            "[ Tires screech ] God damn it!",
+            "[ Tires screech ] 该死！"
+        ));
+        // 正确翻译：音效标记已翻译
+        assert!(!is_partial_translation(
+            "[ Crash ] Titus: Oh, shit!",
+            "[碰撞声] 泰特斯: 哦，该死！"
+        ));
+        // 纯音效标记行（由 is_partial_sound_effect 处理，不在此检测）
+        assert!(!is_partial_translation(
+            "[ All grunting ]",
+            "[ 所有人发出 grunt 声 ]"
+        ));
+        // 全大写缩写不应标记
+        assert!(!is_partial_translation(
+            "[ CEO ] The boss is here.",
+            "[ CEO ] 老板来了。"
+        ));
+        // 无音效标记的行不受影响
+        assert!(!is_partial_translation(
+            "Hello world this is a test",
+            "你好世界这是一个测试"
+        ));
+        // 译文中括号内容已翻译（含 CJK）不应标记
+        assert!(!is_partial_translation(
+            "[ Mancors shrieking ] Aww, man!",
+            "[曼科斯尖叫声] 哦，老天！"
+        ));
+        // 损坏的音效标记：[SSEARCH] 代替 [ Sighs ]
+        assert!(is_partial_translation(
+            "[ Sighs ] No.",
+            "[SSEARCH]否。"
+        ));
+        // 空括号：原文有 [ Sighs ]，译文有 []
+        assert!(is_partial_translation(
+            "Ahh. [ Sighs ]",
+            "啊。[]"
+        ));
+        // 丢失的音效标记：原文有 [...] 但译文无方括号
+        assert!(is_partial_translation(
+            "Evil boy. Wicked boy. [ Cellphone ringing ]",
+            "邪恶的男孩。坏小子。"
+        ));
+        assert!(is_partial_translation(
+            "[ Intercom static ] Reese is my friend!",
+            "里斯是我的好朋友！"
+        ));
+        // 译文无 CJK 时不检测丢失（可能整行未翻译，由其他逻辑处理）
+        assert!(!is_partial_translation(
+            "[ Cellphone ringing ] Hello world",
+            "[ Cellphone ringing ] Hello world"
+        ));
+        // 正确翻译的音效不应标记
+        assert!(!is_partial_translation(
+            "[ Cellphone ringing ] Hello world",
+            "[手机铃声] 你好世界"
+        ));
     }
 }
 
