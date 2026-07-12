@@ -1092,17 +1092,20 @@ function BatchEngineSelect({ config, update }: {
 
   // 加载已配置的引擎和 AI 模型
   useEffect(() => {
-    const traditionalProviders = ["baidu", "bing", "google"];
+    const traditionalProviders = SERVICES.filter((s) => s.category === "traditional").map((s) => s.id);
     const aiServices = SERVICES.filter((s) => s.category === "ai");
 
     const traditionalPromise = Promise.all(traditionalProviders.map(async (p) => {
       try {
+        const service = SERVICES.find((s) => s.id === p);
         const [appId, secretKeyring, secretConfig] = await Promise.all([
           api.getConfig(`translate_${p}_app_id`).catch(() => null),
           api.getCredential(p, "secret", `批量翻译检查配置状态(${p})`).catch(() => null),
           api.getConfig(`translate_${p}_secret`).catch(() => null),
         ]);
-        const configured = !!(appId && (secretKeyring || secretConfig));
+        const hasSecret = !!(secretKeyring || secretConfig);
+        // 双字段引擎：需要 app_id + secret；单密钥引擎：只需要 secret
+        const configured = service?.appIdLabel ? !!(appId && hasSecret) : hasSecret;
         return [p, configured] as [string, boolean];
       } catch {
         return [p, false] as [string, boolean];
@@ -1190,21 +1193,20 @@ function BatchEngineSelect({ config, update }: {
           <SelectValue placeholder="无可用引擎" />
         </SelectTrigger>
         <SelectContent>
-          {/* 传统引擎分组 */}
-          {(providerConfigured["baidu"] || providerConfigured["bing"] || providerConfigured["google"]) && (
-            <SelectGroup>
-              <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">传统翻译</SelectLabel>
-              {providerConfigured["baidu"] && (
-                <SelectItem value="baidu">百度翻译</SelectItem>
-              )}
-              {providerConfigured["bing"] && (
-                <SelectItem value="bing">Bing</SelectItem>
-              )}
-              {providerConfigured["google"] && (
-                <SelectItem value="google">Google</SelectItem>
-              )}
-            </SelectGroup>
-          )}
+          {/* 传统引擎分组：从 SERVICES 动态渲染已配置的传统翻译引擎 */}
+          {(() => {
+            const traditionalServices = SERVICES.filter((s) => s.category === "traditional");
+            const configuredTraditional = traditionalServices.filter((s) => providerConfigured[s.id]);
+            if (configuredTraditional.length === 0) return null;
+            return (
+              <SelectGroup>
+                <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">传统翻译</SelectLabel>
+                {configuredTraditional.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                ))}
+              </SelectGroup>
+            );
+          })()}
           {/* AI 模型：按服务商分组 */}
           {(() => {
             const groups = new Map<string, { serviceName: string; models: typeof aiServiceModels }>();

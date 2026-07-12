@@ -148,6 +148,12 @@ impl AiService {
         }
     }
 
+    /// 是否支持 stop 参数（部分 OpenAI 兼容接口不支持或严格校验该参数）
+    pub fn supports_stop(&self) -> bool {
+        // TokenHub（混元）和 Gemini 对 stop 参数报错："request parameter stop is invalid or missing"
+        !matches!(self, AiService::Hunyuan | AiService::Gemini)
+    }
+
     /// stop 序列：智谱 GLM / Groq 限制最多 4 个，其余用 6 个
     pub fn stop_sequences(&self) -> Vec<&'static str> {
         match self {
@@ -242,6 +248,8 @@ impl ThinkingStyle {
             // Groq 用 reasoning_effort/reasoning_format 控制，不支持 enable_thinking
             // 通过 GroqReasoning 参数在 apply 中处理
             AiService::Groq => ThinkingStyle::GroqReasoning,
+            // Gemini 不支持 enable_thinking / thinking.type 参数，发送会导致 400 错误
+            AiService::Gemini => ThinkingStyle::None,
             AiService::Zhipu => ThinkingStyle::ThinkingTypeDisabled,
             // GLM 模型在所有服务商上都用 thinking.type: "disabled"
             // 实测 siliconflow 上 enable_thinking:false 对 GLM-5.2 间歇性失效，
@@ -372,6 +380,7 @@ pub(crate) const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
                  - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
                  - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
                  - The output array must contain exactly the same number of objects as the input lines.\n\
+                 - Text in [square brackets] represents sound effects or action descriptions. Translate the text inside brackets to {tgt} as well, keeping the brackets. Example: [Crash] → [碰撞声], [engine revving] → [引擎轰鸣].\n\
                  - Do not add explanations, notes, or any extra text outside the JSON.\n\n\
                  Example:\n\
                  Input:\n\
@@ -393,6 +402,7 @@ pub(crate) const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
                  - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
                  - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
                  - The output array must contain exactly the same number of objects as the input lines.\n\
+                 - Text in [square brackets] represents sound effects or action descriptions. Translate the text inside brackets to {tgt} as well, keeping the brackets. Example: [Crash] → [碰撞声], [engine revving] → [引擎轰鸣].\n\
                  - Do not add any extra text outside the JSON.\n\n\
                  Example:\n\
                  Input:\n\
@@ -414,6 +424,7 @@ pub(crate) const BUILTIN_TEMPLATES: &[(&str, PromptTemplate)] = &[
                  - Example: '<x0>Hello</x0> world' -> '<x0>你好</x0> 世界'\n\
                  - Each input line is an independent subtitle entry. Do NOT merge, split, or skip any lines, even if a sentence appears to span multiple lines.\n\
                  - The output array must contain exactly the same number of objects as the input lines.\n\
+                 - Text in [square brackets] represents sound effects or action descriptions. Translate the text inside brackets to {tgt} as well, keeping the brackets. Example: [Crash] → [碰撞声], [engine revving] → [引擎轰鸣].\n\
                  - Do not add any extra text outside the JSON.\n\n\
                  Example:\n\
                  Input:\n\
@@ -991,7 +1002,7 @@ impl OpenAiProvider {
 
         let status = resp.status();
 
-        // 限流：区分 TPM（可重试）和 TPD（不可重试）
+        // 限流/额度：区分 TPD、配额耗尽 和 RPM/TPM 限流
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             let error_body = resp.text().await.unwrap_or_default();
             let body_lower = error_body.to_lowercase();
@@ -1005,6 +1016,23 @@ impl OpenAiProvider {
                     detail: error_body.chars().take(200).collect(),
                 });
             }
+            // Gemini 等厂商：免费额度耗尽也返回 429，提示内容与 RPM/TPM 限流不同
+            if body_lower.contains("exceeded your current quota") ||
+               body_lower.contains("check your plan and billing") ||
+               body_lower.contains("quota exceeded") {
+                tracing::error!(
+                    "翻译额度已耗尽（429 quota exceeded），不重试, body={}",
+                    error_body.chars().take(300).collect::<String>()
+                );
+                return Err(AppError::TranslateInsufficientBalance {
+                    provider: self.service_name.clone(),
+                    detail: "免费额度已用尽或需要升级付费计划，请前往控制台查看".to_string(),
+                });
+            }
+            tracing::warn!(
+                "翻译被限流（429），body={}",
+                error_body.chars().take(300).collect::<String>()
+            );
             return Err(AppError::TranslateRateLimit {
                 provider: self.service_name.clone(),
                 retry_after: Some(60),
@@ -1013,6 +1041,11 @@ impl OpenAiProvider {
 
         if !status.is_success() {
             let error_body = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                "翻译请求失败: status={} body={}",
+                status,
+                error_body.chars().take(300).collect::<String>()
+            );
             // 余额不足：优先于认证失败判断（部分服务商余额不足时返回 403 而非 402）
             if let Some(detail) = check_insufficient_balance(status, &error_body) {
                 return Err(AppError::TranslateInsufficientBalance {
@@ -1038,6 +1071,15 @@ impl OpenAiProvider {
                 }
                 return Err(AppError::TranslateAuthFailed {
                     provider: self.service_name.clone(),
+                });
+            }
+            // 404 + 模型不可用：常见于 Gemini 模型对当前账号/新用户已下线
+            if status == reqwest::StatusCode::NOT_FOUND &&
+                self.service_name.eq_ignore_ascii_case("gemini") &&
+                (error_body.to_lowercase().contains("not available") || error_body.to_lowercase().contains("no longer available")) {
+                return Err(AppError::TranslateModelUnavailable {
+                    provider: self.service_name.clone(),
+                    model: self.model.clone(),
                 });
             }
             crate::log_api_debug(
@@ -1459,8 +1501,10 @@ impl TranslateProviderTrait for OpenAiProvider {
             ],
             "temperature": 0,
             "stream": true,
-            "stop": stop_sequences,
         });
+        if self.ai_service.supports_stop() {
+            request_body["stop"] = serde_json::json!(stop_sequences);
+        }
         // response_format: json_object 并非所有 OpenAI 兼容 API 都支持
         // 已知支持：OpenAI、DeepSeek、通义千问
         // 已知不支持/不确定：LM Studio、Ollama、其他本地推理引擎
@@ -1534,7 +1578,7 @@ impl TranslateProviderTrait for OpenAiProvider {
         })?;
         let status = resp.status();
 
-        // 429 限流：区分 TPM（可重试）和 TPD（不可重试，需等次日）
+        // 429 限流/额度：区分 TPD、配额耗尽 和 RPM/TPM 限流
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
             let error_body = resp.text().await.unwrap_or_default();
             let body_lower = error_body.to_lowercase();
@@ -1547,6 +1591,19 @@ impl TranslateProviderTrait for OpenAiProvider {
                 return Err(AppError::TranslateDailyLimitReached {
                     provider: self.service_name.clone(),
                     detail: error_body.chars().take(200).collect(),
+                });
+            }
+            // Gemini 等厂商：免费额度耗尽也返回 429
+            if body_lower.contains("exceeded your current quota") ||
+               body_lower.contains("check your plan and billing") ||
+               body_lower.contains("quota exceeded") {
+                tracing::error!(
+                    "人名预扫描额度已耗尽（429 quota exceeded），不重试, body={}",
+                    error_body.chars().take(300).collect::<String>()
+                );
+                return Err(AppError::TranslateInsufficientBalance {
+                    provider: self.service_name.clone(),
+                    detail: "免费额度已用尽或需要升级付费计划，请前往控制台查看".to_string(),
                 });
             }
             // TPM/RPM 限制：等待 60 秒后可重试
@@ -1578,6 +1635,13 @@ impl TranslateProviderTrait for OpenAiProvider {
                     "\n[HTTP {}] {}\n\n========== 人名预扫描结束（错误）==========\n",
                     status, error_body,
                 ));
+            }
+            // 余额不足 / 接口未激活：转为专用错误，让人名预扫描外层中止并提示用户
+            if let Some(detail) = crate::translate::check_insufficient_balance(status, &error_body) {
+                return Err(AppError::TranslateInsufficientBalance {
+                    provider: self.service_name.clone(),
+                    detail,
+                });
             }
             return Err(AppError::TranslateNetworkError {
                 provider: self.service_name.clone(),
@@ -1818,6 +1882,7 @@ pub(crate) fn get_model_batch_sizes(model: &str) -> (usize, Vec<usize>) {
 /// 顺序：根据模型配置动态决定，默认 30 -> 10 -> 5 -> 3 -> 1
 /// 每一级只重试仍然失败的条目，已成功的不重试
 /// 返回 Vec<String>，失败的条目用空字符串占位（长度始终等于输入）
+/// 遇到致命错误（余额不足/接口未授权/每日限额/认证失败）时立即返回 Err，不再降级重试
 pub(crate) async fn translate_batch_with_fallback(
     provider: &dyn TranslateProviderTrait,
     texts: &[String],
@@ -1827,7 +1892,7 @@ pub(crate) async fn translate_batch_with_fallback(
     cancel_counter: &std::sync::Arc<std::sync::atomic::AtomicU64>,
     my_gen: u64,
     rate_limit: RateLimitPolicy,
-) -> Vec<String> {
+) -> Result<Vec<String>, AppError> {
     let (_, batch_sizes) = get_model_batch_sizes(model);
     let min_interval = rate_limit.min_interval();
 
@@ -1876,6 +1941,13 @@ pub(crate) async fn translate_batch_with_fallback(
                     // 翻译结果就是"正确答案"。后续仍有 failed 判定（空译文/无 CJK/音效
                     // 不一致等）兜底，不会放过真正的翻译失败。
                     let skip_shift_check = batch_size == 1;
+                    // 传统翻译引擎（Bing/Google/DeepL/百度/腾讯等）是确定性的，
+                    // 每条独立翻译，不会合并/拆分条目。错位检测（部分翻译/音效半翻译/
+                    // 长度比值/多行拆分）是为 AI 模型设计的，对传统引擎会产生误判：
+                    // - is_partial_translation：传统引擎保留人名/品牌名英文（如 Morty、Mup）被误判
+                    // - 长度比值：中英翻译压缩比正常波动被误判为错位
+                    // 传统引擎只需检测空译文和对齐（数量匹配），跳过所有错位检测。
+                    let is_traditional_provider = model.is_empty();
                     let mut shift_detected = false;
                     for (&idx, t) in chunk_indices.iter().zip(translations.iter()) {
                         if t.is_empty() {
@@ -1884,6 +1956,11 @@ pub(crate) async fn translate_batch_with_fallback(
                         let orig_text = &texts[idx];
                         let orig_len = orig_text.chars().count().max(1);
                         let trans_len = t.chars().count();
+                        // 传统引擎跳过所有错位检测，直接接受结果
+                        if is_traditional_provider {
+                            results[idx] = t.clone();
+                            continue;
+                        }
                         // 模型返回原文检测：译文与原文相同（去掉标签后）时，
                         // 模型可能直接原样返回了输入而没有翻译。
                         // 例外：音效标记/音乐符号/非英语内容保持原样是正确行为。
@@ -2033,6 +2110,21 @@ pub(crate) async fn translate_batch_with_fallback(
                     }
                 }
                 Err(e) => {
+                    // 致命错误（余额不足/接口未授权/每日限额/认证失败）：立即返回，不再降级重试
+                    // 这些错误重试再多次也不会成功，只会浪费时间和请求配额
+                    if matches!(
+                        e,
+                        AppError::TranslateInsufficientBalance { .. }
+                            | AppError::TranslateDailyLimitReached { .. }
+                            | AppError::TranslateAuthFailed { .. }
+                    ) {
+                        tracing::error!(
+                            "批次降级：大小 {} 遇到致命错误（{}），立即停止降级",
+                            batch_size,
+                            e
+                        );
+                        return Err(e);
+                    }
                     // 整批失败，全部留到下一级
                     tracing::warn!(
                         "批次降级：大小 {} 翻译失败（{}），继续降级",
@@ -2061,7 +2153,7 @@ pub(crate) async fn translate_batch_with_fallback(
         }
     }
 
-    results
+    Ok(results)
 }
 
 
@@ -2318,6 +2410,28 @@ fn is_chinese_char(c: char) -> bool {
 /// 判断字符串是否纯 ASCII（无中文字符）
 fn is_pure_ascii(s: &str) -> bool {
     s.is_ascii()
+}
+
+/// 检测译名是否为"拉丁词+中文"的混合翻译（如 `nipple酒`、`worming out虫`）
+/// 这类译名是模型部分翻译的产物，质量低且会导致不一致。
+/// 规则：
+/// - 译名同时含 CJK 字符和小写拉丁词（≥3 连续小写字母）
+/// - 且不是品牌名格式（`EnglishName（中文翻译）`，括号分隔）
+/// - 全大写缩写（如 CEO、DNA）不视为混合翻译
+/// 返回 true 表示是坏的混合翻译，应过滤
+fn is_bad_mixed_latin_chinese(s: &str) -> bool {
+    let has_cjk = s.chars().any(is_chinese_char);
+    if !has_cjk {
+        return false;
+    }
+    // 品牌名格式：含括号分隔（如 `Nipslip Vodka（尼普斯利普伏特加）`），不算混合
+    if s.contains('(') || s.contains('（') || s.contains('[') || s.contains('【') {
+        return false;
+    }
+    // 检测是否含小写拉丁词（≥3 连续小写字母）
+    // 全大写缩写如 CEO、DNA、A4 不在此列
+    let re = regex::Regex::new(r"[a-z]{3,}").unwrap();
+    re.is_match(s)
 }
 
 /// 从括号内提取中文翻译
@@ -2577,6 +2691,10 @@ pub fn parse_name_extraction_response(content: &str) -> Vec<ExtractedName> {
                             tracing::debug!("人名过滤：'{}' 译名 '{}' 无中文，跳过", en, zh);
                             continue;
                         }
+                        if is_bad_mixed_latin_chinese(zh) {
+                            tracing::debug!("人名过滤：'{}' 译名 '{}' 为拉丁词+中文混合，跳过", en, zh);
+                            continue;
+                        }
                         // 按 `/` 拆分候选译名
                         let zh_candidates: Vec<String> = zh
                             .split('/')
@@ -2622,6 +2740,10 @@ pub fn parse_name_extraction_response(content: &str) -> Vec<ExtractedName> {
         if !en.is_empty() && !zh.is_empty() && seen.insert(en.to_string()) {
             if !is_likely_proper_noun(en) { continue; }
             if zh.eq_ignore_ascii_case(en) || is_pure_ascii(zh) { continue; }
+            if is_bad_mixed_latin_chinese(zh) {
+                tracing::debug!("人名过滤：'{}' 译名 '{}' 为拉丁词+中文混合，跳过", en, zh);
+                continue;
+            }
             let zh_candidates: Vec<String> = zh
                 .split('/')
                 .map(|s| s.trim().to_string())
@@ -2783,6 +2905,10 @@ pub fn parse_name_extraction_response(content: &str) -> Vec<ExtractedName> {
             // 跳过这个条目，避免把英文当译名注入翻译批次
             if chinese.eq_ignore_ascii_case(en) || is_pure_ascii(&chinese) {
                 tracing::debug!("人名过滤：'{}' 译名 '{}' 无中文，跳过", en, chinese);
+                continue;
+            }
+            if is_bad_mixed_latin_chinese(&chinese) {
+                tracing::debug!("人名过滤：'{}' 译名 '{}' 为拉丁词+中文混合，跳过", en, chinese);
                 continue;
             }
             let alternatives = zh_candidates.into_iter().skip(1).collect();
@@ -3194,8 +3320,13 @@ pub async fn extract_names_from_subtitles(
                     tracing::warn!("人名预扫描段 {} 失败: {}", idx + 1, e);
                     let is_timeout = matches!(e, AppError::TranslateTimeout { .. });
                     let is_daily_limit = matches!(e, AppError::TranslateDailyLimitReached { .. });
-                    // 超时或每日限额：标记为中止条件，让外层中止剩余任务
-                    let abort_msg = if is_timeout || is_daily_limit { Some(e.to_string()) } else { None };
+                    let is_balance = matches!(e, AppError::TranslateInsufficientBalance { .. });
+                    // 超时、每日限额或余额/授权问题：标记为中止条件，让外层中止剩余任务
+                    let abort_msg = if is_timeout || is_daily_limit || is_balance {
+                        Some(e.to_string())
+                    } else {
+                        None
+                    };
                     SegmentNameResult { segment_idx: idx, names: Vec::new(), timeout_error: abort_msg }
                 }
             };
@@ -3245,9 +3376,28 @@ pub async fn extract_names_from_subtitles(
         }
     }
 
-    // 超时或每日限额错误：返回对应错误，让前端弹 toast
+    // 超时、每日限额或余额/授权错误：返回对应错误，让前端弹 toast
     if let Some(msg) = timeout_error {
-        // 区分每日限额和超时
+        // 余额不足 / 接口未授权
+        if msg.contains("insufficient balance") {
+            tracing::error!("人名预扫描因余额/授权问题中止: {}", msg);
+            // 从字符串里拆出 provider 和 detail：
+            // "Translation insufficient balance for {provider}: {detail}"
+            let provider = msg
+                .strip_prefix("Translation insufficient balance for ")
+                .and_then(|s| s.split_once(": "))
+                .map(|(p, _)| p.to_string())
+                .unwrap_or_else(|| provider.service_name().to_string());
+            let detail = msg
+                .split_once(": ")
+                .map(|(_, d)| d.to_string())
+                .unwrap_or_else(|| msg.clone());
+            return Err(AppError::TranslateInsufficientBalance {
+                provider,
+                detail,
+            });
+        }
+        // 每日限额
         if msg.contains("daily token limit") {
             tracing::error!("人名预扫描因每日限额中止: {}", msg);
             return Err(AppError::TranslateDailyLimitReached {
@@ -3255,6 +3405,7 @@ pub async fn extract_names_from_subtitles(
                 detail: msg,
             });
         }
+        // 超时
         tracing::error!("人名预扫描因超时中止: {}", msg);
         return Err(AppError::TranslateTimeout {
             provider: provider.service_name().to_string(),

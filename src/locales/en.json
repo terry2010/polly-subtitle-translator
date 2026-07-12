@@ -302,6 +302,8 @@
     "officialApiLoginNote": "(Login authentication is not yet implemented in this version. Clicking redirects to Baidu. Will be replaced with official auth in future versions.)",
     "qpsLabel": "QPS limit",
     "qpsDesc": "Max concurrent requests per second for this service. Preset value is a reference, adjust to your plan.",
+    "geminiRateLimitNote": "Google's rate limits (RPM/TPM/RPD) vary by model and change over time. We recommend checking your current limits in Google AI Studio before setting an appropriate QPS.",
+    "geminiRateLimitLink": "View current rate limits",
     "resetBaseUrl": "Reset to default",
     "presetBaseUrl": "Preset",
     "comingSoonTag": "Coming soon",
@@ -339,7 +341,8 @@
     "appIdDesc": "App ID / API Key for the translation service",
     "secretKeyDesc": "API secret key, encrypted in system keychain",
     "edit": "Edit",
-    "regionDesc": "Azure region, e.g. global or china",
+    "regionDesc": "Azure resource region, e.g. eastasia, global, japaneast. Enter the location chosen when creating the resource",
+    "regionRequired": "Please enter the region (Azure resource location, e.g. eastasia)",
     "saved": "Saved",
     "searchDesc": "Configure OpenSubtitles API key to enable online subtitle search",
     "apiKeyDesc": "Register at opensubtitles.com to get an API key",
@@ -380,6 +383,7 @@
     "searchServicePlaceholder": "Search service name...",
     "maybeFree": "May be free",
     "maybeFreeTooltip": "May be free, check official pricing",
+    "paid": "Paid",
     "quickAccess": "Quick Access",
     "traditionalTranslation": "Traditional Translation",
     "aiModels": "AI Models",
@@ -591,7 +595,8 @@
       "networkError": "Translation network error ({{provider}}): {{detail}}",
       "timeout": "{{provider}} translation timed out (no response in {{timeoutSecs}}s), task stopped. Check network or switch model",
       "authFailed": "{{provider}} translation auth failed",
-      "insufficientBalance": "{{provider}} account balance insufficient, please recharge ({{detail}})",
+      "modelUnavailable": "{{provider}} model {{model}} is not available for the current account, please select another model from the dropdown",
+      "insufficientBalance": "{{provider}} account quota or endpoint authorization issue, please check console to recharge/authorize ({{detail}})",
       "dailyLimitReached": "{{provider}} daily token limit reached, please try tomorrow or switch provider ({{detail}})",
       "credentialsNotConfigured": "Translation API credentials not configured, please configure in settings first",
       "notConfigured": "No translation API configured",
@@ -602,6 +607,10 @@
       "responseParseFailed": "Translation response parse failed: {{detail}}",
       "retriesExhausted": "Translation retries exhausted",
       "unknownProvider": "Unknown translation engine: {{provider}}"
+    },
+    "openai": {
+      "modelsFetchFailed": "Failed to fetch model list: {{detail}}",
+      "noModels": "Connected successfully, but no models found. Please verify the API URL or ensure models are loaded on the server"
     },
     "player": {
       "libmpvNotDownloaded": "Player component not downloaded",

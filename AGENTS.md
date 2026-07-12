@@ -167,4 +167,3 @@ def cleanup_cjk_spaces(s):
 - **问题**：`[ All grunting ]` → `[ 所有人发出 grunt 声 ]`，音效标记内的英文单词未翻译
 - **修复**：`is_partial_sound_effect()` 函数检测音效标记内的半翻译，触发降级重试
 - **文件**：`translate_utils.rs`，在 `translate_ai.rs` 批次处理中调用
-
