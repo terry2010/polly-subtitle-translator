@@ -111,6 +111,9 @@ export const api = {
   probeVideo: (videoPath: string, ffmpegPath?: string) =>
     callIpc<ProbeResult>("probe_video", { videoPath, ffmpegPath: ffmpegPath ?? null }),
 
+  isDirectory: (path: string) =>
+    callIpc<boolean>("is_directory", { path }),
+
   extractSubtitle: (videoPath: string, streamIndex: number, outputPath: string, ffmpegPath?: string, durationSec?: number) =>
     callIpc<void>("extract_subtitle", { videoPath, streamIndex, outputPath, ffmpegPath: ffmpegPath ?? null, durationSec: durationSec ?? null }),
 

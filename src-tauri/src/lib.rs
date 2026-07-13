@@ -678,10 +678,46 @@ pub fn run() {
                     }
                     tauri::DragDropEvent::Drop { paths, .. } => {
                         tracing::info!("DragDropEvent::Drop, paths={:?}", paths);
-                        let paths: Vec<String> = paths.iter()
-                            .filter_map(|p| p.to_str().map(|s| s.to_string()))
-                            .collect();
-                        let _ = window.emit("app://file-drop", paths);
+                        // 拖入的是目录时，扫描其中的视频/字幕文件（避免文件夹名带 .mkv 等扩展名被误判为视频）
+                        const VIDEO_EXTS: &[&str] = &["mkv", "mp4", "avi", "mov", "wmv", "flv", "ts", "m2ts"];
+                        const SUB_EXTS: &[&str] = &["srt", "ass", "ssa", "vtt", "sub"];
+                        let mut resolved: Vec<String> = Vec::new();
+                        for p in paths {
+                            if p.is_dir() {
+                                tracing::info!("拖入的是目录，扫描内部文件: {:?}", p);
+                                if let Ok(entries) = std::fs::read_dir(p) {
+                                    let mut found_video: Vec<String> = Vec::new();
+                                    let mut found_sub: Vec<String> = Vec::new();
+                                    for entry in entries.flatten() {
+                                        let fp = entry.path();
+                                        if fp.is_file() {
+                                            if let Some(ext) = fp.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()) {
+                                                let fp_str = fp.to_string_lossy().to_string();
+                                                if VIDEO_EXTS.contains(&ext.as_str()) {
+                                                    found_video.push(fp_str);
+                                                } else if SUB_EXTS.contains(&ext.as_str()) {
+                                                    found_sub.push(fp_str);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // 优先视频，其次字幕
+                                    resolved.extend(found_video);
+                                    resolved.extend(found_sub);
+                                }
+                            } else if p.is_file() {
+                                if let Some(s) = p.to_str() {
+                                    resolved.push(s.to_string());
+                                }
+                            }
+                        }
+                        if resolved.is_empty() {
+                            // 没找到可识别的文件，回退到原始路径（保持原有行为）
+                            resolved = paths.iter()
+                                .filter_map(|p| p.to_str().map(|s| s.to_string()))
+                                .collect();
+                        }
+                        let _ = window.emit("app://file-drop", resolved);
                     }
                     tauri::DragDropEvent::Leave => {
                         tracing::info!("DragDropEvent::Leave");
@@ -813,6 +849,7 @@ pub fn run() {
             tracing::info!("AI-SubTrans 启动完成，数据目录: {:?}", app_data_dir);
 
             // 窗口初始位置：根据鼠标所在显示器居中计算（先定位不显示）
+            #[allow(unused_variables)]
             let initial_position: Option<(i32, i32, i32, i32)> = {
                 #[cfg(windows)]
                 {
@@ -851,6 +888,7 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 #[cfg(windows)]
                 {
+                    // Windows：根据鼠标所在显示器居中（覆盖 center: true 的主显示器居中）
                     if let Some((mon_left, mon_top, mon_w, mon_h)) = initial_position {
                         let scale = window.scale_factor().unwrap_or(1.0);
                         let win_w = 520.0 * scale;
@@ -863,26 +901,8 @@ pub fn run() {
                         });
                     }
                 }
-                #[cfg(not(windows))]
-                {
-                    // macOS/Linux：用 Tauri 跨平台 API 居中到主显示器
-                    if let Ok(monitors) = window.available_monitors() {
-                        if let Some(monitor) = monitors.first() {
-                            let pos = monitor.position();
-                            let size = monitor.size();
-                            let scale = window.scale_factor().unwrap_or(1.0);
-                            let win_w = 520.0 * scale;
-                            let win_h = 325.0 * scale;
-                            let x = pos.x as f64 + ((size.width as f64 - win_w) / 2.0).round();
-                            let y = pos.y as f64 + ((size.height as f64 - win_h) / 2.0).round();
-                            let _ = window.set_position(tauri::PhysicalPosition {
-                                x: x.max(0.0) as i32,
-                                y: y.max(0.0) as i32,
-                            });
-                        }
-                    }
-                }
-                // 启动时先显示窗口（不置顶），让用户看到白框加载状态
+                // macOS/Linux：依赖 tauri.conf.json 的 center: true，无需手动定位
+                // 先定位再显示，避免窗口在默认位置闪现后移动到中央的动画效果
                 let _ = window.show();
                 // 前端页面加载完成后再置顶，避免加载完成前抢占其他窗口焦点
                 let app_handle = app.handle().clone();

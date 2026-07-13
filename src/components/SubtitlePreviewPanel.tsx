@@ -1100,9 +1100,14 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                         {entry.translated}
                       </p>
                     )}
-                    {/* 翻译中占位 */}
-                    {previewMode === "bilingual" && !hasTranslation && (
-                      <p className="text-xs text-muted-foreground/50 line-clamp-1">{t("subtitle.pending", "(待翻译)")}</p>
+                    {/* 待翻译占位（点击进入人工编辑） */}
+                    {(previewMode === "bilingual" || previewMode === "translated") && !hasTranslation && (
+                      <p
+                        className="text-xs text-muted-foreground/50 line-clamp-1 cursor-text hover:bg-primary/10 rounded px-1 -mx-1 italic"
+                        onClick={(e) => { e.stopPropagation(); beginEdit(entry.index, entry.translated || ""); }}
+                      >
+                        {t("subtitle.pending", "(待翻译)")}
+                      </p>
                     )}
                   </div>
                 )}

@@ -205,6 +205,7 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         scan_existing_files,
         cancel_scan,
         add_files_to_queue,
+        is_directory,
     ])
 }
 
@@ -381,6 +382,13 @@ pub fn resolve_provider(
 
 // === SECTION: resolve_provider END ===
 
+/// is_directory：检查路径是否为目录（用于文件选择器选中文件夹名带视频扩展名的情况）
+#[tauri::command]
+pub async fn is_directory(path: String) -> Result<bool, ()> {
+    let p = std::path::Path::new(&path);
+    Ok(p.is_dir())
+}
+
 /// probe_video：探测视频文件信息
 #[tauri::command]
 pub async fn probe_video(
@@ -389,8 +397,33 @@ pub async fn probe_video(
     db: State<'_, Database>,
 ) -> Result<IpcResult<ffmpeg::ProbeResult>, ()> {
     let vpath = video_path.clone();
+    // 如果路径是目录（如文件夹名带 .mkv 扩展名被文件选择器选中），扫描内部视频文件
+    let resolved_path = {
+        let p = std::path::Path::new(&video_path);
+        if p.is_dir() {
+            tracing::info!("probe_video: 路径是目录，扫描内部视频文件: {:?}", p);
+            const VIDEO_EXTS: &[&str] = &["mkv", "mp4", "avi", "mov", "wmv", "flv", "ts", "m2ts"];
+            let mut found: Option<String> = None;
+            if let Ok(entries) = std::fs::read_dir(p) {
+                for entry in entries.flatten() {
+                    let fp = entry.path();
+                    if fp.is_file() {
+                        if let Some(ext) = fp.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()) {
+                            if VIDEO_EXTS.contains(&ext.as_str()) {
+                                found = Some(fp.to_string_lossy().to_string());
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            found.unwrap_or(video_path)
+        } else {
+            video_path
+        }
+    };
     let result = tauri::async_runtime::spawn_blocking(move || {
-        ffmpeg::probe_video(&video_path, ffmpeg_path.as_deref())
+        ffmpeg::probe_video(&resolved_path, ffmpeg_path.as_deref())
     }).await;
     match result {
         Ok(Ok(probe)) => {
