@@ -1082,6 +1082,28 @@ impl OpenAiProvider {
                     model: self.model.clone(),
                 });
             }
+            // 503 Service Unavailable：模型高负载（Gemini 常见），按限流处理，等待更长时间
+            if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+                tracing::warn!(
+                    "翻译服务暂时不可用（503），按限流处理: service={} model={} body={}",
+                    self.service_name, self.model,
+                    error_body.chars().take(200).collect::<String>()
+                );
+                crate::log_api_debug(
+                    &self.service_name, &self.model, "auto", "auto",
+                    &request_body.to_string(), &error_body, status.as_u16(),
+                );
+                if let Some(ref log_file) = stream_log_file {
+                    crate::log_stream_to_file(log_file, &format!(
+                        "\n[HTTP 503] {}\n\n========== 翻译批次结束（错误）==========\n",
+                        error_body.chars().take(200).collect::<String>(),
+                    ));
+                }
+                return Err(AppError::TranslateRateLimit {
+                    provider: self.service_name.clone(),
+                    retry_after: Some(30),
+                });
+            }
             crate::log_api_debug(
                 &self.service_name, &self.model, "auto", "auto",
                 &request_body.to_string(), &error_body, status.as_u16(),
@@ -1643,6 +1665,17 @@ impl TranslateProviderTrait for OpenAiProvider {
                     detail,
                 });
             }
+            // 503 Service Unavailable：模型高负载，按限流处理
+            if status == reqwest::StatusCode::SERVICE_UNAVAILABLE {
+                tracing::warn!(
+                    "人名预扫描服务暂时不可用（503），按限流处理: service={} model={}",
+                    self.service_name, self.model
+                );
+                return Err(AppError::TranslateRateLimit {
+                    provider: self.service_name.clone(),
+                    retry_after: Some(30),
+                });
+            }
             return Err(AppError::TranslateNetworkError {
                 provider: self.service_name.clone(),
                 detail: format!("HTTP {}: {}", status, error_body.chars().take(200).collect::<String>()),
@@ -1864,6 +1897,13 @@ pub(crate) fn get_model_batch_sizes(model: &str) -> (usize, Vec<usize>) {
     // 实测 10 条批次失败率 43%，5 条批次成功率 76%
     // 直接从 5 条开始，降级路径 5→3→1，减少无效的 10 条尝试
     if model_lower.contains("qwen3") && (model_lower.contains("8b") || model_lower.contains("4b") || model_lower.contains("7b")) {
+        return (5, vec![5, 3, 1]);
+    }
+
+    // Gemini：免费版 TPM 限制严格（通常 15K-30K TPM），30 条/批单次请求
+    // 可达 6K-10K token，连续几批就触发 429/503。用 5 条/批降低单次 token 量，
+    // 降级路径 5→3→1
+    if model_lower.contains("gemini") {
         return (5, vec![5, 3, 1]);
     }
 

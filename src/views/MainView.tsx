@@ -252,6 +252,8 @@ export default function MainView() {
   const handlePanelMouseLeave = useCallback(() => {
     setCardHovered(false);
     if (videoInfoOverlay) return; // 视频信息展示中，不收起
+    // 有 Radix 下拉框（Select/Popover）展开时，浮层渲染在 portal 中会触发 onMouseLeave，此时不收起
+    if (document.querySelector("[data-radix-popper-content-wrapper] [role=option], [data-radix-select-content]")) return;
     if (cardCollapseTimer.current) clearTimeout(cardCollapseTimer.current);
     cardCollapseTimer.current = setTimeout(() => setCardExpanded(false), 300);
   }, [videoInfoOverlay]);
@@ -314,14 +316,34 @@ export default function MainView() {
       ? await withPlayerHidden(doOpen)
       : await doOpen();
     if (typeof selected === "string") {
+      // 选中的是目录（如文件夹名带 .mkv 扩展名被文件选择器匹配），重新打开选择器定位到该目录
+      let videoPath = selected;
+      try {
+        const isDir = await api.isDirectory(selected);
+        if (isDir) {
+          warn("[handleOpenVideo] 选中的是目录，重新打开选择器定位到该目录:", selected);
+          const doReopen = () => open({
+            multiple: false,
+            defaultPath: selected,
+            filters: [{ name: "Video", extensions: ["mkv", "mp4", "avi", "mov", "wmv", "flv", "ts", "m2ts"] }],
+          });
+          const reselected = hasPlayer
+            ? await withPlayerHidden(doReopen)
+            : await doReopen();
+          if (typeof reselected !== "string") return;
+          videoPath = reselected;
+        }
+      } catch (e) {
+        warn("[handleOpenVideo] 检查目录失败:", e);
+      }
       // 纯字幕模式切换到视频模式：跳过自动提取，保留当前编辑的字幕
       const cur = useSubtitleStore.getState().file;
       if (cur?.source_path) {
         skipAutoExtractRef.current = true;
       }
-      await openVideo(selected);
+      await openVideo(videoPath);
       // 后台异步提取播放器图标（不阻塞主流程，已提取过的会跳过）
-      api.extractPlayerIcons(selected).catch((e) => {
+      api.extractPlayerIcons(videoPath).catch((e) => {
         warn("提取播放器图标失败:", e);
       });
       if (cur?.source_path) {
@@ -343,7 +365,25 @@ export default function MainView() {
     });
     const selected = hasPlayer ? await withPlayerHidden(doOpen) : await doOpen();
     if (typeof selected === "string") {
-      await subtitleStore.loadSubtitle(selected);
+      // 选中的是目录时，重新打开选择器定位到该目录
+      let subPath = selected;
+      try {
+        const isDir = await api.isDirectory(selected);
+        if (isDir) {
+          warn("[handleOpenSubtitle] 选中的是目录，重新打开选择器定位到该目录:", selected);
+          const doReopen = () => open({
+            multiple: false,
+            defaultPath: selected,
+            filters: [{ name: "Subtitle", extensions: ["srt", "ass", "ssa", "vtt", "sub"] }],
+          });
+          const reselected = hasPlayer ? await withPlayerHidden(doReopen) : await doReopen();
+          if (typeof reselected !== "string") return;
+          subPath = reselected;
+        }
+      } catch (e) {
+        warn("[handleOpenSubtitle] 检查目录失败:", e);
+      }
+      await subtitleStore.loadSubtitle(subPath);
     }
   }, [subtitleStore, withPlayerHidden]);
 

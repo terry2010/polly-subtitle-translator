@@ -887,15 +887,22 @@ impl BingProvider {
         let params = [("api-version", "2026-06-06")];
 
         // 2026-06-06 新格式：inputs 数组，每个元素含 text + language + targets
+        // 注意：Bing API 处理含 \n 的文本时间歇性返回 phrasefix 乱码，
+        // 将换行替换为空格规避（Bing 本身不保留换行结构）
         let inputs: Vec<serde_json::Value> = texts
             .iter()
-            .map(|t| serde_json::json!({
-                "text": t.as_str(),
-                "language": source_lang,
-                "targets": [{ "language": target_lang }]
-            }))
+            .map(|t| {
+                let sanitized = t.as_str().replace('\n', " ").replace('\r', "");
+                serde_json::json!({
+                    "text": sanitized,
+                    "language": source_lang,
+                    "targets": [{ "language": target_lang }]
+                })
+            })
             .collect();
         let body = serde_json::json!({ "inputs": inputs });
+
+        let log_request = format!("POST {}?api-version=2026-06-06\nbody: {}", url, body);
 
         let resp = self
             .client
@@ -907,12 +914,24 @@ impl BingProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "bing".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "bing", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "bing".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let body_text = resp.text().await.unwrap_or_default();
+            crate::log_api_debug(
+                "bing", "", source_lang, target_lang,
+                &log_request, &body_text, 429,
+            );
             return Err(AppError::TranslateRateLimit {
                 provider: "bing".to_string(),
                 retry_after: Some(60),
@@ -923,6 +942,10 @@ impl BingProvider {
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "bing", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "bing".to_string(),
                 detail,
@@ -930,19 +953,37 @@ impl BingProvider {
         }
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            crate::log_api_debug(
+                "bing", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateAuthFailed {
                 provider: "bing".to_string(),
             });
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "bing", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "bing".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        // 成功时也记录 API 调试日志
+        crate::log_api_debug(
+            "bing", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "bing", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
@@ -959,13 +1000,24 @@ impl BingProvider {
         let results: Vec<String> = translations
             .iter()
             .map(|item| {
-                item.get("translations")
+                let text = item.get("translations")
                     .and_then(|t| t.as_array())
                     .and_then(|arr| arr.first())
                     .and_then(|first| first.get("text"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
+                    .unwrap_or("");
+                // 清理 Bing API 间歇性泄漏的 phrasefix 内部标记 + U+FFFD 乱码
+                // 例："嘿！你好！（phrasefix）\uFFFD\uFFFDRick！" → "嘿！你好！Rick！"
+                if text.contains("phrasefix") {
+                    text.replace("（phrasefix）", "")
+                        .replace("(phrasefix)", "")
+                        .replace("phrasefix", "")
+                        .replace('\u{FFFD}', "")
+                        .trim()
+                        .to_string()
+                } else {
+                    text.to_string()
+                }
             })
             .collect();
 
@@ -1068,6 +1120,8 @@ impl GoogleProvider {
             "format": "text",
         });
 
+        let log_request = format!("POST {}?key=***\nbody: {}", url, body);
+
         let resp = self
             .client
             .post(url)
@@ -1075,12 +1129,24 @@ impl GoogleProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "google".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "google", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "google".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let body_text = resp.text().await.unwrap_or_default();
+            crate::log_api_debug(
+                "google", "", source_lang, target_lang,
+                &log_request, &body_text, 429,
+            );
             return Err(AppError::TranslateRateLimit {
                 provider: "google".to_string(),
                 retry_after: Some(60),
@@ -1091,6 +1157,10 @@ impl GoogleProvider {
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "google", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "google".to_string(),
                 detail,
@@ -1098,19 +1168,36 @@ impl GoogleProvider {
         }
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            crate::log_api_debug(
+                "google", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateAuthFailed {
                 provider: "google".to_string(),
             });
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "google", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "google".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        crate::log_api_debug(
+            "google", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "google", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
@@ -1951,7 +2038,7 @@ async fn translate_with_retry_provider(
     my_gen: u64,
 ) -> Result<Vec<String>, AppError> {
         let mut last_error: Option<AppError> = None;
-        let delays = [1u64, 2, 4];
+        let delays = [1u64, 2, 4, 10, 30];
 
         for (attempt, delay) in delays.iter().enumerate() {
             if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
@@ -1962,18 +2049,20 @@ async fn translate_with_retry_provider(
                 .await
             {
                 Ok(result) => return Ok(result),
-                Err(AppError::TranslateRateLimit { provider, .. }) => {
+                Err(AppError::TranslateRateLimit { provider, retry_after }) => {
+                    // 优先使用错误返回的 retry_after，但不小于默认 delay
+                    let wait = retry_after.unwrap_or(*delay).max(*delay);
                     tracing::warn!(
                         "翻译被限流（第 {} 次重试），等待 {} 秒",
                         attempt + 1,
-                        delay
+                        wait
                     );
                     last_error = Some(AppError::TranslateRateLimit {
                         provider,
-                        retry_after: Some(*delay),
+                        retry_after: Some(wait),
                     });
                     // 可取消的 sleep：每 100ms 检查取消标志
-                    let total_ms = *delay * 1000;
+                    let total_ms = wait * 1000;
                     let mut waited = 0u64;
                     while waited < total_ms {
                         let chunk = std::cmp::min(100, total_ms - waited);
@@ -2081,6 +2170,8 @@ impl DeepLProvider {
             form.push(("text".to_string(), t.as_str().to_string()));
         }
 
+        let log_request = format!("POST {}\nform: {:?}", url, form);
+
         let resp = self
             .client
             .post(url)
@@ -2089,12 +2180,24 @@ impl DeepLProvider {
             .form(&form)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "deepl".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "deepl", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "deepl".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let body_text = resp.text().await.unwrap_or_default();
+            crate::log_api_debug(
+                "deepl", "", source_lang, target_lang,
+                &log_request, &body_text, 429,
+            );
             return Err(AppError::TranslateRateLimit {
                 provider: "deepl".to_string(),
                 retry_after: Some(60),
@@ -2105,6 +2208,10 @@ impl DeepLProvider {
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "deepl", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "deepl".to_string(),
                 detail,
@@ -2112,19 +2219,36 @@ impl DeepLProvider {
         }
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            crate::log_api_debug(
+                "deepl", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateAuthFailed {
                 provider: "deepl".to_string(),
             });
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "deepl", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "deepl".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        crate::log_api_debug(
+            "deepl", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "deepl", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
@@ -2295,21 +2419,34 @@ impl YoudaoProvider {
             ("curtime", curtime),
         ];
 
+        let log_request = format!("POST https://openapi.youdao.com/api\nform: {:?}", params);
+
         let resp = self
             .client
             .post("https://openapi.youdao.com/api")
             .form(&params)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "youdao".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "youdao", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "youdao".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         let status = resp.status();
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "youdao", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "youdao".to_string(),
                 detail,
@@ -2317,13 +2454,26 @@ impl YoudaoProvider {
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "youdao", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "youdao".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        crate::log_api_debug(
+            "youdao", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "youdao", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
@@ -2333,6 +2483,10 @@ impl YoudaoProvider {
         if let Some(error_code) = result.get("errorCode").and_then(|c| c.as_str()) {
             if error_code != "0" {
                 let full_msg = format!("errorCode: {}", error_code);
+                crate::log_api_debug(
+                    "youdao", "", source_lang, target_lang,
+                    &log_request, &full_msg, 200,
+                );
                 if let Some(detail) = check_insufficient_balance(reqwest::StatusCode::OK, &full_msg) {
                     return Err(AppError::TranslateInsufficientBalance {
                         provider: "youdao".to_string(),
@@ -2463,6 +2617,8 @@ impl CaiyunProvider {
         });
 
         let url = "https://api.interpreter.caiyunai.com/v1/translator";
+        let log_request = format!("POST {}\nbody: {}", url, body);
+
         let resp = self
             .client
             .post(url)
@@ -2471,15 +2627,26 @@ impl CaiyunProvider {
             .json(&body)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "caiyun".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "caiyun", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "caiyun".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         let status = resp.status();
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "caiyun", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "caiyun".to_string(),
                 detail,
@@ -2487,19 +2654,36 @@ impl CaiyunProvider {
         }
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            crate::log_api_debug(
+                "caiyun", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateAuthFailed {
                 provider: "caiyun".to_string(),
             });
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "caiyun", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "caiyun".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        crate::log_api_debug(
+            "caiyun", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "caiyun", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
@@ -2681,6 +2865,8 @@ impl NiutransProvider {
             ("authStr", &auth_str),
         ];
 
+        let log_request = format!("POST https://api.niutrans.com/v2/text/translate\nform: {:?}", form_params);
+
         let resp = self
             .client
             .post("https://api.niutrans.com/v2/text/translate")
@@ -2688,15 +2874,26 @@ impl NiutransProvider {
             .form(&form_params)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "niutrans".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "niutrans", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "niutrans".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         let status = resp.status();
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "niutrans", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "niutrans".to_string(),
                 detail,
@@ -2704,13 +2901,26 @@ impl NiutransProvider {
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "niutrans", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "niutrans".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        crate::log_api_debug(
+            "niutrans", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "niutrans", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
@@ -2883,6 +3093,8 @@ impl TencentProvider {
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let authorization = self.sign(&payload, timestamp, &date);
 
+        let log_request = format!("POST https://tmt.tencentcloudapi.com/\nbody: {}", payload);
+
         let resp = self
             .client
             .post("https://tmt.tencentcloudapi.com/")
@@ -2896,15 +3108,26 @@ impl TencentProvider {
             .body(payload)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "tencent".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "tencent", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "tencent".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         let status = resp.status();
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "tencent", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "tencent".to_string(),
                 detail,
@@ -2912,13 +3135,26 @@ impl TencentProvider {
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "tencent", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "tencent".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        crate::log_api_debug(
+            "tencent", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "tencent", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
@@ -3119,6 +3355,8 @@ impl VolcengineProvider {
         let date = chrono::Utc::now().format("%Y%m%d").to_string();
         let (authorization, host) = self.sign(&payload, &timestamp, &date);
 
+        let log_request = format!("POST https://open.volcengineapi.com/?Action=TranslateText&Version=2020-06-01\nbody: {}", payload);
+
         let resp = self
             .client
             .post("https://open.volcengineapi.com/?Action=TranslateText&Version=2020-06-01")
@@ -3129,15 +3367,26 @@ impl VolcengineProvider {
             .body(payload)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "volcengine".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "volcengine", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "volcengine".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         let status = resp.status();
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "volcengine", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "volcengine".to_string(),
                 detail,
@@ -3145,13 +3394,26 @@ impl VolcengineProvider {
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "volcengine", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "volcengine".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        crate::log_api_debug(
+            "volcengine", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "volcengine", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
@@ -3354,21 +3616,33 @@ impl AliyunProvider {
                 .join("&");
 
             let url = format!("https://mt.cn-hangzhou.aliyuncs.com/?{}", query);
+            let log_request = format!("GET {}", url);
 
             let resp = self
                 .client
                 .get(&url)
                 .send()
                 .await
-                .map_err(|e| AppError::TranslateNetworkError {
-                    provider: "aliyun".to_string(),
-                    detail: e.to_string(),
+                .map_err(|e| {
+                    let err_msg = e.to_string();
+                    crate::log_api_debug(
+                        "aliyun", "", source_lang, target_lang,
+                        &log_request, &format!("[send error] {}", err_msg), 0,
+                    );
+                    AppError::TranslateNetworkError {
+                        provider: "aliyun".to_string(),
+                        detail: err_msg,
+                    }
                 })?;
 
             let status = resp.status();
             let response_body = resp.text().await.unwrap_or_default();
 
             if let Some(detail) = check_insufficient_balance(status, &response_body) {
+                crate::log_api_debug(
+                    "aliyun", "", source_lang, target_lang,
+                    &log_request, &response_body, status.as_u16(),
+                );
                 return Err(AppError::TranslateInsufficientBalance {
                     provider: "aliyun".to_string(),
                     detail,
@@ -3376,13 +3650,26 @@ impl AliyunProvider {
             }
 
             if !status.is_success() {
+                crate::log_api_debug(
+                    "aliyun", "", source_lang, target_lang,
+                    &log_request, &response_body, status.as_u16(),
+                );
                 return Err(AppError::TranslateNetworkError {
                     provider: "aliyun".to_string(),
                     detail: format!("HTTP {}: {}", status, response_body),
                 });
             }
 
+            crate::log_api_debug(
+                "aliyun", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
+
             let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+                crate::log_api_debug(
+                    "aliyun", "", source_lang, target_lang,
+                    &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+                );
                 AppError::TranslateResponseParseFailed {
                     detail: e.to_string(),
                 }
@@ -3567,6 +3854,8 @@ impl AmazonProvider {
         let authorization = self.sign(&payload, &timestamp, &date, &host);
 
         let url = format!("https://{}", host);
+        let log_request = format!("POST {}\nbody: {}", url, payload);
+
         let resp = self
             .client
             .post(&url)
@@ -3577,15 +3866,26 @@ impl AmazonProvider {
             .body(payload)
             .send()
             .await
-            .map_err(|e| AppError::TranslateNetworkError {
-                provider: "amazon".to_string(),
-                detail: e.to_string(),
+            .map_err(|e| {
+                let err_msg = e.to_string();
+                crate::log_api_debug(
+                    "amazon", "", source_lang, target_lang,
+                    &log_request, &format!("[send error] {}", err_msg), 0,
+                );
+                AppError::TranslateNetworkError {
+                    provider: "amazon".to_string(),
+                    detail: err_msg,
+                }
             })?;
 
         let status = resp.status();
         let response_body = resp.text().await.unwrap_or_default();
 
         if let Some(detail) = check_insufficient_balance(status, &response_body) {
+            crate::log_api_debug(
+                "amazon", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateInsufficientBalance {
                 provider: "amazon".to_string(),
                 detail,
@@ -3593,19 +3893,36 @@ impl AmazonProvider {
         }
 
         if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+            crate::log_api_debug(
+                "amazon", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateAuthFailed {
                 provider: "amazon".to_string(),
             });
         }
 
         if !status.is_success() {
+            crate::log_api_debug(
+                "amazon", "", source_lang, target_lang,
+                &log_request, &response_body, status.as_u16(),
+            );
             return Err(AppError::TranslateNetworkError {
                 provider: "amazon".to_string(),
                 detail: format!("HTTP {}: {}", status, response_body),
             });
         }
 
+        crate::log_api_debug(
+            "amazon", "", source_lang, target_lang,
+            &log_request, &response_body, status.as_u16(),
+        );
+
         let result: serde_json::Value = serde_json::from_str(&response_body).map_err(|e| {
+            crate::log_api_debug(
+                "amazon", "", source_lang, target_lang,
+                &log_request, &format!("[JSON parse error] {}\nraw: {}", e, response_body.chars().take(500).collect::<String>()), 200,
+            );
             AppError::TranslateResponseParseFailed {
                 detail: e.to_string(),
             }
