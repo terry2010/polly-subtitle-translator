@@ -384,6 +384,12 @@ pub enum AppError {
     #[error("批量翻译配置无效: {detail}")]
     BatchConfigInvalid { detail: String },
 
+    /// file_hash 缺失：translate_subtitle / get_cached_translations 必须由前端传入原始文件 hash（H1）
+    /// 编辑原文后 entry.text 变了，但 file_hash 必须保持 H1，否则 source_edit_cache 查不到、
+    /// 翻译缓存 key 与历史缓存隔离。不再从 entries fallback 计算。
+    #[error("file_hash 缺失: {detail}")]
+    FileHashMissing { detail: String },
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -709,6 +715,9 @@ impl AppError {
                 .with_args(serde_json::json!({ "path": path })),
 
             BatchConfigInvalid { detail } => IpcError::new("batch.configInvalid", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": detail })),
+
+            FileHashMissing { detail } => IpcError::new("translate.fileHashMissing", Severity::Recoverable)
                 .with_args(serde_json::json!({ "detail": detail })),
 
             Io(e) => IpcError::new("common.ioError", Severity::Recoverable)
@@ -1073,4 +1082,18 @@ mod tests {
     }
 
     // === SECTION 16 END ===
+
+    // === file_hash 缺失（原文编辑功能）===
+    #[test]
+    fn test_err_file_hash_missing() {
+        assert_ipc_with_arg(
+            AppError::FileHashMissing { detail: "test".into() },
+            "translate.fileHashMissing",
+            Severity::Recoverable,
+            "detail",
+            &serde_json::json!("test"),
+        );
+    }
+
+    // === SECTION 17 END ===
 }

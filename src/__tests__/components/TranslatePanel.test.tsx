@@ -21,7 +21,7 @@ vi.mock("../../lib/api", () => ({
 }));
 
 function makeEntry(index: number, text: string, translated = ""): SubtitleEntry {
-  return { index, start_ms: 0, end_ms: 1000, text, translated, style: null };
+  return { index, start_ms: 0, end_ms: 1000, text, translated, style: null, pre_edit_text: null };
 }
 
 beforeEach(() => {

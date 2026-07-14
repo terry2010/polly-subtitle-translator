@@ -19,6 +19,9 @@ vi.mock("../../lib/api", () => ({
     onTranslateEntryDone: mockOnTranslateEntryDone,
   },
   formatIpcError: vi.fn((e: unknown) => String(e)),
+  isTimeoutError: vi.fn(() => false),
+  isDailyLimitError: vi.fn(() => false),
+  isInsufficientBalanceError: vi.fn(() => false),
 }));
 
 // mock logger：透传到 console，使 vi.spyOn(console, "warn") 能正常工作
@@ -36,7 +39,7 @@ vi.mock("sonner", () => ({
 }));
 
 function makeEntry(index: number, text: string): SubtitleEntry {
-  return { index, start_ms: 0, end_ms: 1000, text, translated: "", style: null };
+  return { index, start_ms: 0, end_ms: 1000, text, translated: "", style: null, pre_edit_text: null };
 }
 
 beforeEach(() => {
@@ -128,12 +131,30 @@ describe("translateStore - startTranslate", () => {
     expect(mockOnTranslateEntryDone).toHaveBeenCalledWith(expect.any(Function));
   });
 
+  it("onTranslateEntryDone 事件触发时 onEntryDone 收到 pre_edit_text", async () => {
+    mockTranslateSubtitle.mockResolvedValue({ translations: [], provider: "baidu", cached_count: 0 });
+    const onEntryDone = vi.fn();
+    // 捕获注册的回调函数
+    let registeredCallback: ((entry: any) => void) | null = null;
+    mockOnTranslateEntryDone.mockImplementation((cb: any) => {
+      registeredCallback = cb;
+      return Promise.resolve(() => {});
+    });
+    await useTranslateStore.getState().startTranslate([makeEntry(0, "a")], onEntryDone);
+    // 模拟后端事件：entry 含 pre_edit_text
+    const cb = registeredCallback as unknown as ((entry: any) => void) | null;
+    if (cb) {
+      cb({ index: 0, original: "Hi", translated: "你好", from_cache: false, failed: false, pre_edit_text: "Hello" });
+    }
+    expect(onEntryDone).toHaveBeenCalledWith(0, "你好", false, "Hello");
+  });
+
   it("AI 翻译时传递 serviceId 给 translateSubtitle", async () => {
     useTranslateStore.setState({ provider: "openai", serviceId: "deepseek", model: "deepseek-chat" });
     mockTranslateSubtitle.mockResolvedValue({ translations: [], provider: "openai", cached_count: 0 });
     await useTranslateStore.getState().startTranslate([makeEntry(0, "a")]);
     expect(mockTranslateSubtitle).toHaveBeenCalledWith(
-      [expect.any(Object)], "en", "zh", "openai", "deepseek-chat", undefined, "deepseek", undefined, undefined, undefined,
+      [expect.any(Object)], "en", "zh", "openai", "deepseek-chat", undefined, "deepseek", undefined, undefined, undefined, undefined,
     );
   });
 
@@ -142,7 +163,7 @@ describe("translateStore - startTranslate", () => {
     mockTranslateSubtitle.mockResolvedValue({ translations: [], provider: "baidu", cached_count: 0 });
     await useTranslateStore.getState().startTranslate([makeEntry(0, "a")]);
     expect(mockTranslateSubtitle).toHaveBeenCalledWith(
-      [expect.any(Object)], "en", "zh", "baidu", undefined, undefined, undefined, undefined, undefined, undefined,
+      [expect.any(Object)], "en", "zh", "baidu", undefined, undefined, undefined, undefined, undefined, undefined, undefined,
     );
   });
 });

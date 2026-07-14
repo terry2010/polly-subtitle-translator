@@ -196,7 +196,7 @@ describe("TranslateApiSettings - 添加 API 面板", () => {
     const addButtons = screen.getAllByText("settings.addApi");
     await user.click(addButtons[1]);
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("搜索服务名称...")).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("settings.searchServicePlaceholder")).toBeInTheDocument();
     });
   });
 });

@@ -26,6 +26,7 @@ import { HdrNotice } from "../components/HdrNotice";
 import { GlossaryConfirmDialog } from "../components/GlossaryConfirmDialog";
 import { SubtitleStreamEditorDialog } from "../components/SubtitleStreamEditorDialog";
 import { FfmpegDownloadDialog } from "../components/FfmpegDownloadDialog";
+import type { SubtitleEntry } from "../lib/ipc-types";
 
 // 跟踪窗口大小状态，避免组件卸载重载时丢失（如从设置页返回）
 // null = 尚未初始化，true = 大窗口（有文件），false = 小窗口（空状态）
@@ -451,22 +452,69 @@ export default function MainView() {
     // 检查缓存
     const cached = extractCacheRef.current.get(selectedSubtitleStream.index);
     if (cached) {
-      subtitleStore.setFile(cached);
+      // 如果 store 中已有该字幕文件（从设置返回等场景），保留当前 store 文件
+      // （包含用户的翻译和原文编辑），不替换为缓存中的旧版本
+      const currentFile = useSubtitleStore.getState().file;
+      if (currentFile && currentFile.file_hash === cached.file_hash) {
+        return;
+      }
+      // 先从 source_edit_cache 恢复原文编辑（corrected text + 标记）
+      let correctedFile = cached;
+      if (cached.file_hash) {
+        try {
+          const sourceEdits = await api.getSourceEdits(cached.file_hash);
+          if (sourceEdits && sourceEdits.length > 0) {
+            const editsMap = new Map(sourceEdits.map((e) => [e.entry_index, e]));
+            const entries = cached.entries.map((e: any) => {
+              const edit = editsMap.get(e.index);
+              if (edit) {
+                return { ...e, text: edit.corrected_text, pre_edit_text: edit.pre_edit_text };
+              }
+              return e;
+            });
+            correctedFile = { ...cached, entries };
+          }
+        } catch (e) {
+          warn("查询原文编辑记录失败:", e);
+        }
+      }
+      subtitleStore.setFile(correctedFile);
       // 查询翻译缓存（双语文件跳过，原因同 loadSubtitle）
-      if (!subtitleStore.bilingualDetect?.is_bilingual) {
+      // 双语检测：缓存中的 file 可能尚未检测，用 correctedFile 检测
+      let isBilingual = subtitleStore.bilingualDetect?.is_bilingual;
+      if (isBilingual === undefined || isBilingual === null) {
+        try {
+          const detect = await api.detectBilingual(correctedFile);
+          isBilingual = detect.is_bilingual;
+          useSubtitleStore.setState({ bilingualDetect: detect });
+        } catch (e) {
+          warn("双语检测失败:", e);
+          isBilingual = false;
+        }
+      }
+      if (!isBilingual) {
         const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
         try {
           const cachedTr = await api.getCachedTranslations(
-            cached.entries, sourceLang, targetLang, provider,
+            correctedFile.entries, sourceLang, targetLang, provider,
             provider === "openai" ? (serviceId || undefined) : undefined,
             provider === "openai" ? (model || undefined) : undefined,
+            correctedFile.file_hash,
           );
           if (cachedTr && cachedTr.length > 0) {
-            const entries = cached.entries.map((e: any) => {
-              const tr = cachedTr.find((c) => c.index === e.index);
-              return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
+            const cachedMap = new Map(cachedTr.map((c) => [c.index, c]));
+            const entries = correctedFile.entries.map((e: any) => {
+              const tr = cachedMap.get(e.index);
+              if (!tr) return e;
+              return {
+                ...e,
+                translated: tr.translated || e.translated,
+                from_cache: tr.from_cache,
+                failed: tr.failed,
+                pre_edit_text: tr.pre_edit_text ?? e.pre_edit_text ?? null,
+              };
             });
-            subtitleStore.setFile({ ...cached, entries });
+            subtitleStore.setFile({ ...correctedFile, entries });
           }
         } catch (e) {
           warn("查询翻译缓存失败:", e);
@@ -507,28 +555,8 @@ export default function MainView() {
         { name: `${baseName}.${lang}.${ext}`, path: outputPath, status: t("video.extracted", "已提取") },
       ]);
 
-      // 提取完成后查询翻译缓存，自动填充已翻译的条目
-      // 双语文件跳过缓存查询（原因同 loadSubtitle）
-      const subtitleState = useSubtitleStore.getState();
-      if (subtitleState.file && !subtitleState.bilingualDetect?.is_bilingual) {
-        const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
-        try {
-          const cached = await api.getCachedTranslations(
-            subtitleState.file.entries, sourceLang, targetLang, provider,
-            provider === "openai" ? (serviceId || undefined) : undefined,
-            provider === "openai" ? (model || undefined) : undefined,
-          );
-          if (cached && cached.length > 0) {
-            const entries = subtitleState.file.entries.map((e) => {
-              const tr = cached.find((c) => c.index === e.index);
-              return tr ? { ...e, translated: tr.translated, from_cache: true } : e;
-            });
-            subtitleState.setFile({ ...subtitleState.file, entries });
-          }
-        } catch (e) {
-          warn("查询翻译缓存失败:", e);
-        }
-      }
+      // loadSubtitle 已内部完成 getSourceEdits + getCachedTranslations 恢复，
+      // 此处无需重复查询翻译缓存。
       // 缓存提取结果
       {
         const finalState = useSubtitleStore.getState();
@@ -1137,9 +1165,14 @@ export default function MainView() {
     setGlossaryTranslateDone(false);
     const result = await translateStore.startTranslate(
       subtitleStore.file.entries,
-      (index, translated, failed) => {
+      (index, translated, failed, originalText) => {
         // 每条翻译完成后立即更新字幕预览区（含翻译失败标记）
-        subtitleStore.updateEntry(index, { translated, failed, from_cache: false });
+        // 如果后端返回了 pre_edit_text，同步更新编辑标记
+        const patch: Partial<SubtitleEntry> = { translated, failed, from_cache: false };
+        if (originalText !== undefined) {
+          patch.pre_edit_text = originalText;
+        }
+        subtitleStore.updateEntry(index, patch);
       },
       undefined,
       glossary,
@@ -1153,7 +1186,7 @@ export default function MainView() {
         if (!tr) return e;
         // 已有译文且非失败的保留，否则用结果覆盖（含 failed 和 from_cache）
         if (e.translated && !e.failed) return e;
-        return { ...e, translated: tr.translated, failed: tr.failed, from_cache: tr.from_cache };
+        return { ...e, translated: tr.translated, failed: tr.failed, from_cache: tr.from_cache, pre_edit_text: tr.pre_edit_text ?? e.pre_edit_text ?? null };
       });
       subtitleStore.setFile({ ...subtitleStore.file, entries });
     }

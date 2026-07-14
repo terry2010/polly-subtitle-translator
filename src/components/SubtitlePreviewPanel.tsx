@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
-import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight, ChevronUp, ChevronDown, AlertTriangle, FileText } from "lucide-react";
+import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight, ChevronUp, ChevronDown, AlertTriangle, FileText, Pencil } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -18,6 +18,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { uiState, withPlayerHidden } from "../lib/utils";
 import { ExportDialog } from "./ExportDialog";
+import { RestoreOriginalDialog } from "./RestoreOriginalDialog";
 
 type PreviewMode = "original" | "bilingual" | "translated";
 
@@ -90,6 +91,8 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   const videoStore = useVideoStore();
   const devMode = useDevModeStore((s) => s.devMode);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  // 当前编辑的是原文还是译文（"original" | "translated"），默认译文
+  const [editingField, setEditingField] = useState<"original" | "translated">("translated");
   const [showFindReplace, setShowFindReplace] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("bilingual");
   const [exportOpen, setExportOpen] = useState(false);
@@ -118,6 +121,12 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   // 重置确认弹窗
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [resetSteps, setResetSteps] = useState(0);
+  // 恢复原文对话框
+  const [restoreDialogEntry, setRestoreDialogEntry] = useState<{ index: number; originalText: string; modifiedText: string } | null>(null);
+  // 跳转高亮：跳转到已编辑条目时高亮目标行（同时作为下次跳转的基准位置）
+  const [highlightIndex, setHighlightIndex] = useState<number | null>(null);
+  // 闪烁高亮：跳转瞬间短暂闪烁，1.5 秒后消失（仅视觉效果）
+  const [flashIndex, setFlashIndex] = useState<number | null>(null);
 
   const rowVirtualizer = useVirtualizer({
     count: file?.entries.length ?? 0,
@@ -153,19 +162,54 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   // ESC 或"取消"按钮调用 store.cancelEditEntry 恢复，让 undo 回到编辑前状态。
   const editingOriginalRef = useRef<string>("");
   const editingUndoStackLenRef = useRef<number>(0);
+  // 原文编辑：记录编辑前的 text 和 pre_edit_text，用于取消时恢复
+  const editingOriginalTextRef = useRef<string>("");
+  const editingOriginalPreEditTextRef = useRef<string | null>(null);
+  // 用 ref 持有最新的 cancelEdit，避免 click-outside useEffect 闭包过期
+  const cancelEditRef = useRef<(entryIndex: number) => void>(() => {});
 
   // 进入编辑态：记录原始译文和 undoStack 长度，用于 ESC/取消时恢复
   const beginEdit = useCallback((entryIndex: number, originalTranslated: string) => {
+    // 如果正在编辑另一条，先取消（恢复其编辑前状态）
+    if (editingIndex !== null && editingIndex !== entryIndex) {
+      cancelEditRef.current(editingIndex);
+      toast.warning(t("subtitle.editCancelled"));
+    }
     editingOriginalRef.current = originalTranslated;
     editingUndoStackLenRef.current = store.undoStack.length;
+    setEditingField("translated");
     setEditingIndex(entryIndex);
-  }, [store]);
+  }, [store, editingIndex, t]);
 
-  // 退出编辑态：不保存（恢复原始译文，截断 undoStack 到编辑前）
+  // 进入原文编辑态（与译文编辑态共用 editingIndex，行为一致）
+  const beginEditOriginal = useCallback((entryIndex: number) => {
+    // 如果正在编辑另一条，先取消（恢复其编辑前状态）
+    if (editingIndex !== null && editingIndex !== entryIndex) {
+      cancelEditRef.current(editingIndex);
+      toast.warning(t("subtitle.editCancelled"));
+    }
+    const entry = store.file?.entries.find((e) => e.index === entryIndex);
+    if (entry) {
+      editingOriginalTextRef.current = entry.text;
+      editingOriginalPreEditTextRef.current = entry.pre_edit_text;
+    }
+    editingUndoStackLenRef.current = store.undoStack.length;
+    setEditingField("original");
+    setEditingIndex(entryIndex);
+  }, [store, editingIndex, t]);
+
+  // 退出编辑态：不保存（恢复编辑前状态，截断 undoStack 到编辑前）
   const cancelEdit = useCallback((entryIndex: number) => {
-    store.cancelEditEntry(entryIndex, editingOriginalRef.current, editingUndoStackLenRef.current);
+    if (editingField === "translated") {
+      store.cancelEditEntry(entryIndex, editingOriginalRef.current, editingUndoStackLenRef.current);
+    } else if (editingField === "original") {
+      // 原文编辑取消：恢复编辑前的 text 和 pre_edit_text，并同步 source_edit_cache
+      store.cancelEditOriginal(entryIndex, editingOriginalTextRef.current, editingOriginalPreEditTextRef.current, editingUndoStackLenRef.current);
+    }
     setEditingIndex(null);
-  }, [store]);
+  }, [store, editingField]);
+  // 同步到 ref，供 click-outside useEffect 使用最新值
+  cancelEditRef.current = cancelEdit;
 
   // 退出编辑态：保存（仅退出，编辑过程中的 onChange 已实时写入 store）
   const commitEdit = useCallback(() => {
@@ -269,6 +313,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       text: "",
       translated: "",
       style: null,
+      pre_edit_text: null,
     };
     store.insertEntryAfter(newEntry, entryIndex);
     // 进入新增字幕的时间编辑面板
@@ -464,8 +509,15 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   const handleContextMenu = useCallback((e: React.MouseEvent, entryIndex: number) => {
     e.preventDefault();
     e.stopPropagation();
+    // 如果正在编辑，先取消编辑（恢复编辑前状态）
+    if (editingIndex !== null) {
+      cancelEditRef.current(editingIndex);
+      if (editingIndex !== entryIndex) {
+        toast.warning(t("subtitle.editCancelled"));
+      }
+    }
     setContextMenu({ x: e.clientX, y: e.clientY, entryIndex });
-  }, []);
+  }, [editingIndex, t]);
 
   // 关闭右键菜单
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
@@ -486,9 +538,11 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
     try {
       const result = await translateStore.startTranslate(
         [entry],
-        (index, translated, failed) => {
+        (index, translated, failed, originalText) => {
           // 单条翻译完成，立即更新（含翻译失败标记）
-          store.updateEntry(index, { translated, failed });
+          const patch: Partial<SubtitleEntry> = { translated, failed };
+          if (originalText !== undefined) { patch.pre_edit_text = originalText; }
+          store.updateEntry(index, patch);
         },
         skipCache,
         undefined,
@@ -570,24 +624,26 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
     rowVirtualizer.scrollToIndex(entryIdx, { align: "center" });
   }, [store.findMatchEntryIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 点击外部关闭编辑框
+  // 点击外部关闭编辑框（取消编辑，恢复编辑前状态）
   useEffect(() => {
     if (editingIndex === null) return;
-    const handleClickOutside = (e: MouseEvent) => {
+    const handleOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
       // 如果点击的不是 textarea 或按钮，关闭编辑
       if (!target.closest("textarea") && !target.closest("button")) {
-        setEditingIndex(null);
+        cancelEditRef.current(editingIndex);
         toast.warning(t("subtitle.editCancelled"));
       }
     };
     // 延迟绑定，避免触发编辑的同一 click 事件
     const timer = setTimeout(() => {
-      window.addEventListener("click", handleClickOutside);
+      window.addEventListener("click", handleOutside);
+      window.addEventListener("contextmenu", handleOutside);
     }, 100);
     return () => {
       clearTimeout(timer);
-      window.removeEventListener("click", handleClickOutside);
+      window.removeEventListener("click", handleOutside);
+      window.removeEventListener("contextmenu", handleOutside);
     };
   }, [editingIndex, t]);
 
@@ -855,6 +911,42 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           <option value="translated">{t("subtitle.modeTranslated", "仅译文")}</option>
         </select>
         <div className="w-px h-4 bg-border mx-1" />
+        {/* 已编辑条目计数 + 跳转按钮 */}
+        {file && (() => {
+          const editedEntries = file.entries.filter((e) => !e._deleted && e.pre_edit_text != null);
+          if (editedEntries.length === 0) return null;
+          const jumpToNextEdited = () => {
+            if (editedEntries.length === 0) return;
+            // 用 highlightIndex 追踪当前跳转位置（editingIndex 是翻译编辑态，与此无关）
+            const currentIdx = editedEntries.findIndex((e) => e.index === highlightIndex);
+            const nextIdx = (currentIdx + 1) % editedEntries.length;
+            const target = editedEntries[nextIdx];
+            const entryIdx = file.entries.findIndex((e) => e.index === target.index);
+            if (entryIdx >= 0) {
+              isAutoScrollingRef.current = true;
+              rowVirtualizer.scrollToIndex(entryIdx, { align: "center" });
+              // 记录当前位置（作为下次跳转的基准）+ 闪烁高亮
+              setHighlightIndex(target.index);
+              setFlashIndex(target.index);
+              window.setTimeout(() => { setFlashIndex(null); }, 1500);
+              window.setTimeout(() => { isAutoScrollingRef.current = false; }, 1200);
+            }
+          };
+          return (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-blue-600 hover:text-blue-700 relative"
+              title={t("subtitle.jumpToEdited", "跳转到已编辑条目")}
+              onClick={jumpToNextEdited}
+            >
+              <Pencil className="h-4 w-4" />
+              <span className="absolute -top-1 -right-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-blue-600 px-0.5 text-[9px] font-bold leading-none text-white">
+                {editedEntries.length}
+              </span>
+            </Button>
+          );
+        })()}
         <Button size="sm" onClick={handleSave} className="h-7">
           <Save className="mr-1 h-3.5 w-3.5" />
           {t("subtitle.save", "保存")}
@@ -949,6 +1041,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             const hasTranslation = entry.translated && entry.translated.length > 0;
             const isActive = virtualRow.index === activeEntryIndex;
             const isFindMatch = store.findMatchEntryIndex === entry.index;
+            const isHighlighted = flashIndex === entry.index;
             return (
               <div
                 key={entry.index}
@@ -961,7 +1054,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                   width: "100%",
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
-                className={`group border-b px-3 py-1.5 hover:bg-accent/30 ${isActive ? "bg-primary/10 border-l-2 border-l-primary" : ""} ${isFindMatch ? "bg-yellow-200/50 border-l-2 border-l-yellow-500" : ""}`}
+                className={`group border-b px-3 py-1.5 hover:bg-accent/30 ${isActive ? "bg-primary/10 border-l-2 border-l-primary" : ""} ${isFindMatch ? "bg-yellow-200/50 border-l-2 border-l-yellow-500" : ""} ${isHighlighted ? "bg-blue-200/60 border-l-2 border-l-blue-500" : ""}`}
                 onContextMenu={(e) => handleContextMenu(e, entry.index)}
               >
                 {/* 时间码行 */}
@@ -1004,7 +1097,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     )}
                   </div>
                   {isEditing ? (
-                    /* 编辑态：完成、取消、删除按钮 */
+                    /* 编辑态：完成、取消、删除按钮（原文编辑时多一个恢复按钮） */
                     <div className="flex gap-1 flex-shrink-0">
                       <Button
                         size="sm"
@@ -1014,6 +1107,21 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                         <Check className="h-3 w-3 mr-0.5" />
                         {t("common.done", "完成")}
                       </Button>
+                      {editingField === "original" && entry.pre_edit_text != null && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-5 px-2 text-xs"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            store.restoreOriginalText(entry.index);
+                            commitEdit();
+                          }}
+                        >
+                          <RotateCcw className="h-3 w-3 mr-0.5" />
+                          {t("subtitle.restore", "恢复")}
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant="outline"
@@ -1045,29 +1153,63 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
 
                 {/* 字幕内容 */}
                 {isEditing ? (
-                  /* 编辑态：行内展开 */
+                  /* 编辑态：行内展开（原文编辑 or 译文编辑） */
                   <div className="mt-1 space-y-1">
-                    {/* 原文只读 */}
-                    <p className="text-xs text-muted-foreground bg-muted/30 rounded px-2 py-1 max-h-20 overflow-auto">
-                      {entry.text || <span className="opacity-30">—</span>}
-                    </p>
-                    {/* 译文编辑 */}
-                    <AutoTextarea
-                      value={entry.translated}
-                      onChange={(val) => store.updateEntry(entry.index, { translated: val })}
-                      className="text-xs py-1 flex-1 resize-none"
-                      placeholder={t("subtitle.translated", "译文")}
-                      onClick={(e) => e.stopPropagation()}
-                      onContextMenu={(e) => e.stopPropagation()}
-                      onKeyDown={(e) => {
-                        if (e.key === "Escape") {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          cancelEdit(entry.index);
-                        }
-                      }}
-                      autoFocus
-                    />
+                    {editingField === "original" ? (
+                      <>
+                        {/* 原文编辑 */}
+                        <AutoTextarea
+                          value={entry.text}
+                          onChange={(val) => store.editOriginalText(entry.index, val)}
+                          className="text-xs py-1 flex-1 resize-none border-blue-300"
+                          placeholder={t("subtitle.original", "原文")}
+                          onClick={(e) => e.stopPropagation()}
+                          onContextMenu={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cancelEdit(entry.index);
+                            }
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              commitEdit();
+                            }
+                          }}
+                          autoFocus
+                        />
+                        {/* 译文只读（如有） */}
+                        {entry.translated && (
+                          <p className="text-xs text-primary bg-muted/30 rounded px-2 py-1 max-h-20 overflow-auto">
+                            {entry.translated}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {/* 原文只读 */}
+                        <p className="text-xs text-muted-foreground bg-muted/30 rounded px-2 py-1 max-h-20 overflow-auto">
+                          {entry.text || <span className="opacity-30">—</span>}
+                        </p>
+                        {/* 译文编辑 */}
+                        <AutoTextarea
+                          value={entry.translated}
+                          onChange={(val) => store.updateEntry(entry.index, { translated: val })}
+                          className="text-xs py-1 flex-1 resize-none"
+                          placeholder={t("subtitle.translated", "译文")}
+                          onClick={(e) => e.stopPropagation()}
+                          onContextMenu={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              cancelEdit(entry.index);
+                            }
+                          }}
+                          autoFocus
+                        />
+                      </>
+                    )}
                   </div>
                 ) : entry._deleted ? (
                   /* 已删除态：显示删除线 + 撤销按钮 */
@@ -1087,9 +1229,37 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                   </div>
                 ) : (
                   <div className="mt-0.5 space-y-0.5">
-                    {/* 原文行（只读，不可编辑） */}
+                    {/* 原文行（可编辑：点击进入原文编辑，显示编辑标记） */}
                     {(previewMode === "original" || previewMode === "bilingual") && (
-                      <p className="text-xs line-clamp-1">{entry.text || <span className="opacity-30">—</span>}</p>
+                      <div className="flex items-center gap-1">
+                        <p
+                          className="text-xs line-clamp-1 cursor-text hover:bg-primary/10 rounded px-1 -mx-1 flex-1"
+                          title={t("subtitle.editOriginalHint", "点击编辑原文（编辑后需重新翻译）")}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            beginEditOriginal(entry.index);
+                          }}
+                        >
+                          {entry.text || <span className="opacity-30">—</span>}
+                        </p>
+                        {/* 编辑标记：已编辑过的条目显示铅笔图标，点击打开恢复对话框 */}
+                        {entry.pre_edit_text != null && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setRestoreDialogEntry({
+                                index: entry.index,
+                                originalText: entry.pre_edit_text!,
+                                modifiedText: entry.text,
+                              });
+                            }}
+                            className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-blue-600 hover:bg-blue-100"
+                            title={t("subtitle.edited", "已编辑")}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     )}
                     {/* 译文行（点击进入编辑） */}
                     {(previewMode === "translated" || previewMode === "bilingual") && hasTranslation && (
@@ -1387,6 +1557,18 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           </div>
         </div>
       )}
+      {/* 恢复原文对话框 */}
+      <RestoreOriginalDialog
+        open={restoreDialogEntry != null}
+        onOpenChange={(open) => { if (!open) setRestoreDialogEntry(null); }}
+        originalText={restoreDialogEntry?.originalText ?? ""}
+        modifiedText={restoreDialogEntry?.modifiedText ?? ""}
+        onRestore={() => {
+          if (restoreDialogEntry) {
+            store.restoreOriginalText(restoreDialogEntry.index);
+          }
+        }}
+      />
     </div>
   );
 }

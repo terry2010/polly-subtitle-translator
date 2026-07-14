@@ -218,6 +218,26 @@ CREATE TABLE IF NOT EXISTS batch_tasks (
     error TEXT
 );
 "#,
+}, Migration {
+    version: 4,
+    sql: r#"
+-- v4: 原文编辑缓存（用户编辑原始字幕后的修改记录，跨翻译引擎共享）
+-- 不含 lang / provider，所有翻译引擎共享
+-- 查询按 original_file_hash 查，一次拿到整个文件的所有编辑记录
+-- entry_index 区分同文件内不同条目，避免两条改成相同文本时互相覆盖
+CREATE TABLE IF NOT EXISTS source_edit_cache (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_index INTEGER NOT NULL,       -- 条目序号（区分同文件内不同条目）
+    corrected_text TEXT NOT NULL,       -- 修改后的原文
+    pre_edit_text TEXT NOT NULL,        -- 原始 whisper 文本
+    original_file_hash TEXT NOT NULL,   -- 原始字幕 hash（查询 key + 查 translate_cache 用）
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+-- 唯一约束：同一原始文件下同一 entry_index 只能有一条记录
+-- 确保 INSERT OR REPLACE 正确覆盖而非无限新增
+CREATE UNIQUE INDEX IF NOT EXISTS idx_source_edit_orig_hash_index
+    ON source_edit_cache(original_file_hash, entry_index);
+"#,
 }];
 
 // === SECTION 2 END ===
@@ -401,6 +421,95 @@ impl Database {
         self.with_conn(|conn| {
             let count = conn.execute("DELETE FROM translate_cache", [])?;
             Ok(count)
+        })
+    }
+
+    /// 写入单条原文修改记录（编辑确认时立即调用）
+    /// (original_file_hash, entry_index) 唯一约束确保 INSERT OR REPLACE 正确覆盖
+    pub fn set_source_edit(
+        &self,
+        entry_index: usize,
+        corrected_text: &str,
+        pre_edit_text: &str,
+        original_file_hash: &str,
+    ) -> Result<(), AppError> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO source_edit_cache
+                 (entry_index, corrected_text, pre_edit_text, original_file_hash)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![entry_index as i64, corrected_text, pre_edit_text, original_file_hash],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// 按 original_file_hash 查询整个文件的原文修改记录
+    /// 返回 {entry_index: (corrected_text, pre_edit_text)}
+    pub fn get_source_edits_by_file_hash(
+        &self,
+        original_file_hash: &str,
+    ) -> Result<std::collections::HashMap<usize, (String, String)>, AppError> {
+        self.with_conn(|conn| {
+            let mut map = std::collections::HashMap::new();
+            let mut stmt = conn.prepare(
+                "SELECT entry_index, corrected_text, pre_edit_text FROM source_edit_cache
+                 WHERE original_file_hash = ?1"
+            )?;
+            let rows = stmt.query_map(rusqlite::params![original_file_hash], |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as usize,  // entry_index
+                    row.get::<_, String>(1)?,        // corrected_text
+                    row.get::<_, String>(2)?,        // pre_edit_text
+                ))
+            })?;
+            for row in rows {
+                let (idx, corrected, original) = row?;
+                map.insert(idx, (corrected, original));
+            }
+            Ok(map)
+        })
+    }
+
+    /// 删除单条原文修改记录（还原操作时调用）
+    /// 按 (original_file_hash, entry_index) 精确删除
+    pub fn delete_source_edit(
+        &self,
+        entry_index: usize,
+        original_file_hash: &str,
+    ) -> Result<usize, AppError> {
+        self.with_conn(|conn| {
+            let count = conn.execute(
+                "DELETE FROM source_edit_cache
+                 WHERE entry_index = ?1 AND original_file_hash = ?2",
+                rusqlite::params![entry_index as i64, original_file_hash],
+            )?;
+            Ok(count)
+        })
+    }
+
+    /// 替换某文件的所有 source_edit 记录（原子操作）
+    /// 删除该 file_hash 下的所有记录，然后插入 new_edits
+    /// 用于 undo/redo/resetToInitial 后整体重建，保证 DB 与内存一致
+    /// 使用 unchecked_transaction（&self），因为 with_conn 只提供 &Connection
+    pub fn replace_source_edits(
+        &self,
+        file_hash: &str,
+        new_edits: &[(usize, String, String)],  // (entry_index, corrected_text, pre_edit_text)
+    ) -> Result<(), AppError> {
+        self.with_conn(|conn| {
+            // unchecked_transaction 接受 &Connection（不需要 &mut），适合 with_conn 的约束
+            let tx = conn.unchecked_transaction()?;
+            tx.execute("DELETE FROM source_edit_cache WHERE original_file_hash = ?1", [file_hash])?;
+            for (entry_index, corrected, original) in new_edits {
+                tx.execute(
+                    "INSERT OR REPLACE INTO source_edit_cache (entry_index, corrected_text, pre_edit_text, original_file_hash)
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![*entry_index as i64, corrected, original, file_hash],
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
         })
     }
 
@@ -921,12 +1030,96 @@ mod tests {
         let db = test_db();
         // 再次执行 migrate 不应报错
         db.migrate().unwrap();
-        // schema_migrations 应有 v1、v2、v3 三条
+        // schema_migrations 应有 v1、v2、v3、v4 四条
         let count: i64 = db.with_conn(|conn| {
             Ok(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))?)
         }).unwrap();
-        assert_eq!(count, 3);
+        assert_eq!(count, 4);
     }
 
     // === SECTION 9 END ===
+
+    // === source_edit_cache 单元测试（T1-T5）===
+
+    #[test]
+    fn test_source_edit_set_and_get() {
+        // T1: set_source_edit 写入后 get_source_edits_by_file_hash 能查到
+        let db = test_db();
+        db.set_source_edit(0, "corrected", "original", "hash1").unwrap();
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 1);
+        let (corrected, original) = &edits[&0];
+        assert_eq!(corrected, "corrected");
+        assert_eq!(original, "original");
+    }
+
+    #[test]
+    fn test_source_edit_overwrite_same_index() {
+        // T2: 同一 (file_hash, entry_index) 二次写入覆盖，不新增行
+        let db = test_db();
+        db.set_source_edit(0, "v1", "orig", "hash1").unwrap();
+        db.set_source_edit(0, "v2", "orig", "hash1").unwrap();
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[&0].0, "v2");
+    }
+
+    #[test]
+    fn test_source_edit_multiple_entries_same_file() {
+        // T3: 同一 file_hash 下多个 entry_index 各自独立存储
+        let db = test_db();
+        db.set_source_edit(0, "c0", "o0", "hash1").unwrap();
+        db.set_source_edit(1, "c1", "o1", "hash1").unwrap();
+        db.set_source_edit(5, "c5", "o5", "hash1").unwrap();
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 3);
+        assert_eq!(edits[&0].0, "c0");
+        assert_eq!(edits[&1].0, "c1");
+        assert_eq!(edits[&5].0, "c5");
+    }
+
+    #[test]
+    fn test_source_edit_isolation_by_file_hash() {
+        // T4: 不同 file_hash 互不干扰
+        let db = test_db();
+        db.set_source_edit(0, "c_a", "o_a", "hashA").unwrap();
+        db.set_source_edit(0, "c_b", "o_b", "hashB").unwrap();
+        let edits_a = db.get_source_edits_by_file_hash("hashA").unwrap();
+        let edits_b = db.get_source_edits_by_file_hash("hashB").unwrap();
+        assert_eq!(edits_a.len(), 1);
+        assert_eq!(edits_a[&0].0, "c_a");
+        assert_eq!(edits_b.len(), 1);
+        assert_eq!(edits_b[&0].0, "c_b");
+    }
+
+    #[test]
+    fn test_source_edit_delete_and_replace() {
+        // T5: delete_source_edit 删单条；replace_source_edits 原子替换
+        let db = test_db();
+        db.set_source_edit(0, "c0", "o0", "hash1").unwrap();
+        db.set_source_edit(1, "c1", "o1", "hash1").unwrap();
+        // 删除 entry 0
+        let deleted = db.delete_source_edit(0, "hash1").unwrap();
+        assert_eq!(deleted, 1);
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 1);
+        assert!(!edits.contains_key(&0));
+        assert!(edits.contains_key(&1));
+        // replace：清空后插入新记录
+        db.replace_source_edits("hash1", &[
+            (2, "c2".to_string(), "o2".to_string()),
+            (3, "c3".to_string(), "o3".to_string()),
+        ]).unwrap();
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 2);
+        assert!(edits.contains_key(&2));
+        assert!(edits.contains_key(&3));
+        assert!(!edits.contains_key(&1)); // 旧的被清掉
+        // replace 空数组 = 清空该 file_hash 所有记录
+        db.replace_source_edits("hash1", &[]).unwrap();
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 0);
+    }
+
+    // === SECTION 10 END ===
 }

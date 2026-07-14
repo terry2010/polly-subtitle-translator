@@ -92,6 +92,10 @@ export interface SubtitleEntry {
   failed?: boolean;
   /** 译文是否来自缓存（仅内存状态，用于统计显示） */
   from_cache?: boolean;
+  /** 原始文本（用户编辑原文后保存的原始值，用于还原标记）
+   *  null = 未编辑过；string = 已编辑，值为编辑前的原始文本
+   *  不参与 file_hash 计算，不写入字幕文件 */
+  pre_edit_text: string | null;
 }
 
 export interface SubtitleFile {
@@ -130,6 +134,9 @@ export interface TranslateEntry {
   translated: string;
   from_cache: boolean;
   failed: boolean;
+  /** 原始文本（仅当该条目被编辑过时有值，用于前端恢复还原标记）
+   *  null = 未编辑过；string = 编辑前的原始文本 */
+  pre_edit_text: string | null;
 }
 
 /** token 用量统计（仅 AI 翻译有值，传统翻译为 undefined） */

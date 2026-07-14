@@ -174,7 +174,7 @@ export function TranslatePanel() {
       if (!latest.file) return;
       const entries = latest.file.entries.map((e) => {
         const translated = result.translations.find((r) => r.index === e.index);
-        return translated ? { ...e, translated: translated.translated, failed: translated.failed } : e;
+        return translated ? { ...e, translated: translated.translated, failed: translated.failed, from_cache: translated.from_cache, pre_edit_text: translated.pre_edit_text ?? e.pre_edit_text ?? null } : e;
       });
       latest.setFile({ ...latest.file, entries });
     }
