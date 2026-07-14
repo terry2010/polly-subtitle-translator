@@ -634,8 +634,10 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     }
     if (entry.text.includes("\\p1")) return; // 跳过矢量绘图指令
     try {
-      await translateStore.startTranslate([entry], (index, translated, failed) => {
-        subtitleStore.updateEntry(index, { translated, failed });
+      await translateStore.startTranslate([entry], (index, translated, failed, originalText) => {
+        const patch: any = { translated, failed };
+        if (originalText !== undefined) { patch.pre_edit_text = originalText; }
+        subtitleStore.updateEntry(index, patch);
       }, undefined, undefined, undefined, subtitleStore.file?.file_hash || undefined);
     } catch (e) {
       error("翻译本条字幕失败:", e);

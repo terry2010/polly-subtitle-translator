@@ -61,7 +61,7 @@ interface TranslateState {
   setExtractingNames: (v: boolean) => void;
   extractNames: (entries: SubtitleEntry[]) => Promise<GlossaryEntry[] | null>;
   resetExtractNamesProgress: () => void;
-  startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean, fileHash?: string) => Promise<TranslateResult | null>;
+  startTranslate: (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean, originalText?: string | null) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean, fileHash?: string) => Promise<TranslateResult | null>;
   cancelTranslate: () => Promise<void>;
   reset: () => void;
 }
@@ -163,7 +163,7 @@ export const useTranslateStore = create<TranslateState>()(
         }
       },
 
-      startTranslate: async (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean, fileHash?: string) => {
+      startTranslate: async (entries: SubtitleEntry[], onEntryDone?: (index: number, translated: string, failed: boolean, originalText?: string | null) => void, skipCache?: boolean, glossary?: [string, string][], nameTagging?: boolean, fileHash?: string) => {
         // 如果正在翻译，不允许启动新的翻译任务
         if (get().translating) {
           warn("翻译正在进行中，跳过新任务");
@@ -215,7 +215,7 @@ export const useTranslateStore = create<TranslateState>()(
         if (onEntryDone) {
           try {
             unlistenEntry = await api.onTranslateEntryDone((entry) => {
-              onEntryDone(entry.index, entry.translated, entry.failed);
+              onEntryDone(entry.index, entry.translated, entry.failed, entry.pre_edit_text);
             });
           } catch (e) {
             warn("单条监听失败:", e);

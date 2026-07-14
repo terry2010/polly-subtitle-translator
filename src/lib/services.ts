@@ -126,7 +126,9 @@ export function matchesSearch(s: ServiceDef, query: string): boolean {
   const q = query.toLowerCase();
   return s.name.toLowerCase().includes(q)
     || s.freeQuota.toLowerCase().includes(q)
-    || s.price.toLowerCase().includes(q);
+    || s.price.toLowerCase().includes(q)
+    || (s.completelyFree && "完全免费".includes(query))
+    || (s.hasFreeTier && "有免费额度".includes(query));
 }
 
 /** 根据 id 查找服务定义 */

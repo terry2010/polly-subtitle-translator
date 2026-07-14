@@ -1,7 +1,7 @@
 import { useRef, useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X } from "lucide-react";
+import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, Pencil, RotateCcw } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -10,6 +10,7 @@ import { useSubtitleStore } from "../stores/subtitleStore";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { SubtitleEntry } from "../lib/ipc-types";
 import { withPlayerHidden } from "../lib/utils";
+import { RestoreOriginalDialog } from "./RestoreOriginalDialog";
 
 function formatTimecode(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -29,6 +30,11 @@ export function SubtitleListPanel() {
   const [offsetInput, setOffsetInput] = useState("");
   const [showOffset, setShowOffset] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
+  // 原文编辑临时状态（确认时调 editOriginalText）
+  const [editingOriginalIndex, setEditingOriginalIndex] = useState<number | null>(null);
+  const [editingOriginalText, setEditingOriginalText] = useState("");
+  // 恢复原文对话框
+  const [restoreDialogEntry, setRestoreDialogEntry] = useState<{ index: number; originalText: string; modifiedText: string } | null>(null);
 
   const rowVirtualizer = useVirtualizer({
     count: file?.entries.length ?? 0,
@@ -61,6 +67,7 @@ export function SubtitleListPanel() {
       text: "",
       translated: "",
       style: null,
+      pre_edit_text: null,
     };
     store.addEntry(newEntry);
   }, [file, store]);
@@ -227,8 +234,26 @@ export function SubtitleListPanel() {
                 {editingIndex === entry.index ? (
                   <div className="mt-1 space-y-1">
                     <Textarea
-                      value={entry.text}
-                      onChange={(e) => store.updateEntry(entry.index, { text: e.target.value })}
+                      value={editingOriginalIndex === entry.index ? editingOriginalText : entry.text}
+                      onChange={(e) => {
+                        if (editingOriginalIndex === entry.index) {
+                          setEditingOriginalText(e.target.value);
+                        } else {
+                          store.updateEntry(entry.index, { text: e.target.value });
+                        }
+                      }}
+                      onFocus={() => {
+                        if (editingOriginalIndex !== entry.index) {
+                          setEditingOriginalIndex(entry.index);
+                          setEditingOriginalText(entry.text);
+                        }
+                      }}
+                      onBlur={() => {
+                        if (editingOriginalIndex === entry.index) {
+                          store.editOriginalText(entry.index, editingOriginalText);
+                          setEditingOriginalIndex(null);
+                        }
+                      }}
                       className="min-h-[40px] text-xs"
                       placeholder={t("subtitle.original")}
                     />
@@ -241,7 +266,25 @@ export function SubtitleListPanel() {
                   </div>
                 ) : (
                   <div className="mt-0.5 space-y-0.5">
-                    <p className="text-xs line-clamp-1">{entry.text || <span className="opacity-30">—</span>}</p>
+                    <div className="flex items-center gap-1">
+                      <p className="text-xs line-clamp-1 flex-1">{entry.text || <span className="opacity-30">—</span>}</p>
+                      {entry.pre_edit_text != null && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRestoreDialogEntry({
+                              index: entry.index,
+                              originalText: entry.pre_edit_text!,
+                              modifiedText: entry.text,
+                            });
+                          }}
+                          className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-blue-600 hover:bg-blue-100"
+                          title={t("subtitle.edited", "已编辑")}
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </button>
+                      )}
+                    </div>
                     {entry.translated && (
                       <p className="text-xs text-primary line-clamp-1">{entry.translated}</p>
                     )}
@@ -252,6 +295,18 @@ export function SubtitleListPanel() {
           })}
         </div>
       </div>
+      {/* 恢复原文对话框 */}
+      <RestoreOriginalDialog
+        open={restoreDialogEntry != null}
+        onOpenChange={(open) => { if (!open) setRestoreDialogEntry(null); }}
+        originalText={restoreDialogEntry?.originalText ?? ""}
+        modifiedText={restoreDialogEntry?.modifiedText ?? ""}
+        onRestore={() => {
+          if (restoreDialogEntry) {
+            store.restoreOriginalText(restoreDialogEntry.index);
+          }
+        }}
+      />
     </div>
   );
 }

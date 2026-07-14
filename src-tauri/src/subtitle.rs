@@ -31,6 +31,11 @@ pub struct SubtitleEntry {
     /// 译文是否来自缓存（仅内存状态，用于统计显示）
     #[serde(default)]
     pub from_cache: bool,
+    /// 原始文本（用户编辑原文后保存的原始值，用于还原标记）
+    /// None = 未编辑过；Some = 已编辑，值为编辑前的原始文本
+    /// 不参与 compute_subtitle_hash 计算，不写入字幕文件
+    #[serde(default)]
+    pub pre_edit_text: Option<String>,
 }
 
 /// 字幕文件（解析后的统一结构）
@@ -740,6 +745,7 @@ pub fn parse_srt(content: &str) -> Result<SubtitleFile, AppError> {
             style: None,
             failed: false,
             from_cache: false,
+            pre_edit_text: None,
         });
     }
 
@@ -891,6 +897,7 @@ pub fn parse_vtt(content: &str) -> Result<SubtitleFile, AppError> {
             style: None,
             failed: false,
             from_cache: false,
+            pre_edit_text: None,
         });
     }
 
@@ -1005,6 +1012,7 @@ pub fn parse_ass(content: &str) -> Result<SubtitleFile, AppError> {
                     style: Some(style),
                     failed: false,
                     from_cache: false,
+                    pre_edit_text: None,
                 });
             }
         }
@@ -1097,6 +1105,7 @@ fn parse_ass_fallback(content: &str) -> Result<SubtitleFile, AppError> {
                     style: Some(style),
                     failed: false,
                     from_cache: false,
+                    pre_edit_text: None,
                 });
             }
         }
@@ -1976,6 +1985,7 @@ Dialogue: 0,0:00:06.92,0:00:08.38,Default,,0,0,0,,<font size=\"24\">因为失业
                 style: Some("Default".to_string()),
                 failed: false,
                 from_cache: false,
+                pre_edit_text: None,
             }],
             raw_header: None,
             source_path: None,
@@ -2227,6 +2237,7 @@ Dialogue: 0,0:03:42.30,0:03:43.76,Primary,,0,0,0,,{\\rPrimary}里克的头：哦
             style: None,
             failed,
             from_cache: false,
+            pre_edit_text: None,
         };
         let entries = vec![
             make(0, "Hello world", "你好世界", false),            // 正常
@@ -2296,5 +2307,56 @@ Dialogue: 0,0:03:42.30,0:03:43.76,Primary,,0,0,0,,{\\rPrimary}里克的头：哦
                 reparsed.entries.iter().map(|e| (e.text.clone(), e.translated.clone())).collect::<Vec<_>>()
             );
         }
+    }
+
+    // === T23: 保存/导出测试：pre_edit_text 不写入文件 ===
+
+    #[test]
+    fn test_save_subtitle_does_not_leak_pre_edit_text() {
+        let file = SubtitleFile {
+            format: SubtitleFormat::Srt,
+            entries: vec![SubtitleEntry {
+                index: 0, start_ms: 0, end_ms: 1000,
+                text: "Hi".into(),           // corrected（会写入文件）
+                translated: "你好".into(),    // 译文（会写入文件）
+                style: None, failed: false, from_cache: false,
+                pre_edit_text: Some("Hello".into()),  // 原始（不应写入文件）
+            }],
+            raw_header: None, source_path: None, file_hash: "H1".into(),
+        };
+
+        let content = render_subtitle(&file);
+        // 文件内容含 corrected text 和译文，不含 pre_edit_text
+        assert!(content.contains("Hi") || content.contains("你好"));
+        assert!(!content.contains("Hello"));  // pre_edit_text 不泄露
+    }
+
+    #[test]
+    fn test_export_subtitle_does_not_leak_pre_edit_text() {
+        let file = SubtitleFile {
+            format: SubtitleFormat::Ass,
+            entries: vec![SubtitleEntry {
+                index: 0, start_ms: 0, end_ms: 1000,
+                text: "Hi".into(),
+                translated: "你好".into(),
+                style: Some("Default".into()),
+                failed: false, from_cache: false,
+                pre_edit_text: Some("Hello".into()),
+            }],
+            raw_header: Some("[Script Info]\nScriptType: v4.00+\n\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,30,1\n".into()),
+            source_path: None, file_hash: "H1".into(),
+        };
+
+        let options = ExportOptions {
+            format: SubtitleFormat::Ass,
+            mode: ExportMode::Monolingual,
+            monolingual_lang: Some("source".into()),
+            bilingual_translated_first: None,
+            ass_style: None,
+            video_width: None,
+            video_height: None,
+        };
+        let content = export_subtitle(&file, &options);
+        assert!(!content.contains("Hello"));  // pre_edit_text 不泄露
     }
 }

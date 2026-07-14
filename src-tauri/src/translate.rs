@@ -323,6 +323,12 @@ pub struct TranslateEntry {
     pub translated: String,
     pub from_cache: bool,
     pub failed: bool,
+    /// 原始文本（仅当该条目被编辑过时有值，用于前端恢复还原标记）
+    /// None = 未编辑过；Some = 编辑前的原始文本
+    /// 由 IPC 层（translate_subtitle）从 entries 的 pre_edit_text 填充，
+    /// 翻译核心逻辑不感知此字段
+    #[serde(default)]
+    pub pre_edit_text: Option<String>,
 }
 
 /// 翻译提供商凭据
@@ -1386,6 +1392,9 @@ impl<'a> TranslateScheduler<'a> {
     ) -> Result<Vec<TranslateEntry>, AppError> {
         let mut results = Vec::new();
         for entry in entries {
+            // 原文编辑过的条目：翻译缓存可能以 corrected text 或原始文本（pre_edit_text）为 key。
+            // 优先用 corrected text 查（用户可能已重新翻译过新原文），
+            // 若未命中再用 pre_edit_text 查（旧译文仍可用）。
             let cache_key = translate_cache_key(
                 &entry.text,
                 source_lang,
@@ -1393,7 +1402,21 @@ impl<'a> TranslateScheduler<'a> {
                 &self.provider_name,
                 &self.file_hash,
             );
-            if let Some(cached) = self.db.get_translate_cache(&cache_key)? {
+            let cached_opt = if let Some(c) = self.db.get_translate_cache(&cache_key)? {
+                Some(c)
+            } else if let Some(pre_edit) = &entry.pre_edit_text {
+                let fallback_key = translate_cache_key(
+                    pre_edit,
+                    source_lang,
+                    target_lang,
+                    &self.provider_name,
+                    &self.file_hash,
+                );
+                self.db.get_translate_cache(&fallback_key)?
+            } else {
+                None
+            };
+            if let Some(cached) = cached_opt {
                 // 缓存命中后做质量校验，忽略坏缓存重新翻译：
                 // 1. 音效标记不一致（如英文短句被缓存成了中文音效标记）
                 // 2. 译文=原文（AI 未实际翻译，原样返回）——但音乐符号/音效标记/非英语内容保持原样是正确行为
@@ -1415,6 +1438,7 @@ impl<'a> TranslateScheduler<'a> {
                         translated: cached,
                         from_cache: true,
                         failed: true,
+                        pre_edit_text: None,
                     });
                     continue;
                 }
@@ -1428,6 +1452,7 @@ impl<'a> TranslateScheduler<'a> {
                         translated: cached,
                         from_cache: true,
                         failed: true,
+                        pre_edit_text: None,
                     });
                     continue;
                 }
@@ -1447,6 +1472,7 @@ impl<'a> TranslateScheduler<'a> {
                         translated: cached,
                         from_cache: true,
                         failed: true,
+                        pre_edit_text: None,
                     });
                     continue;
                 }
@@ -1456,6 +1482,7 @@ impl<'a> TranslateScheduler<'a> {
                     translated: cached,
                     from_cache: true,
                     failed: false,
+                    pre_edit_text: None,
                 });
             }
         }
@@ -1538,6 +1565,7 @@ impl<'a> TranslateScheduler<'a> {
                     translated: entry.text.clone(),
                     from_cache: false,
                     failed: false,
+                    pre_edit_text: None,
                 };
                 if let Some(ref cb) = on_entry_done {
                     cb(&te);
@@ -1571,6 +1599,7 @@ impl<'a> TranslateScheduler<'a> {
                             translated: cached,
                             from_cache: true,
                             failed: false,
+                            pre_edit_text: None,
                         };
                         if let Some(ref cb) = on_entry_done {
                             cb(&te);
@@ -1704,6 +1733,7 @@ impl<'a> TranslateScheduler<'a> {
                     translated: restored,
                     from_cache: false,
                     failed,
+                    pre_edit_text: None,
                 };
                 if let Some(ref cb) = on_entry_done {
                     cb(&te);
@@ -1979,6 +2009,7 @@ impl<'a> TranslateScheduler<'a> {
                         translated: restored,
                         from_cache: false,
                         failed,
+                        pre_edit_text: None,
                     };
                     if let Some(ref cb) = on_entry_done {
                         cb(&te);
@@ -5096,6 +5127,7 @@ mod tests {
             style: None,
             failed: false,
             from_cache: false,
+            pre_edit_text: None,
         }];
 
         let result = scheduler.get_cached_entries(&entries, source_lang, target_lang).unwrap();
@@ -5104,6 +5136,56 @@ mod tests {
         assert!(entry.from_cache, "Should be from cache");
         assert!(entry.failed, "Aah! → Aah! should be marked as failed during recovery");
         assert_eq!(entry.translated, "Aah!");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_get_cached_entries_pre_edit_fallback() {
+        // 回归测试：编辑原文后重新加载，翻译缓存以原始文本为 key，
+        // get_cached_entries 应通过 pre_edit_text fallback 命中旧缓存。
+        let db_path = std::env::temp_dir().join(format!("test_cache_preedit_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&db_path);
+        let db = Database::open(&db_path).expect("打开测试数据库失败");
+        db.migrate().expect("数据库迁移失败");
+
+        let source_lang = "en";
+        let target_lang = "zh";
+        let provider_name = "openai-preedit-test";
+        let file_hash = "test_hash_preedit";
+
+        // 写入缓存：原始文本 "Hello" → "你好"
+        let cache_key = translate_cache_key("Hello", source_lang, target_lang, provider_name, file_hash);
+        db.set_translate_cache(&cache_key, "Hello", "你好", source_lang, target_lang, provider_name)
+            .unwrap();
+
+        let scheduler = TranslateScheduler::new(
+            &db,
+            std::sync::Arc::new(crate::translate::BaiduProvider::new(String::new(), String::new()))
+                as std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
+            provider_name.to_string(),
+            String::new(),
+        )
+        .with_file_hash(file_hash.to_string());
+
+        // 模拟编辑后的条目：text="Hi"（corrected），pre_edit_text="Hello"（原始）
+        let entries = vec![crate::subtitle::SubtitleEntry {
+            index: 0,
+            start_ms: 0,
+            end_ms: 1000,
+            text: "Hi".to_string(),
+            translated: String::new(),
+            style: None,
+            failed: false,
+            from_cache: false,
+            pre_edit_text: Some("Hello".to_string()),
+        }];
+
+        let result = scheduler.get_cached_entries(&entries, source_lang, target_lang).unwrap();
+        assert_eq!(result.len(), 1, "Should find cache via pre_edit_text fallback");
+        let entry = &result[0];
+        assert!(entry.from_cache, "Should be from cache");
+        assert_eq!(entry.translated, "你好", "Should return the old translation");
 
         let _ = std::fs::remove_file(&db_path);
     }
@@ -5428,6 +5510,7 @@ Hitler → 希特勒"#;
             style: None,
             failed: false,
             from_cache: false,
+            pre_edit_text: None,
         }];
 
         let result = scheduler

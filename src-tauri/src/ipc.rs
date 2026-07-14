@@ -206,6 +206,10 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         cancel_scan,
         add_files_to_queue,
         is_directory,
+        save_source_edit,
+        delete_source_edit,
+        replace_source_edits,
+        get_source_edits,
     ])
 }
 
@@ -633,6 +637,74 @@ pub fn clear_translate_cache(db: State<'_, Database>) -> IpcResult<usize> {
     ipc_result(db.clear_translate_cache())
 }
 
+/// 原文编辑记录（IPC 返回类型）
+#[derive(serde::Serialize)]
+pub struct SourceEditRecord {
+    pub entry_index: usize,
+    pub corrected_text: String,
+    pub pre_edit_text: String,
+}
+
+/// get_source_edits：查询某文件的原文编辑记录
+/// file_hash: 原始文件 hash（H1）
+/// 返回该文件所有有编辑记录的条目
+#[tauri::command]
+pub async fn get_source_edits(
+    file_hash: String,
+    db: State<'_, Database>,
+) -> Result<Vec<SourceEditRecord>, IpcError> {
+    let edits = db.get_source_edits_by_file_hash(&file_hash).map_err(to_ipc_err)?;
+    Ok(edits.into_iter().map(|(index, (corrected, original))| SourceEditRecord {
+        entry_index: index,
+        corrected_text: corrected,
+        pre_edit_text: original,
+    }).collect())
+}
+
+/// save_source_edit：编辑确认后立即写入 source_edit_cache（单条）
+/// entry_index: 条目序号，区分同文件内不同条目
+/// corrected_text: 修改后的原文
+/// pre_edit_text: 原始文本
+/// original_file_hash: 原始字幕的 file_hash
+#[tauri::command]
+pub async fn save_source_edit(
+    entry_index: usize,
+    corrected_text: String,
+    pre_edit_text: String,
+    original_file_hash: String,
+    db: State<'_, Database>,
+) -> Result<(), IpcError> {
+    db.set_source_edit(entry_index, &corrected_text, &pre_edit_text, &original_file_hash)
+        .map_err(to_ipc_err)?;
+    Ok(())
+}
+
+/// delete_source_edit：还原操作时删除单条 source_edit 记录
+/// 按 (original_file_hash, entry_index) 精确删除
+#[tauri::command]
+pub async fn delete_source_edit(
+    entry_index: usize,
+    original_file_hash: String,
+    db: State<'_, Database>,
+) -> Result<usize, IpcError> {
+    let count = db.delete_source_edit(entry_index, &original_file_hash)
+        .map_err(to_ipc_err)?;
+    Ok(count)
+}
+
+/// replace_source_edits：替换某文件的所有 source_edit 记录（原子操作）
+/// 用于 undo/redo/resetToInitial 后整体重建，保证 DB 与内存一致
+/// edits: [(entry_index, corrected_text, pre_edit_text)]
+#[tauri::command]
+pub async fn replace_source_edits(
+    file_hash: String,
+    edits: Vec<(usize, String, String)>,
+    db: State<'_, Database>,
+) -> Result<(), IpcError> {
+    db.replace_source_edits(&file_hash, &edits).map_err(to_ipc_err)?;
+    Ok(())
+}
+
 /// get_supported_target_langs：获取支持的目标语言列表
 #[tauri::command]
 pub async fn get_supported_target_langs(
@@ -688,8 +760,10 @@ pub async fn get_supported_target_langs(
 /// skip_cache: true 时跳过缓存查询，强制重新请求 API（用于"重新翻译"）
 /// glossary: 译名表 [(EnglishName, ChineseTranslation)]，注入到 AI 翻译的 system prompt
 /// name_tagging: 是否要求 AI 在译文中用 <name=En>Zh</name> 标记人名（用于后处理一致性检查）
-/// file_hash 由后端从 entries 直接计算（compute_subtitle_hash），不依赖前端传参，
-/// 确保前端编辑条目后 hash 自动更新，避免陈旧 hash 污染缓存。
+/// file_hash: 前端必须传入原始文件的 hash（H1），不得从 entries 重算。
+/// 编辑原文后 entry.text 变了，但 file_hash 必须保持 H1，
+/// 否则 source_edit_cache 查不到、翻译缓存 key 与历史缓存隔离。
+/// 如果未传 file_hash，返回 error（不再 fallback 计算）。
 #[tauri::command]
 pub async fn translate_subtitle(
     entries: Vec<subtitle::SubtitleEntry>,
@@ -731,13 +805,24 @@ pub async fn translate_subtitle(
     let _final_concurrency = resolve_translation_concurrency(&db, &prov, &service_id)?;
 
     // 字幕内容 hash，用于缓存隔离
-    // 优先用前端传来的 file_hash（整个字幕文件的 hash），
-    // 这样右键翻译单条时缓存 key 与全量翻译一致，关闭再打开能恢复。
-    // 前端没传时（如 API 直接调用）才从当前 entries 计算。
+    // 前端必须传 file_hash=H1（原始文件 hash）。
+    // 如果从 entries 重算，编辑后的 entries 会算出 H2，
+    // 导致 source_edit_cache 查不到、翻译缓存 key 错误。
+    // 不再 fallback 计算，直接返回 error。
     let file_hash = match &file_hash {
         Some(h) if !h.is_empty() => h.clone(),
-        _ => subtitle::compute_subtitle_hash(&entries),
+        _ => {
+            return Err(to_ipc_err(AppError::FileHashMissing {
+                detail: "translate_subtitle 必须传入 file_hash（原始文件 hash），不接受空值".into(),
+            }));
+        }
     };
+
+    // 构建 index → pre_edit_text 映射（从 entries 中提取），用于事件和返回结果
+    let pre_edit_text_map: std::collections::HashMap<usize, Option<String>> = entries
+        .iter()
+        .map(|e| (e.index, e.pre_edit_text.clone()))
+        .collect();
 
     // clone 一份用于 post_process_name_tags 后更新缓存
     let provider_name_for_cache = provider_name.clone();
@@ -770,15 +855,18 @@ pub async fn translate_subtitle(
         }));
     });
 
-    // 单条翻译完成回调：通过 Tauri 事件推送单条结果
+    // 单条翻译完成回调：通过 Tauri 事件推送单条结果（含 pre_edit_text）
     let app_handle2 = app.clone();
+    let pre_edit_text_map_for_cb = pre_edit_text_map.clone();
     let entry_cb = Box::new(move |entry: &translate::TranslateEntry| {
+        let orig = pre_edit_text_map_for_cb.get(&entry.index).cloned().flatten();
         let _ = app_handle2.emit("translate-entry-done", serde_json::json!({
             "index": entry.index,
             "original": entry.original,
             "translated": entry.translated,
             "from_cache": entry.from_cache,
             "failed": entry.failed,
+            "pre_edit_text": orig,
         }));
     });
 
@@ -786,6 +874,11 @@ pub async fn translate_subtitle(
         .translate_entries_full(&entries, &source_lang, &target_lang, 5000, Some(progress_cb), Some(entry_cb), skip_cache.unwrap_or(false))
         .await
         .map_err(to_ipc_err)?;
+
+    // 填充返回结果中的 pre_edit_text（从 entries 提取，翻译核心逻辑不感知此字段）
+    for te in &mut result.translations {
+        te.pre_edit_text = pre_edit_text_map.get(&te.index).cloned().flatten();
+    }
 
     // 人名标记后处理：剥离 <name> 标签 + 检测不一致 + 全局替换
     if name_tagging.unwrap_or(false) {
@@ -1043,7 +1136,9 @@ pub async fn extract_names(
 }
 
 /// get_cached_translations：查询已缓存的翻译结果（不调用 API）
-/// file_hash 由后端从 entries 直接计算，确保与 translate_subtitle 使用相同的 hash
+/// file_hash: 前端必须传入原始文件的 hash（H1），与 translate_subtitle 一致。
+/// entries 应该是已应用 source_edit 的 corrected entries（由前端在 loadSubtitle 中处理）。
+/// 不再查 source_edit_cache，只查 translate_cache（source_edit 恢复由 get_source_edits 独立处理）。
 #[tauri::command]
 pub async fn get_cached_translations(
     entries: Vec<subtitle::SubtitleEntry>,
@@ -1052,15 +1147,40 @@ pub async fn get_cached_translations(
     provider: String,
     service_id: Option<String>,
     model: Option<String>,
+    file_hash: Option<String>,
     db: State<'_, Database>,
 ) -> Result<Vec<translate::TranslateEntry>, IpcError> {
-    let prov = TranslateProvider::from_str(&provider).ok_or_else(|| {
-        AppError::TranslateUnknownProvider { provider: provider.clone() }.to_ipc_error()
+    let fh = match &file_hash {
+        Some(h) if !h.is_empty() => h.clone(),
+        _ => {
+            return Err(to_ipc_err(AppError::FileHashMissing {
+                detail: "get_cached_translations 必须传入 file_hash（原始文件 hash），不接受空值".into(),
+            }));
+        }
+    };
+    get_cached_translations_inner(entries, &source_lang, &target_lang, &provider,
+        service_id.as_deref(), model.as_deref(), &fh, &db)
+        .map_err(to_ipc_err)
+}
+
+/// get_cached_translations 内部逻辑（不带 State 包装，供测试调用）
+pub fn get_cached_translations_inner(
+    entries: Vec<subtitle::SubtitleEntry>,
+    source_lang: &str,
+    target_lang: &str,
+    provider: &str,
+    service_id: Option<&str>,
+    model: Option<&str>,
+    file_hash: &str,
+    db: &Database,
+) -> Result<Vec<translate::TranslateEntry>, AppError> {
+    let prov = TranslateProvider::from_str(provider).ok_or_else(|| {
+        AppError::TranslateUnknownProvider { provider: provider.to_string() }
     })?;
 
     // 缓存 key 隔离：必须与 translate_subtitle 构造一致的 provider_name
     let provider_name = if prov == TranslateProvider::OpenAi {
-        match (&service_id, &model) {
+        match (service_id, model) {
             (Some(sid), Some(m)) => translate::build_cache_provider_name(&["openai", sid, m]),
             _ => "openai".to_string(),
         }
@@ -1068,24 +1188,20 @@ pub async fn get_cached_translations(
         prov.as_str().to_string()
     };
 
-    // 从 entries 直接计算 hash，与 translate_subtitle 一致
-    let file_hash = subtitle::compute_subtitle_hash(&entries);
-
-    // 获取凭据（缓存查询不需要凭据，但需要 provider_name）
+    // file_hash 由前端传入（H1），不再从 entries 计算
     let provider_name_log = provider_name.clone();
-    let model_for_scheduler = model.clone().unwrap_or_default();
+    let model_for_scheduler = model.unwrap_or_default().to_string();
     let scheduler = translate::TranslateScheduler::new(
-        &db,
+        db,
         std::sync::Arc::new(translate::BaiduProvider::new(String::new(), String::new()))
             as std::sync::Arc<dyn translate::TranslateProviderTrait + Send + Sync>,
         provider_name,
         model_for_scheduler,
     )
-    .with_file_hash(file_hash);
+    .with_file_hash(file_hash.to_string());
 
     let cached = scheduler
-        .get_cached_entries(&entries, &source_lang, &target_lang)
-        .map_err(to_ipc_err)?;
+        .get_cached_entries(&entries, source_lang, target_lang)?;
 
     tracing::info!(
         "缓存查询: {} 条中命中 {} 条 (provider={}, source={}, target={})",
@@ -3310,6 +3426,142 @@ mod tests {
             "detect_system_lang 返回了非预期值: {}",
             lang
         );
+    }
+
+    // === source_edit / get_cached_translations 集成测试（T20-T24）===
+
+    fn test_db() -> Database {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("test_ipc_source_edit_{}_{}.db", std::process::id(), id));
+        let _ = std::fs::remove_file(&path);
+        let db = Database::open(&path).unwrap();
+        db.migrate().unwrap();
+        db
+    }
+
+    fn make_entry(i: usize, text: &str) -> subtitle::SubtitleEntry {
+        subtitle::SubtitleEntry {
+            index: i,
+            start_ms: 0,
+            end_ms: 1000,
+            text: text.to_string(),
+            translated: String::new(),
+            style: None,
+            failed: false,
+            from_cache: false,
+            pre_edit_text: None,
+        }
+    }
+
+    /// T20: get_source_edits + get_cached_translations 集成：编辑恢复 + 缓存命中
+    /// 验证核心场景：编辑后用 corrected_text + H1 算 cache key，翻译缓存能命中
+    #[test]
+    fn test_get_source_edits_and_cached_translations() {
+        let db = test_db();
+        // 1. 写入 source_edit_cache：entry 0 原文 "Hello" 改为 "Hi"
+        db.set_source_edit(0, "Hi", "Hello", "H1").unwrap();
+        // 2. 写入 translate_cache：用 corrected_text "Hi" + H1 算 key
+        let cache_key = crate::db::translate_cache_key("Hi", "en", "zh", "baidu", "H1");
+        db.set_translate_cache(&cache_key, "Hi", "你好", "en", "zh", "baidu").unwrap();
+
+        // 3. 调 get_source_edits 查编辑记录
+        let edits = db.get_source_edits_by_file_hash("H1").unwrap();
+        assert_eq!(edits.len(), 1);
+        let (corrected, original) = &edits[&0];
+        assert_eq!(corrected, "Hi");
+        assert_eq!(original, "Hello");
+
+        // 4. 前端应用 source_edit 后，构造 corrected entries
+        let entries = vec![subtitle::SubtitleEntry {
+            index: 0, start_ms: 0, end_ms: 1000,
+            text: "Hi".into(), translated: "".into(),
+            style: None, failed: false, from_cache: false,
+            pre_edit_text: Some("Hello".into()),
+        }];
+
+        // 5. 调 get_cached_translations_inner（用 corrected entries + H1）
+        let result = get_cached_translations_inner(
+            entries, "en", "zh", "baidu", None, None, "H1", &db,
+        ).unwrap();
+
+        // 6. 验证：翻译缓存命中（corrected_text + H1 的 cache key 命中）
+        assert_eq!(result.len(), 1);
+        assert!(result[0].from_cache);
+        assert_eq!(result[0].translated, "你好");
+        assert_eq!(result[0].original, "Hi");
+    }
+
+    /// T21: get_cached_translations 集成：无 source_edit 时正常查缓存
+    #[test]
+    fn test_get_cached_translations_no_source_edit() {
+        let db = test_db();
+        // 不写 source_edit_cache
+        // 写入 translate_cache：用原始 text "Hello" + H1 算 key
+        let cache_key = crate::db::translate_cache_key("Hello", "en", "zh", "baidu", "H1");
+        db.set_translate_cache(&cache_key, "Hello", "你好", "en", "zh", "baidu").unwrap();
+
+        let entries = vec![subtitle::SubtitleEntry {
+            index: 0, start_ms: 0, end_ms: 1000,
+            text: "Hello".into(), translated: "".into(),
+            style: None, failed: false, from_cache: false,
+            pre_edit_text: None,
+        }];
+
+        let result = get_cached_translations_inner(
+            entries, "en", "zh", "baidu", None, None, "H1", &db,
+        ).unwrap();
+
+        // 无 source_edit：正常查缓存
+        assert_eq!(result.len(), 1);
+        assert!(result[0].from_cache);
+        assert_eq!(result[0].translated, "你好");
+        assert_eq!(result[0].original, "Hello");
+    }
+
+    /// T22: save_source_edit 后 get_source_edits 能查到
+    #[test]
+    fn test_save_and_get_source_edit() {
+        let db = test_db();
+        db.set_source_edit(0, "corrected", "original", "hash1").unwrap();
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[&0].0, "corrected");
+        assert_eq!(edits[&0].1, "original");
+    }
+
+    /// T23: delete_source_edit 后 get_source_edits 查不到
+    #[test]
+    fn test_delete_source_edit() {
+        let db = test_db();
+        db.set_source_edit(0, "c0", "o0", "hash1").unwrap();
+        db.set_source_edit(1, "c1", "o1", "hash1").unwrap();
+        db.delete_source_edit(0, "hash1").unwrap();
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 1);
+        assert!(!edits.contains_key(&0));
+        assert!(edits.contains_key(&1));
+    }
+
+    /// T24: replace_source_edits 原子替换后 DB 与传入一致
+    #[test]
+    fn test_replace_source_edits() {
+        let db = test_db();
+        db.set_source_edit(0, "old0", "orig0", "hash1").unwrap();
+        db.set_source_edit(1, "old1", "orig1", "hash1").unwrap();
+        // 替换为全新的记录集
+        db.replace_source_edits("hash1", &[
+            (2, "new2".to_string(), "orig2".to_string()),
+            (3, "new3".to_string(), "orig3".to_string()),
+        ]).unwrap();
+        let edits = db.get_source_edits_by_file_hash("hash1").unwrap();
+        assert_eq!(edits.len(), 2);
+        assert_eq!(edits[&2].0, "new2");
+        assert_eq!(edits[&3].0, "new3");
+        assert!(!edits.contains_key(&0));
+        assert!(!edits.contains_key(&1));
     }
 }
 

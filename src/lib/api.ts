@@ -165,8 +165,21 @@ export const api = {
   extractNames: (texts: string[], sourceLang: string, targetLang: string, provider: string, model?: string, modelType?: string, serviceId?: string) =>
     callIpc<{ english: string; chinese: string; alternatives: string[] }[]>("extract_names", { texts, sourceLang, targetLang, provider, model: model ?? null, modelType: modelType ?? null, serviceId: serviceId ?? null }),
 
-  getCachedTranslations: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, serviceId?: string, model?: string) =>
-    callIpc<TranslateEntry[]>("get_cached_translations", { entries, sourceLang, targetLang, provider, serviceId: serviceId ?? null, model: model ?? null }),
+  getCachedTranslations: (entries: SubtitleEntry[], sourceLang: string, targetLang: string, provider: string, serviceId?: string, model?: string, fileHash?: string) =>
+    callIpc<TranslateEntry[]>("get_cached_translations", { entries, sourceLang, targetLang, provider, serviceId: serviceId ?? null, model: model ?? null, fileHash: fileHash ?? null }),
+
+  // === 原文编辑缓存 ===
+  getSourceEdits: (fileHash: string) =>
+    callIpc<{ entry_index: number; corrected_text: string; pre_edit_text: string }[]>("get_source_edits", { fileHash }),
+
+  saveSourceEdit: (entryIndex: number, correctedText: string, preEditText: string, originalFileHash: string) =>
+    callIpc<void>("save_source_edit", { entryIndex, correctedText, preEditText, originalFileHash }),
+
+  deleteSourceEdit: (entryIndex: number, originalFileHash: string) =>
+    callIpc<number>("delete_source_edit", { entryIndex, originalFileHash }),
+
+  replaceSourceEdits: (fileHash: string, edits: [number, string, string][]) =>
+    callIpc<void>("replace_source_edits", { fileHash, edits }),
 
   cancelTranslate: () =>
     callIpc<void>("cancel_translate"),
@@ -185,9 +198,9 @@ export const api = {
     });
   },
 
-  onTranslateEntryDone: async (callback: (entry: { index: number; original: string; translated: string; from_cache: boolean; failed: boolean }) => void) => {
+  onTranslateEntryDone: async (callback: (entry: { index: number; original: string; translated: string; from_cache: boolean; failed: boolean; pre_edit_text: string | null }) => void) => {
     const { listen } = await import("@tauri-apps/api/event");
-    return listen<{ index: number; original: string; translated: string; from_cache: boolean; failed: boolean }>("translate-entry-done", (event) => {
+    return listen<{ index: number; original: string; translated: string; from_cache: boolean; failed: boolean; pre_edit_text: string | null }>("translate-entry-done", (event) => {
       callback(event.payload);
     });
   },

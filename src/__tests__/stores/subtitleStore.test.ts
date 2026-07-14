@@ -13,6 +13,10 @@ vi.mock("../../lib/api", () => ({
     splitBilingualSubtitle: vi.fn(),
     getCachedTranslations: vi.fn(() => Promise.resolve([])),
     clearTranslateCache: vi.fn(() => Promise.resolve(0)),
+    getSourceEdits: vi.fn(() => Promise.resolve([])),
+    saveSourceEdit: vi.fn(() => Promise.resolve()),
+    deleteSourceEdit: vi.fn(() => Promise.resolve(0)),
+    replaceSourceEdits: vi.fn(() => Promise.resolve()),
   },
   formatIpcError: vi.fn((e: unknown) => String(e)),
 }));
@@ -28,7 +32,7 @@ vi.mock("../../stores/translateStore", () => ({
 }));
 
 function makeEntry(index: number, text: string, translated = "", startMs = 0, endMs = 1000): SubtitleEntry {
-  return { index, start_ms: startMs, end_ms: endMs, text, translated, style: null };
+  return { index, start_ms: startMs, end_ms: endMs, text, translated, style: null, pre_edit_text: null };
 }
 
 function makeFile(entries: SubtitleEntry[]): SubtitleFile {
@@ -86,6 +90,22 @@ describe("subtitleStore - 基础操作", () => {
     getStore().cancelEditEntry(0, "original", 0);
     const state = getStore();
     expect(state.file!.entries[0].translated).toBe("original");
+    expect(state.undoStack).toHaveLength(0);
+  });
+
+  it("cancelEditOriginal 恢复原始 text 和 pre_edit_text 并截断 undo 栈", () => {
+    const file = makeFile([makeEntry(0, "Hello", "你好")]);
+    getStore().setFile(file);
+    // 编辑原文
+    getStore().editOriginalText(0, "Hi");
+    expect(getStore().file!.entries[0].text).toBe("Hi");
+    expect(getStore().file!.entries[0].pre_edit_text).toBe("Hello");
+    expect(getStore().undoStack).toHaveLength(1);
+    // 取消编辑：恢复到编辑前
+    getStore().cancelEditOriginal(0, "Hello", null, 0);
+    const state = getStore();
+    expect(state.file!.entries[0].text).toBe("Hello");
+    expect(state.file!.entries[0].pre_edit_text).toBeNull();
     expect(state.undoStack).toHaveLength(0);
   });
 });
@@ -481,3 +501,283 @@ describe("subtitleStore - 拆分/交换/取消拆分", () => {
 });
 
 // === SECTION 10 END ===
+
+// === 原文编辑功能测试（T7-T19, T25-T27）===
+
+describe("subtitleStore - 原文编辑", () => {
+  function makeFileWithHash(entries: SubtitleEntry[], fileHash = "H1"): SubtitleFile {
+    return { format: "srt", entries, raw_header: null, source_path: null, file_hash: fileHash };
+  }
+
+  // 等待所有异步 source_edit 操作完成
+  async function flushAsync() {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  beforeEach(() => {
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  // T7: editOriginalText 首次编辑存原始文本
+  it("首次编辑原文时存 pre_edit_text", () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello", "译Hello")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "Hi");
+    const entries = getStore().file!.entries;
+    expect(entries[0].text).toBe("Hi");
+    expect(entries[0].pre_edit_text).toBe("Hello");
+    // 编辑原文后保留已有译文，无需重新翻译
+    expect(entries[0].translated).toBe("译Hello");
+  });
+
+  // T8: editOriginalText 改回原始文本时清除标记
+  it("改回原始文本时清除 pre_edit_text 标记", () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "Hi");
+    getStore().editOriginalText(0, "Hello"); // 改回
+    const entries = getStore().file!.entries;
+    expect(entries[0].text).toBe("Hello");
+    expect(entries[0].pre_edit_text).toBeNull();
+  });
+
+  // T9: 链式编辑 pre_edit_text 始终为最初值
+  it("链式编辑 A→B→C 时 pre_edit_text 始终为 A", () => {
+    const file = makeFileWithHash([makeEntry(0, "A")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "B");
+    expect(getStore().file!.entries[0].pre_edit_text).toBe("A");
+    getStore().editOriginalText(0, "C");
+    expect(getStore().file!.entries[0].pre_edit_text).toBe("A");
+    expect(getStore().file!.entries[0].text).toBe("C");
+  });
+
+  // T9b: 编辑后还原再重新编辑
+  it("A→B（保存）→还原→B（再次编辑）正确恢复标记", async () => {
+    const file = makeFileWithHash([makeEntry(0, "A", "译A")]);
+    getStore().setFile(file);
+    // A → B
+    getStore().editOriginalText(0, "B");
+    await flushAsync();
+    expect(api.saveSourceEdit).toHaveBeenCalledWith(0, "B", "A", "H1");
+    expect(getStore().file!.entries[0].pre_edit_text).toBe("A");
+    // 还原
+    getStore().restoreOriginalText(0);
+    await flushAsync();
+    expect(api.deleteSourceEdit).toHaveBeenCalledWith(0, "H1");
+    expect(getStore().file!.entries[0].text).toBe("A");
+    expect(getStore().file!.entries[0].pre_edit_text).toBeNull();
+    // 再次编辑为 B
+    (api.saveSourceEdit as any).mockClear();
+    getStore().editOriginalText(0, "B");
+    await flushAsync();
+    expect(api.saveSourceEdit).toHaveBeenCalledWith(0, "B", "A", "H1");
+    expect(getStore().file!.entries[0].pre_edit_text).toBe("A");
+    expect(getStore().file!.entries[0].text).toBe("B");
+  });
+
+  // T10: restoreOriginalText 恢复原始文本并清除标记
+  it("restoreOriginalText 恢复原始文本并清除标记", async () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "Hi");
+    getStore().restoreOriginalText(0);
+    await flushAsync();
+    const entries = getStore().file!.entries;
+    expect(entries[0].text).toBe("Hello");
+    expect(entries[0].pre_edit_text).toBeNull();
+    expect(api.deleteSourceEdit).toHaveBeenCalledWith(0, "H1");
+  });
+
+  // T11: replaceAll 修改原文时写入 source_edit_cache
+  it("replaceAll 修改原文时设置 pre_edit_text 并持久化", async () => {
+    const file = makeFileWithHash([
+      makeEntry(0, "Hello World"),
+      makeEntry(1, "Hello Sky"),
+    ]);
+    getStore().setFile(file);
+    getStore().setFindQuery("Hello");
+    getStore().setReplaceQuery("Hi");
+    getStore().setFindTarget("original");
+    getStore().replaceAll();
+    await flushAsync();
+    const entries = getStore().file!.entries;
+    expect(entries[0].text).toBe("Hi World");
+    expect(entries[0].pre_edit_text).toBe("Hello World");
+    expect(entries[1].text).toBe("Hi Sky");
+    expect(entries[1].pre_edit_text).toBe("Hello Sky");
+    expect(api.saveSourceEdit).toHaveBeenCalledWith(0, "Hi World", "Hello World", "H1");
+    expect(api.saveSourceEdit).toHaveBeenCalledWith(1, "Hi Sky", "Hello Sky", "H1");
+  });
+
+  // T12: replaceAll 只替换译文时不写 source_edit_cache
+  it("replaceAll target=translated 时不写 source_edit_cache", () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello", "你好")]);
+    getStore().setFile(file);
+    getStore().setFindQuery("你好");
+    getStore().setReplaceQuery("您好");
+    getStore().setFindTarget("translated");
+    getStore().replaceAll();
+    const entries = getStore().file!.entries;
+    expect(entries[0].text).toBe("Hello"); // 原文不变
+    expect(entries[0].pre_edit_text).toBeNull(); // 无标记
+    expect(api.saveSourceEdit).not.toHaveBeenCalled();
+  });
+
+  // T13: undo 编辑后整体重建 source_edit_cache
+  it("undo 编辑后整体重建 source_edit_cache（清空）", () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "Hi");
+    getStore().undo();
+    // undo 后 replaceSourceEdits 被调用，edits 为空数组（无标记条目）
+    expect(api.replaceSourceEdits).toHaveBeenCalledWith("H1", []);
+    expect(getStore().file!.entries[0].text).toBe("Hello");
+    expect(getStore().file!.entries[0].pre_edit_text).toBeNull();
+  });
+
+  // T14: redo 恢复编辑后整体重建 source_edit_cache
+  it("redo 恢复编辑后整体重建 source_edit_cache", () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "Hi");
+    getStore().undo();
+    (api.replaceSourceEdits as any).mockClear();
+    getStore().redo();
+    // redo 后 replaceSourceEdits 被调用，edits 含编辑记录
+    expect(api.replaceSourceEdits).toHaveBeenCalledWith("H1", [[0, "Hi", "Hello"]]);
+    expect(getStore().file!.entries[0].text).toBe("Hi");
+    expect(getStore().file!.entries[0].pre_edit_text).toBe("Hello");
+  });
+
+  // T15: loadSubtitle 恢复 corrected text + 标记
+  it("loadSubtitle 从 get_source_edits 恢复 corrected text + 标记", async () => {
+    (api.parseSubtitleFile as any).mockResolvedValue({
+      format: "srt",
+      entries: [{ index: 0, start_ms: 0, end_ms: 1000, text: "Hello", translated: "", style: null, pre_edit_text: null }],
+      raw_header: null, source_path: null, file_hash: "H1",
+    });
+    (api.getSourceEdits as any).mockResolvedValue([
+      { entry_index: 0, corrected_text: "Hi", pre_edit_text: "Hello" },
+    ]);
+    (api.getCachedTranslations as any).mockResolvedValue([
+      { index: 0, original: "Hi", translated: "你好", from_cache: true, failed: false, pre_edit_text: "Hello" },
+    ]);
+
+    await getStore().loadSubtitle("/test/sub.srt");
+    const entries = getStore().file!.entries;
+    expect(entries[0].text).toBe("Hi");       // corrected
+    expect(entries[0].pre_edit_text).toBe("Hello"); // 标记
+    expect(entries[0].translated).toBe("你好"); // 从缓存恢复
+    expect(entries[0].from_cache).toBe(true);
+  });
+
+  // T16: swapOriginalTranslated 清除所有 pre_edit_text
+  it("swapOriginalTranslated 清除所有 pre_edit_text 标记", async () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello", "你好")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "Hi");
+    await flushAsync();
+    expect(getStore().file!.entries[0].pre_edit_text).toBe("Hello");
+    (api.deleteSourceEdit as any).mockClear();
+    getStore().swapOriginalTranslated();
+    await flushAsync();
+    expect(getStore().file!.entries[0].pre_edit_text).toBeNull();
+    expect(api.deleteSourceEdit).toHaveBeenCalledWith(0, "H1");
+  });
+
+  // T17: deleteEntry 删除有标记的条目时清理 DB
+  it("deleteEntry 删除有标记的条目时清理 source_edit_cache", async () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "Hi");
+    await flushAsync();
+    (api.deleteSourceEdit as any).mockClear();
+    getStore().deleteEntry(0);
+    await flushAsync();
+    expect(api.deleteSourceEdit).toHaveBeenCalledWith(0, "H1");
+  });
+
+  // T18: resetToInitial 清空 source_edit_cache
+  it("resetToInitial 清空 source_edit_cache", () => {
+    const file = makeFileWithHash([makeEntry(0, "Hello")]);
+    getStore().setFile(file);
+    getStore().editOriginalText(0, "Hi");
+    getStore().resetToInitial();
+    expect(api.replaceSourceEdits).toHaveBeenCalledWith("H1", []);
+  });
+
+  // T19: updateEntry 修改 text 时打 warn
+  it("updateEntry 修改 text 时打 warn 但不阻止", async () => {
+    const { setDevModeEnabled } = await import("../../lib/logger");
+    setDevModeEnabled(true);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const file = makeFileWithHash([makeEntry(0, "Hello")]);
+    getStore().setFile(file);
+    getStore().updateEntry(0, { text: "Hi" });
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("editOriginalText"));
+    expect(getStore().file!.entries[0].text).toBe("Hi"); // 仍然生效
+    warnSpy.mockRestore();
+    setDevModeEnabled(false);
+  });
+
+  // T18b: 删除条目后其他条目的 source_edit_cache 不受影响
+  it("deleteEntry 删除条目A不影响条目B的 source_edit_cache", async () => {
+    const file = makeFileWithHash([
+      makeEntry(0, "Hello", "译A"),
+      makeEntry(1, "World", "译B"),
+    ]);
+    getStore().setFile(file);
+    // 两条都编辑原文
+    getStore().editOriginalText(0, "Hi");
+    getStore().editOriginalText(1, "Wo");
+    await flushAsync();
+    (api.deleteSourceEdit as any).mockClear();
+    (api.saveSourceEdit as any).mockClear();
+    // 删除条目 0
+    getStore().deleteEntry(0);
+    await flushAsync();
+    // 只删除条目 0 的 source_edit_cache，不影响条目 1
+    expect(api.deleteSourceEdit).toHaveBeenCalledTimes(1);
+    expect(api.deleteSourceEdit).toHaveBeenCalledWith(0, "H1");
+    // 条目 1 的编辑标记仍在
+    const entries = getStore().file!.entries;
+    expect(entries[1].pre_edit_text).toBe("World");
+    expect(entries[1].text).toBe("Wo");
+    // 不应对条目 1 调用 deleteSourceEdit
+    expect(api.deleteSourceEdit).not.toHaveBeenCalledWith(1, "H1");
+  });
+
+  // T19b: 插入条目后已有编辑记录不受影响
+  it("insertEntryAfter 插入新条目不影响已有编辑记录", async () => {
+    const file = makeFileWithHash([
+      makeEntry(0, "Hello", "译A"),
+      makeEntry(1, "World", "译B"),
+    ]);
+    getStore().setFile(file);
+    // 编辑条目 0 的原文
+    getStore().editOriginalText(0, "Hi");
+    await flushAsync();
+    (api.saveSourceEdit as any).mockClear();
+    (api.deleteSourceEdit as any).mockClear();
+    (api.replaceSourceEdits as any).mockClear();
+    // 在条目 0 后插入新条目
+    getStore().insertEntryAfter(makeEntry(2, "New", ""), 0);
+    await flushAsync();
+    // 不应触发任何 source_edit_cache 操作
+    expect(api.saveSourceEdit).not.toHaveBeenCalled();
+    expect(api.deleteSourceEdit).not.toHaveBeenCalled();
+    expect(api.replaceSourceEdits).not.toHaveBeenCalled();
+    // 条目 0 的编辑标记仍在
+    const entries = getStore().file!.entries;
+    const entry0 = entries.find((e) => e.index === 0);
+    expect(entry0?.pre_edit_text).toBe("Hello");
+    expect(entry0?.text).toBe("Hi");
+    // 新条目无编辑标记
+    const entry2 = entries.find((e) => e.index === 2);
+    expect(entry2?.pre_edit_text).toBeNull();
+  });
+});
+
+// === SECTION 11 END ===
