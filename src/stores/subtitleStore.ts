@@ -186,6 +186,10 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
 
       // 查 source_edit_cache，恢复 corrected text + 标记（在双语检测之前）
       let correctedFile = file;
+      // 后端部分路径解析可能未填充 source_path，用传入的 path 兜底
+      if (!correctedFile.source_path) {
+        correctedFile = { ...correctedFile, source_path: path };
+      }
       if (file.file_hash) {
         try {
           const sourceEdits = await api.getSourceEdits(file.file_hash);
@@ -210,25 +214,24 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       }
 
       set({ file: correctedFile, loading: false, undoStack: [], redoStack: [] });
-      // 自动检测双语
+      // 自动检测双语，检测到后自动拆分（toast 仅开发者模式可见）
       try {
         const detect = await api.detectBilingual(correctedFile);
         if (detect.is_bilingual) {
           set({ bilingualDetect: detect });
-          const langAName = langDisplayName(detect.lang_a);
-          const langBName = langDisplayName(detect.lang_b);
-          toast.info(i18n.t("subtitle.bilingualDetected", {
-            langA: langAName,
-            langB: langBName,
-            matched: detect.matched_count,
-            total: detect.total_count,
-          }), {
-            action: {
-              label: i18n.t("subtitle.split"),
-              onClick: () => get().splitBilingual(),
-            },
-            duration: 10000,
-          });
+          const { useDevModeStore } = await import("./devModeStore");
+          if (useDevModeStore.getState().devMode) {
+            const langAName = langDisplayName(detect.lang_a);
+            const langBName = langDisplayName(detect.lang_b);
+            toast.info(i18n.t("subtitle.bilingualDetected", {
+              langA: langAName,
+              langB: langBName,
+              matched: detect.matched_count,
+              total: detect.total_count,
+            }), { duration: 3000 });
+          }
+          // 自动拆分双语字幕
+          await get().splitBilingual();
         }
       } catch (e) {
         warn("双语检测失败:", e);

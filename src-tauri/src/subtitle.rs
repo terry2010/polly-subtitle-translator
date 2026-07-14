@@ -1352,7 +1352,7 @@ pub struct AssBilingualStyle {
 impl Default for AssBilingualStyle {
     fn default() -> Self {
         Self {
-            primary_font_size: 48,
+            primary_font_size: 70,
             secondary_font_size: 30,
             primary_color: "&HFFFFFF&".into(),
             secondary_color: "&HCCCCCC&".into(),
@@ -1364,7 +1364,7 @@ impl Default for AssBilingualStyle {
             secondary_underline: false,
             outline: 2,
             outline_color: "&H000000&".into(),
-            shadow: 1,
+            shadow: 2,
             shadow_color: "&H000000&".into(),
         }
     }
