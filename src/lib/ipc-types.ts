@@ -254,9 +254,9 @@ export interface ExportOptions {
 }
 
 export interface AssBilingualStyle {
-  /** 第一行（上）字号，默认 24 */
+  /** 第一行（上）字号，默认 70 */
   primary_font_size: number;
-  /** 第二行（下）字号，默认 18 */
+  /** 第二行（下）字号，默认 30 */
   secondary_font_size: number;
   /** 第一行颜色，ASS BGR 格式 &HBBGGRR&，默认 &HFFFFFF&（白色） */
   primary_color: string;
@@ -274,7 +274,7 @@ export interface AssBilingualStyle {
   outline: number;
   /** 描边颜色，ASS BGR 格式 &HBBGGRR&，默认 &H000000&（黑色） */
   outline_color: string;
-  /** 阴影深度，默认 1 */
+  /** 阴影深度，默认 2 */
   shadow: number;
   /** 阴影颜色，ASS BGR 格式 &HBBGGRR&，默认 &H000000&（黑色） */
   shadow_color: string;
@@ -359,7 +359,7 @@ export interface BatchConfig {
 
 /** TS 端默认值常量，与 Rust 端 `impl Default for AssBilingualStyle` 对齐 */
 export const DEFAULT_ASS_STYLE: AssBilingualStyle = {
-  primary_font_size: 48,
+  primary_font_size: 70,
   secondary_font_size: 30,
   primary_color: "&HFFFFFF&",
   secondary_color: "&HCCCCCC&",
@@ -371,6 +371,6 @@ export const DEFAULT_ASS_STYLE: AssBilingualStyle = {
   secondary_underline: false,
   outline: 2,
   outline_color: "&H000000&",
-  shadow: 1,
+  shadow: 2,
   shadow_color: "&H000000&",
 };

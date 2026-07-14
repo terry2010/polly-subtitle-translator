@@ -846,8 +846,8 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           </>
         )}
         <div className="flex-1" />
-        {/* 切换原译：将原文和译文对调（仅已拆分时可用） */}
-        {isSplit && (
+        {/* 切换原译：将原文和译文对调（仅已拆分时可用，仅开发者模式可见） */}
+        {isSplit && devMode && (
           <Button
             size="sm"
             variant="ghost"

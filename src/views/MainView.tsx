@@ -177,6 +177,15 @@ export default function MainView() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [streamEditorOpen, setStreamEditorOpen] = useState(false);
   const [extractedFiles, setExtractedFiles] = useState<{ name: string; path: string; status: string }[]>([]);
+
+  // 获取真实应用版本号（替换写死的 v1.0.0）
+  const [appVersion, setAppVersion] = useState("1.0.0");
+  useEffect(() => {
+    import("@tauri-apps/api/app").then(({ getVersion }) =>
+      getVersion().then(setAppVersion).catch(() => {})
+    );
+  }, []);
+
   // 提取失败的字幕流 index 集合（用于在列表中标记不可用的流）
   const [failedStreams, setFailedStreams] = useState<Set<number>>(new Set());
   // refs for promise-based dialog flow
@@ -1794,7 +1803,7 @@ export default function MainView() {
       {/* 状态栏 */}
       <footer className="flex items-center justify-between border-t px-4 py-1 text-xs text-muted-foreground">
         <span>{translateStore.translating ? t("translate.progress") : t("common.ready")}</span>
-        <span>v1.0.0</span>
+        <span>v{appVersion}</span>
       </footer>
 
       {/* 搜索对话框 */}

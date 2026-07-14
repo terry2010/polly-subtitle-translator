@@ -60,7 +60,7 @@ jobs:
           echo "${EOF}" >> "$GITHUB_OUTPUT"
 
   # ──────────────────────────────────────────────
-  # 构建阶段：Windows + macOS 并行构建
+  # 构建阶段：Windows + macOS (ARM + Intel) 并行构建
   # ──────────────────────────────────────────────
   build:
     needs: prepare
@@ -70,8 +70,10 @@ jobs:
         include:
           - os: windows-latest
             bundles: nsis
-          - os: macos-latest
-            bundles: dmg
+          - os: macos-latest       # ARM64 (Apple Silicon)
+            bundles: dmg,app
+          - os: macos-13           # x86_64 (Intel)
+            bundles: dmg,app
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
