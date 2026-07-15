@@ -44,7 +44,7 @@ export function AutoTextarea({ value, onChange, className, placeholder, onClick,
       onKeyDown={onKeyDown}
       onContextMenu={onContextMenu}
       rows={1}
-      style={{ minHeight: "28px", overflow: "hidden" }}
+      style={{ minHeight: "20px", overflow: "hidden" }}
     />
   );
 }

@@ -685,7 +685,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* 工具栏 */}
-      <div className="flex items-center gap-1 border-b px-2 py-1 flex-shrink-0">
+      <div className="flex items-center gap-1 border-b px-1 py-0.5 flex-shrink-0">
         <Button size="sm" variant="ghost" onClick={store.undo} disabled={store.undoStack.length === 0} className="h-7 w-7 p-0">
           <Undo2 className="h-3.5 w-3.5" />
         </Button>
@@ -956,7 +956,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       {/* 查找替换 */}
       {showFindReplace && (
         <div
-          className="flex items-center gap-2 border-b px-3 py-1.5 bg-muted/30 flex-shrink-0 flex-wrap"
+          className="flex items-center gap-2 border-b px-1 py-1 bg-muted/30 flex-shrink-0 flex-wrap"
           onMouseEnter={() => { isMouseOverPanelRef.current = true; uiState.mouseInSubtitleEditor = true; }}
           onMouseLeave={() => { isMouseOverPanelRef.current = false; uiState.mouseInSubtitleEditor = false; }}
         >
@@ -1054,7 +1054,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                   width: "100%",
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
-                className={`group border-b px-3 py-1.5 hover:bg-accent/30 ${isActive ? "bg-primary/10 border-l-2 border-l-primary" : ""} ${isFindMatch ? "bg-yellow-200/50 border-l-2 border-l-yellow-500" : ""} ${isHighlighted ? "bg-blue-200/60 border-l-2 border-l-blue-500" : ""}`}
+                className={`group border-b px-1 py-1 hover:bg-accent/30 ${isActive ? "bg-primary/10 border-l-2 border-l-primary" : ""} ${isFindMatch ? "bg-yellow-200/50 border-l-2 border-l-yellow-500" : ""} ${isHighlighted ? "bg-blue-200/60 border-l-2 border-l-blue-500" : ""}`}
                 onContextMenu={(e) => handleContextMenu(e, entry.index)}
               >
                 {/* 时间码行 */}
@@ -1154,14 +1154,14 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                 {/* 字幕内容 */}
                 {isEditing ? (
                   /* 编辑态：行内展开（原文编辑 or 译文编辑） */
-                  <div className="mt-1 space-y-1">
+                  <div className="mt-0.5 space-y-0.5">
                     {editingField === "original" ? (
                       <>
                         {/* 原文编辑 */}
                         <AutoTextarea
                           value={entry.text}
                           onChange={(val) => store.editOriginalText(entry.index, val)}
-                          className="text-xs py-1 flex-1 resize-none border-blue-300"
+                          className="text-xs px-1 py-0.5 flex-1 resize-none rounded-none rounded-b-sm border-0 border-b border-blue-300 bg-transparent shadow-none focus-visible:ring-0 focus-visible:bg-transparent"
                           placeholder={t("subtitle.original", "原文")}
                           onClick={(e) => e.stopPropagation()}
                           onContextMenu={(e) => e.stopPropagation()}
@@ -1180,7 +1180,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                         />
                         {/* 译文只读（如有） */}
                         {entry.translated && (
-                          <p className="text-xs text-primary bg-muted/30 rounded px-2 py-1 max-h-20 overflow-auto">
+                          <p className="text-xs text-primary bg-muted/30 rounded px-1 py-0.5 max-h-20 overflow-auto">
                             {entry.translated}
                           </p>
                         )}
@@ -1188,14 +1188,14 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     ) : (
                       <>
                         {/* 原文只读 */}
-                        <p className="text-xs text-muted-foreground bg-muted/30 rounded px-2 py-1 max-h-20 overflow-auto">
+                        <p className="text-xs text-muted-foreground bg-muted/30 rounded px-1 py-0.5 max-h-20 overflow-auto">
                           {entry.text || <span className="opacity-30">—</span>}
                         </p>
                         {/* 译文编辑 */}
                         <AutoTextarea
                           value={entry.translated}
                           onChange={(val) => store.updateEntry(entry.index, { translated: val })}
-                          className="text-xs py-1 flex-1 resize-none"
+                          className="text-xs px-1 py-0.5 flex-1 resize-none rounded-none rounded-b-sm border-0 border-b border-primary/50 bg-transparent shadow-none focus-visible:ring-0 focus-visible:bg-transparent"
                           placeholder={t("subtitle.translated", "译文")}
                           onClick={(e) => e.stopPropagation()}
                           onContextMenu={(e) => e.stopPropagation()}
@@ -1228,7 +1228,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     </Button>
                   </div>
                 ) : (
-                  <div className="mt-0.5 space-y-0.5">
+                  <div className="mt-0 space-y-0">
                     {/* 原文行（可编辑：点击进入原文编辑，显示编辑标记） */}
                     {(previewMode === "original" || previewMode === "bilingual") && (
                       <div className="flex items-center gap-1">
@@ -1506,11 +1506,8 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
         </div>
       )}
 
-      {/* 底部状态 */}
-      <div className="flex items-center justify-between border-t px-3 py-1 text-xs text-muted-foreground flex-shrink-0">
-        <span>{t("subtitle.count", "条目数")}: {file.entries.length}</span>
-        {store.undoStack.length > 0 && <span className="text-orange-500">● {t("subtitle.unsaved", "已修改")}</span>}
-      </div>
+      {/* 底部状态：状态信息已集中到程序底部状态栏，此处仅保留分隔线 */}
+      <div className="border-t flex-shrink-0" />
 
       {/* 导出弹层（file 非空才挂载，避免 Props 类型不匹配） */}
       {file && <ExportDialog open={exportOpen} onOpenChange={setExportOpen} file={file} />}
