@@ -842,10 +842,10 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
 
       {/* 独立播放控制器（视频下方，统一主题风格） */}
       {playerReady && (
-        <div className="relative z-50 select-none border-t border-border bg-card px-3 pt-2.5 pb-2">
+        <div className="relative z-50 select-none border-t border-border bg-card px-2 py-0.5">
           {/* 进度条行：当前时间 — 进度条 — 总时长 */}
-          <div className="mb-2 flex items-center gap-2.5">
-            <span className="w-[44px] text-right font-mono text-[11px] tabular-nums text-muted-foreground">
+          <div className="mb-0.5 flex items-center gap-2">
+            <span className="w-[40px] text-right font-mono text-[10px] tabular-nums text-muted-foreground">
               {formatTime(position)}
             </span>
             <input
@@ -859,20 +859,20 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               style={{ background: sliderBg(seekPct) }}
               title={t("player.progress", "进度")}
             />
-            <span className="w-[44px] font-mono text-[11px] tabular-nums text-muted-foreground">
+            <span className="w-[40px] font-mono text-[10px] tabular-nums text-muted-foreground">
               {formatTime(duration)}
             </span>
           </div>
 
           {/* 控制行 */}
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {/* 播放 / 暂停 */}
             <button
               onClick={togglePlay}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform hover:scale-105 active:scale-95"
+              className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform hover:scale-105 active:scale-95"
               title={playing ? t("player.pause", "暂停") : t("player.play", "播放")}
             >
-              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 translate-x-[1px]" />}
+              {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 translate-x-[1px]" />}
             </button>
 
             {/* 音量 */}

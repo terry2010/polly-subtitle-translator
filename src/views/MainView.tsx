@@ -1307,7 +1307,7 @@ export default function MainView() {
               {/* 视频预览 + 内嵌字幕列表 横向排列 */}
               {/* items-start：不让字幕列表拉伸到与播放器等高；播放器自身视频区已限制 40vh，
                   播控条在视频区下方正常显示，不被 overflow-hidden 裁剪 */}
-              <div className="flex gap-0 items-start p-4">
+              <div className="flex gap-0 items-start">
                 {/* 视频预览（libmpv 内嵌播放）。不要再套 max-h-[40vh] overflow-hidden，
                     否则会把 VideoPlayer 下方的播控条裁掉（视频区已自行限制 40vh） */}
                 <div className="flex-1 min-w-0">
@@ -1802,7 +1802,15 @@ export default function MainView() {
 
       {/* 状态栏 */}
       <footer className="flex items-center justify-between border-t px-4 py-1 text-xs text-muted-foreground">
-        <span>{translateStore.translating ? t("translate.progress") : t("common.ready")}</span>
+        <div className="flex items-center gap-3">
+          <span>{translateStore.translating ? t("translate.progress") : t("common.ready")}</span>
+          {subtitleStore.file && (
+            <span>{t("subtitle.count", "条目数")}: {subtitleStore.file.entries.length}</span>
+          )}
+          {subtitleStore.file && subtitleStore.undoStack.length > 0 && (
+            <span className="text-orange-500">● {t("subtitle.unsaved", "已修改")}</span>
+          )}
+        </div>
         <span>v{appVersion}</span>
       </footer>
 
