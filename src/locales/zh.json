@@ -739,5 +739,26 @@
     "retry": "重试",
     "loginPrompt": "请登录以使用 AI 精译功能",
     "startLogin": "开始登录"
+  },
+  "dashboard": {
+    "title": "任务管理",
+    "back": "返回",
+    "refresh": "刷新",
+    "empty": "暂无翻译任务",
+    "filterAll": "全部状态",
+    "statusRunning": "翻译中",
+    "statusPending": "等待中",
+    "statusPaused": "已暂停",
+    "statusCompleted": "已完成",
+    "statusFailed": "失败",
+    "statusCancelled": "已取消",
+    "pause": "暂停",
+    "resume": "恢复",
+    "delete": "删除",
+    "totalCount": "共 {{count}} 个任务",
+    "loadFailed": "加载任务列表失败",
+    "pauseFailed": "暂停失败",
+    "resumeFailed": "恢复失败",
+    "deleteFailed": "删除失败"
   }
 }

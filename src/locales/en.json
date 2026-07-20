@@ -727,5 +727,26 @@
     "retry": "Retry",
     "loginPrompt": "Please login to use AI translation",
     "startLogin": "Start Login"
+  },
+  "dashboard": {
+    "title": "Task Manager",
+    "back": "Back",
+    "refresh": "Refresh",
+    "empty": "No translation tasks",
+    "filterAll": "All Status",
+    "statusRunning": "Running",
+    "statusPending": "Pending",
+    "statusPaused": "Paused",
+    "statusCompleted": "Completed",
+    "statusFailed": "Failed",
+    "statusCancelled": "Cancelled",
+    "pause": "Pause",
+    "resume": "Resume",
+    "delete": "Delete",
+    "totalCount": "{{count}} tasks total",
+    "loadFailed": "Failed to load tasks",
+    "pauseFailed": "Pause failed",
+    "resumeFailed": "Resume failed",
+    "deleteFailed": "Delete failed"
   }
 }

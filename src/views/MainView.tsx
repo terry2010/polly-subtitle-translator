@@ -6,7 +6,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check, Plus, Home } from "lucide-react";
+import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check, Plus, Home, ListTodo } from "lucide-react";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { Button } from "../components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -1332,7 +1332,11 @@ export default function MainView() {
           </p>
           <div className="flex gap-4 w-[368px]">
             <div className="w-44 flex justify-start" />
-            <div className="w-44 flex justify-end">
+            <div className="w-44 flex justify-end gap-1">
+              <Button variant="ghost" size="sm" onClick={() => navigate("/dashboard")}>
+                <ListTodo className="mr-1 h-4 w-4" />
+                {t("dashboard.title")}
+              </Button>
               <Button variant="ghost" size="sm" onClick={() => navigate("/settings")}>
                 <SettingsIcon className="mr-1 h-4 w-4" />
                 {t("menu.settings")}

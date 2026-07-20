@@ -8,6 +8,7 @@ import MainView from "./views/MainView";
 // 路由级懒加载：SettingsView/BatchView 不在首屏加载，减小首屏 JS 体积
 const SettingsView = lazy(() => import("./views/SettingsView"));
 const BatchView = lazy(() => import("./views/BatchView"));
+const DashboardView = lazy(() => import("./views/DashboardView"));
 import { useThemeStore } from "./stores/themeStore";
 import { useVideoStore } from "./stores/videoStore";
 import { useSubtitleStore } from "./stores/subtitleStore";
@@ -334,6 +335,7 @@ export default function App() {
             <Route path="/" element={<MainView />} />
             <Route path="/settings" element={<SettingsView />} />
             <Route path="/batch" element={<BatchView />} />
+            <Route path="/dashboard" element={<DashboardView />} />
           </Routes>
         </Suspense>
       </HashRouter>
