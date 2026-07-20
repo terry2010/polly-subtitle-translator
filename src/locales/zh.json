@@ -638,7 +638,11 @@
       "requestFailed": "翻译请求失败：{{detail}}",
       "responseParseFailed": "翻译响应解析失败：{{detail}}",
       "retriesExhausted": "翻译重试耗尽",
-      "unknownProvider": "未知翻译引擎：{{provider}}"
+      "unknownProvider": "未知翻译引擎：{{provider}}",
+      "serverError": "{{message}}",
+      "asyncNotSupported": "异步翻译模式暂不支持",
+      "mapError": "翻译结果映射失败：{{message}}",
+      "parseError": "{{message}}"
     },
     "openai": {
       "modelsFetchFailed": "获取模型列表失败：{{detail}}",

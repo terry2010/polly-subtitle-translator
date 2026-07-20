@@ -626,7 +626,11 @@
       "requestFailed": "Translation request failed: {{detail}}",
       "responseParseFailed": "Translation response parse failed: {{detail}}",
       "retriesExhausted": "Translation retries exhausted",
-      "unknownProvider": "Unknown translation engine: {{provider}}"
+      "unknownProvider": "Unknown translation engine: {{provider}}",
+      "serverError": "{{message}}",
+      "asyncNotSupported": "Async translation mode not supported",
+      "mapError": "Translation result mapping failed: {{message}}",
+      "parseError": "{{message}}"
     },
     "openai": {
       "modelsFetchFailed": "Failed to fetch model list: {{detail}}",

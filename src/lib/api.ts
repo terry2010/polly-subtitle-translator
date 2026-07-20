@@ -27,6 +27,13 @@ import type {
   PromptFailLogEntry,
   BatchTask,
   BatchConfig,
+  UserInfo,
+  LoginSuccess,
+  AuthInitResult,
+  OfficialTranslateParams,
+  OfficialTranslateResponse,
+  OfficialTranslateOneParams,
+  OfficialTranslateOneResponse,
 } from "./ipc-types";
 
 /// 调用 IPC 命令并解析 IpcResult 包装
@@ -86,9 +93,13 @@ export function formatIpcError(error: IpcError): string {
   const key = `error.${error.code}`;
   const translated = i18n.t(key, error.args ?? {});
   if (translated !== key) return translated;
-  // i18n 没有找到 key，fallback：显示 code + detail（如果有）
-  const detail = (error.args as any)?.detail;
-  return detail ? `${error.code}: ${detail}` : error.code;
+  // i18n 没有找到 key，fallback：优先显示 args.message，其次 detail
+  const args = error.args as Record<string, unknown> | undefined;
+  const message = args?.message as string | undefined;
+  const detail = args?.detail as string | undefined;
+  if (message) return message;
+  if (detail) return `${error.code}: ${detail}`;
+  return error.code;
 }
 
 /// 判断 IpcError 是否为超时错误
@@ -516,4 +527,43 @@ export const api = {
 
   isFolderMenuRegistered: () =>
     callIpc<boolean>("is_folder_menu_registered"),
+
+  // === auth（FP-P0-6）===
+  authLogin: () =>
+    callIpc<LoginSuccess>("auth_login"),
+
+  authLogout: () =>
+    callIpc<void>("auth_logout"),
+
+  authRefresh: () =>
+    callIpc<UserInfo | null>("auth_refresh"),
+
+  authGetUserInfo: () =>
+    callIpc<UserInfo>("auth_get_user_info"),
+
+  authInitOnStartup: () =>
+    callIpc<AuthInitResult>("auth_init_on_startup"),
+
+  // === P1 翻译核心 ===
+
+  /// 官方服务模式翻译（SSE 流式，进度通过 Tauri event emit）
+  translateOfficial: (params: OfficialTranslateParams) =>
+    callIpc<OfficialTranslateResponse>("translate_official", params as unknown as Record<string, unknown>),
+
+  /// 官方单条翻译（POST /v2/translate/entry，返回 JSON）
+  translateOfficialOne: (params: OfficialTranslateOneParams) =>
+    callIpc<OfficialTranslateOneResponse>("translate_official_one", params as unknown as Record<string, unknown>),
+
+  /// 取消官方翻译任务（DELETE /v2/translate/{job_id}）
+  cancelTranslateOfficial: () =>
+    callIpc<{
+      job_id?: string;
+      status: string;
+      completed_lines?: number;
+      total_lines?: number;
+      tokens_used?: number;
+      cost?: number;
+      refunded?: number;
+      token_balance?: number | null;
+    }>("cancel_translate_official"),
 };
