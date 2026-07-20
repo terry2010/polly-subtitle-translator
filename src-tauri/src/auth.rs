@@ -1258,6 +1258,101 @@ pub async fn submit_translate(
     }
 }
 
+/// POST /v2/translate/:job_id/start 的响应
+#[derive(Debug, serde::Deserialize)]
+pub struct StartJobResult {
+    pub job_id: String,
+    pub status: String,
+    pub frozen_points: i64,
+}
+
+/// 启动翻译任务（POST /v2/translate/:job_id/start）
+/// 服务端冻结点数并将任务状态改为 running
+pub async fn start_translate_job(
+    db: &Database,
+    client: &reqwest::Client,
+    job_id: &str,
+) -> Result<StartJobResult, TranslateError> {
+    let base_url = get_api_base_url(db);
+    let url = format!("{}/v2/translate/{}/start", base_url, job_id);
+
+    tracing::info!("启动翻译任务: POST {}", url);
+
+    let resp = authenticated_request(db, client, reqwest::Method::POST, &url, None)
+        .await
+        .map_err(TranslateError::from)?;
+
+    let status = resp.status().as_u16();
+    tracing::info!("启动翻译响应: status={}", status);
+
+    if status == 200 {
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| TranslateError::ParseError(format!("解析启动响应失败: {}", e)))?;
+        // 兼容 {code:0, data:{...}} 和扁平 {...} 两种格式
+        let data = body.get("data").unwrap_or(&body);
+        let result: StartJobResult = serde_json::from_value(data.clone())
+            .map_err(|e| TranslateError::ParseError(format!("解析启动响应字段失败: {}", e)))?;
+        Ok(result)
+    } else {
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| TranslateError::ParseError(format!("解析错误响应失败: {}", e)))?;
+        let error_code = body
+            .get("error")
+            .and_then(|v| v.as_str())
+            .or_else(|| body.get("code").and_then(|v| v.as_str()))
+            .unwrap_or("unknown")
+            .to_string();
+        let message = body
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        Err(TranslateError::ServerError {
+            status,
+            error_code,
+            message,
+        })
+    }
+}
+
+/// 连接 SSE 流（GET /v2/translate/stream/:job_id?token=xxx）
+/// 返回 reqwest::Response 供 handle_sse_stream 处理
+pub async fn connect_sse_stream(
+    db: &Database,
+    client: &reqwest::Client,
+    job_id: &str,
+) -> Result<reqwest::Response, TranslateError> {
+    let base_url = get_api_base_url(db);
+    // SSE 流用 query param 传 token（不支持 header）
+    let access_token = get_access_token().await
+        .ok_or_else(|| TranslateError::AuthError(AuthError::RefreshTokenExpired))?;
+    let url = format!(
+        "{}/v2/translate/stream/{}?token={}",
+        base_url, job_id, access_token
+    );
+
+    tracing::info!("连接 SSE 流: GET {}", url.replace(&access_token, "***"));
+
+    let resp = client.get(&url).send().await
+        .map_err(|e| TranslateError::NetworkError(format!("连接 SSE 失败: {}", e)))?;
+
+    let status = resp.status().as_u16();
+    if status != 200 {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(TranslateError::ParseError(format!(
+            "SSE 连接失败: status={}, body={}",
+            status, body
+        )));
+    }
+
+    tracing::info!("SSE 流已连接");
+    Ok(resp)
+}
+
 /// 取消翻译任务（DELETE /v2/translate/{job_id}）
 /// 服务端停止翻译并按已完成部分结算，退还剩余 token
 #[derive(Debug, serde::Serialize, serde::Deserialize)]

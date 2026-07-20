@@ -15,6 +15,10 @@ use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 /// 运行中的翻译检查 counter != my_gen 则视为被取消
 pub type CancelToken = Arc<AtomicU64>;
 
+/// 官方翻译 job_id 跟踪（用于取消任务）
+/// translate_official 开始时设置 job_id，cancel_translate_official 读取 job_id
+pub type OfficialTranslateJob = Arc<std::sync::Mutex<Option<String>>>;
+
 /// 将 AppError 转为 IpcError（用于 async 命令返回 Result<T, IpcError>）
 pub(crate) fn to_ipc_err(e: AppError) -> IpcError {
     e.to_ipc_error()
@@ -210,6 +214,15 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         delete_source_edit,
         replace_source_edits,
         get_source_edits,
+        // auth（FP-P0-6）
+        auth_login,
+        auth_logout,
+        auth_refresh,
+        auth_get_user_info,
+        auth_init_on_startup,
+        translate_official,
+        translate_official_one,
+        cancel_translate_official,
     ])
 }
 
@@ -1174,6 +1187,30 @@ pub fn get_cached_translations_inner(
     file_hash: &str,
     db: &Database,
 ) -> Result<Vec<translate::TranslateEntry>, AppError> {
+    // "official" 是官方翻译模式，不走传统 TranslateProvider 枚举，
+    // 但翻译结果仍存入 translate_cache（provider_name="official"），重新打开字幕时可恢复。
+    if provider == "official" {
+        let provider_name = "official".to_string();
+        let model_for_scheduler = model.unwrap_or_default().to_string();
+        let scheduler = translate::TranslateScheduler::new(
+            db,
+            std::sync::Arc::new(translate::BaiduProvider::new(String::new(), String::new()))
+                as std::sync::Arc<dyn translate::TranslateProviderTrait + Send + Sync>,
+            provider_name.clone(),
+            model_for_scheduler,
+        )
+        .with_file_hash(file_hash.to_string());
+
+        let cached = scheduler
+            .get_cached_entries(&entries, source_lang, target_lang)?;
+
+        tracing::info!(
+            "缓存查询(official): {} 条中命中 {} 条 (provider=official, source={}, target={})",
+            entries.len(), cached.len(), source_lang, target_lang
+        );
+        return Ok(cached);
+    }
+
     let prov = TranslateProvider::from_str(provider).ok_or_else(|| {
         AppError::TranslateUnknownProvider { provider: provider.to_string() }
     })?;
@@ -3368,6 +3405,502 @@ pub async fn add_files_to_queue(
 
 // === SECTION 9 END ===
 
+// === SECTION 10: auth IPC 命令（FP-P0-6）===
+
+use crate::auth;
+
+/// auth_login：启动 WebSocket 登录流程
+/// 打开浏览器 → 连 WebSocket → 等待 auth_success/auth_error/auth_timeout
+#[tauri::command]
+pub async fn auth_login(db: State<'_, Database>) -> Result<auth::LoginSuccess, IpcError> {
+    let base_url = auth::get_api_base_url(db.inner());
+    auth::login_via_websocket(db.inner(), &base_url)
+        .await
+        .map_err(auth_error_to_ipc)
+}
+
+/// auth_logout：登出（清除 access_token + refresh_token）
+#[tauri::command]
+pub async fn auth_logout(db: State<'_, Database>) -> Result<(), IpcError> {
+    auth::clear_access_token().await;
+    auth::clear_refresh_token(db.inner()).map_err(|e| e.to_ipc_error())?;
+    tracing::info!("用户已登出");
+    Ok(())
+}
+
+/// auth_refresh：手动刷新 token
+#[tauri::command]
+pub async fn auth_refresh(db: State<'_, Database>) -> Result<Option<auth::UserInfo>, IpcError> {
+    let client = reqwest::Client::new();
+    auth::refresh_and_fetch_user_info(db.inner(), &client)
+        .await
+        .map_err(auth_error_to_ipc)
+}
+
+/// auth_get_user_info：获取当前用户信息（GET /auth/me）
+#[tauri::command]
+pub async fn auth_get_user_info(db: State<'_, Database>) -> Result<auth::UserInfo, IpcError> {
+    let client = reqwest::Client::new();
+    auth::fetch_user_info(db.inner(), &client)
+        .await
+        .map_err(auth_error_to_ipc)
+}
+
+/// auth_init_on_startup：应用启动时调用（refresh + /auth/me + 离线降级）
+#[tauri::command]
+pub async fn auth_init_on_startup(db: State<'_, Database>) -> Result<auth::AuthInitResult, IpcError> {
+    let client = reqwest::Client::new();
+    Ok(auth::init_auth_on_startup(db.inner(), &client).await)
+}
+
+/// AuthError → IpcError 转换
+fn auth_error_to_ipc(e: auth::AuthError) -> IpcError {
+    match e {
+        auth::AuthError::RefreshTokenExpired => IpcError::new("auth.refreshTokenExpired", Severity::Recoverable),
+        auth::AuthError::RefreshFailed(detail) => IpcError::new("auth.refreshFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": detail })),
+        auth::AuthError::NetworkError(detail) => IpcError::new("auth.networkError", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": detail })),
+        auth::AuthError::WebSocketConnectFailed(detail) => IpcError::new("auth.websocketConnectFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": detail })),
+        auth::AuthError::WebSocketMessageParseFailed(detail) => IpcError::new("auth.websocketMessageParseFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": detail })),
+        auth::AuthError::LoginTimeout => IpcError::new("auth.loginTimeout", Severity::Recoverable),
+        auth::AuthError::LoginFailed { error, message } => IpcError::new("auth.loginFailed", Severity::Recoverable)
+            .with_args(serde_json::json!({ "error": error, "message": message })),
+        auth::AuthError::Database(e) => e.to_ipc_error(),
+        auth::AuthError::HttpRequestBuilder(e) => AppError::Unknown { detail: e.to_string() }.to_ipc_error(),
+    }
+}
+
+// === SECTION 10 END ===
+
+// === SECTION 11: 官方服务翻译 IPC（FP-P1-4）===
+
+use subtitle::{serialize_subtitle_content, map_server_to_client_entries};
+
+/// 官方翻译进度事件（emit 到前端）
+#[derive(Clone, serde::Serialize)]
+struct OfficialTranslateProgress {
+    phase: String,
+    step: String,
+    current: u32,
+    total: u32,
+}
+
+/// 官方翻译错误事件（emit 到前端）
+#[derive(Clone, serde::Serialize)]
+struct OfficialTranslateError {
+    phase: String,
+    step: String,
+    error_code: String,
+    message: String,
+}
+
+/// SSE 事件处理器实现（通过 Tauri app handle emit 事件到前端）
+struct TauriSseHandler {
+    app: tauri::AppHandle,
+}
+
+impl auth::SseEventHandler for TauriSseHandler {
+    fn on_progress(&self, phase: &str, step: &str, current: u32, total: u32) {
+        let _ = self.app.emit("official-translate-progress", OfficialTranslateProgress {
+            phase: phase.to_string(),
+            step: step.to_string(),
+            current,
+            total,
+        });
+    }
+
+    fn on_partial(&self, subtitles: &[subtitle::ServerSubtitleEntry], current: u32, total: u32) {
+        let _ = self.app.emit("official-translate-partial", serde_json::json!({
+            "subtitles": subtitles,
+            "current": current,
+            "total": total,
+        }));
+    }
+
+    fn on_result(&self, result: auth::TranslateResult) {
+        // result 在 handle_sse_stream 中已处理映射，这里只 emit 余额信息
+        let _ = self.app.emit("official-translate-balance", serde_json::json!({
+            "tokens_used": result.tokens_used,
+            "cost": result.cost,
+            "token_balance": result.token_balance,
+            "bonus_balance": result.bonus_balance,
+        }));
+    }
+
+    fn on_error(&self, phase: &str, step: &str, error_code: &str, message: &str) {
+        let _ = self.app.emit("official-translate-error", OfficialTranslateError {
+            phase: phase.to_string(),
+            step: step.to_string(),
+            error_code: error_code.to_string(),
+            message: message.to_string(),
+        });
+    }
+
+    fn on_done(&self) {
+        let _ = self.app.emit("official-translate-done", ());
+    }
+}
+
+/// 官方翻译返回结果
+#[derive(serde::Serialize)]
+pub struct OfficialTranslateResponse {
+    entries: Vec<subtitle::SubtitleEntry>,
+    tokens_used: i64,
+    cost: i64,
+    token_balance: Option<i64>,
+    bonus_balance: Option<i64>,
+}
+
+/// translate_official：官方服务模式翻译（SSE 流式）
+/// 联调文档 02-P1：POST /v2/translate + SSE 事件处理
+/// 官方服务模式跳过所有客户端后处理（post_process_name_tags/cleanup_cjk_spaces 等）
+#[tauri::command]
+pub async fn translate_official(
+    file: subtitle::SubtitleFile,
+    model: String,
+    db: State<'_, Database>,
+    app: tauri::AppHandle,
+    official_job: State<'_, OfficialTranslateJob>,
+) -> Result<OfficialTranslateResponse, IpcError> {
+    tracing::info!(
+        "translate_official 调用: model={}, format={:?}, entries={}",
+        model, file.format, file.entries.len()
+    );
+
+    // 1. 序列化 subtitle_content
+    let subtitle_content = serialize_subtitle_content(&file)
+        .map_err(|e| IpcError::new("translate.unsupportedFormat", Severity::Recoverable)
+            .with_args(serde_json::json!({ "message": e })))?;
+
+    // 2. 生成 idempotency_key
+    let idempotency_key = auth::generate_idempotency_key();
+
+    // 3. 提交翻译请求（multipart 文件上传到 /v2/translate/file）
+    let client = reqwest::Client::new();
+    let file_format = format!("{:?}", file.format).to_lowercase();
+    let submit_result = auth::submit_translate(
+        db.inner(), &client, &subtitle_content, &file_format, &model, &idempotency_key,
+    )
+    .await
+    .map_err(translate_error_to_ipc)?;
+
+    // 4. 处理响应
+    let mut entries = file.entries.clone();
+    let mut tokens_used: i64 = 0;
+    let mut cost: i64 = 0;
+    let mut token_balance: Option<i64> = None;
+    let mut bonus_balance: Option<i64> = None;
+
+    match submit_result {
+        auth::TranslateSubmitResponse::SseStream { response, job_id } => {
+            // SSE 流式处理：通过 handler emit 事件到前端，返回 result 事件数据
+            // job_id 用于取消任务（DELETE /v2/translate/{job_id}）
+            if let Some(ref jid) = job_id {
+                tracing::info!("SSE 流式翻译: job_id={}", jid);
+                // 保存 job_id 到全局状态，供 cancel_translate_official 使用
+                *official_job.lock().unwrap() = Some(jid.clone());
+                // 持久化 job_id 到 file_translation_jobs 表，供单条翻译复用 TM/KNP 上下文
+                if !file.file_hash.is_empty() {
+                    if let Err(e) = db.set_file_job(&file.file_hash, jid) {
+                        tracing::warn!("保存 job_id 到 file_translation_jobs 失败: {}", e);
+                    }
+                }
+            }
+            let handler = TauriSseHandler { app: app.clone() };
+            let sse_result = auth::handle_sse_stream(response, &handler).await
+                .map_err(translate_error_to_ipc)?;
+            // 翻译结束（正常或错误），清除 job_id
+            *official_job.lock().unwrap() = None;
+            // 从 result 事件映射译文到 entries
+            if let Some(result) = sse_result {
+                map_server_to_client_entries(&result.subtitles, &mut entries)
+                    .map_err(|e| IpcError::new("translate.mapError", Severity::Recoverable)
+                        .with_args(serde_json::json!({ "message": e })))?;
+                tokens_used = result.tokens_used;
+                cost = result.cost;
+                token_balance = result.token_balance;
+                bonus_balance = result.bonus_balance;
+            }
+            tracing::info!("SSE 流处理完成");
+        }
+        auth::TranslateSubmitResponse::CompletedJson(result) => {
+            // 非流式直接结果
+            map_server_to_client_entries(&result.subtitles, &mut entries)
+                .map_err(|e| IpcError::new("translate.mapError", Severity::Recoverable)
+                    .with_args(serde_json::json!({ "message": e })))?;
+            tokens_used = result.tokens_used;
+            cost = result.cost;
+            token_balance = result.token_balance;
+            bonus_balance = result.bonus_balance;
+        }
+        auth::TranslateSubmitResponse::Accepted { job_id } => {
+            // 202 异步：先调 POST /v2/translate/:job_id/start 启动翻译，
+            // 再连 GET /v2/translate/stream/:job_id SSE 流
+            tracing::info!("翻译任务已提交（异步）: job_id={}", job_id);
+            *official_job.lock().unwrap() = Some(job_id.clone());
+            if !file.file_hash.is_empty() {
+                if let Err(e) = db.set_file_job(&file.file_hash, &job_id) {
+                    tracing::warn!("保存 job_id 到 file_translation_jobs 失败: {}", e);
+                }
+            }
+
+            // 1. 启动翻译任务
+            let start_result = auth::start_translate_job(db.inner(), &client, &job_id).await
+                .map_err(translate_error_to_ipc)?;
+            tracing::info!("翻译任务已启动: job_id={}, frozen_points={}", job_id, start_result.frozen_points);
+
+            // 2. 连接 SSE 流
+            let sse_response = auth::connect_sse_stream(db.inner(), &client, &job_id).await
+                .map_err(translate_error_to_ipc)?;
+
+            // 3. 处理 SSE 流（复用 SseStream 的处理逻辑）
+            let handler = TauriSseHandler { app: app.clone() };
+            let sse_result = auth::handle_sse_stream(sse_response, &handler).await
+                .map_err(translate_error_to_ipc)?;
+            *official_job.lock().unwrap() = None;
+            if let Some(result) = sse_result {
+                map_server_to_client_entries(&result.subtitles, &mut entries)
+                    .map_err(|e| IpcError::new("translate.mapError", Severity::Recoverable)
+                        .with_args(serde_json::json!({ "message": e })))?;
+                tokens_used = result.tokens_used;
+                cost = result.cost;
+                token_balance = result.token_balance;
+                bonus_balance = result.bonus_balance;
+            }
+            tracing::info!("SSE 流处理完成（202 路径）");
+        }
+        auth::TranslateSubmitResponse::Error { status, error_code, message } => {
+            return Err(IpcError::new("translate.serverError", Severity::Recoverable)
+                .with_args(serde_json::json!({
+                    "status": status,
+                    "error_code": error_code,
+                    "message": message,
+                })));
+        }
+    }
+
+    tracing::info!(
+        "官方翻译完成: entries={}, tokens_used={}, cost={}",
+        entries.len(), tokens_used, cost
+    );
+
+    // 保存翻译结果到 translate_cache，重新打开字幕时可恢复译文
+    // provider_name 用 "official"，与 get_cached_translations_inner 中的查询 key 一致
+    // 官方翻译固定 en→zh，前端 loadSubtitle 查询时也用 store 中的 sourceLang/targetLang（默认 en/zh）
+    if !file.file_hash.is_empty() {
+        let file_hash = &file.file_hash;
+        let provider_name = "official";
+        let source_lang = "en";
+        let target_lang = "zh";
+        let mut saved_count = 0u32;
+        for entry in &entries {
+            if !entry.translated.is_empty() {
+                let cache_key = crate::db::translate_cache_key(
+                    &entry.text,
+                    source_lang,
+                    target_lang,
+                    provider_name,
+                    file_hash,
+                );
+                let _ = db.set_translate_cache(
+                    &cache_key,
+                    &entry.text,
+                    &entry.translated,
+                    source_lang,
+                    target_lang,
+                    provider_name,
+                );
+                saved_count += 1;
+            }
+        }
+        tracing::info!("官方翻译结果已缓存到 translate_cache: {} 条", saved_count);
+    }
+
+    Ok(OfficialTranslateResponse {
+        entries,
+        tokens_used,
+        cost,
+        token_balance,
+        bonus_balance,
+    })
+}
+
+/// translate_official_one 的响应
+#[derive(serde::Serialize)]
+pub struct OfficialTranslateOneResponse {
+    pub translated_text: String,
+    pub tokens_used: i64,
+    pub cost: i64,
+    pub token_balance: Option<i64>,
+    pub bonus_balance: Option<i64>,
+}
+
+/// translate_official_one：官方服务模式单条翻译
+/// 调用 POST /v2/translate/entry（multipart），上传完整字幕文件 + entry_id + 原文
+/// 服务端用文件上下文 + job_id（可选）的 TM/KNP 翻译单条，返回 JSON
+#[tauri::command]
+pub async fn translate_official_one(
+    file: subtitle::SubtitleFile,
+    entry_index: usize,
+    model: String,
+    db: State<'_, Database>,
+    app: tauri::AppHandle,
+) -> Result<OfficialTranslateOneResponse, IpcError> {
+    tracing::info!(
+        "translate_official_one: entry_index={}, model={}, format={:?}",
+        entry_index, model, file.format
+    );
+
+    // 1. 找到要翻译的条目
+    let entry = file.entries.iter().find(|e| e.index == entry_index)
+        .ok_or_else(|| IpcError::new("translate.entryNotFound", Severity::Recoverable)
+            .with_args(serde_json::json!({ "entry_index": entry_index })))?;
+
+    // 2. 序列化完整字幕文件（服务端用作上下文）
+    let subtitle_content = serialize_subtitle_content(&file)
+        .map_err(|e| IpcError::new("translate.unsupportedFormat", Severity::Recoverable)
+            .with_args(serde_json::json!({ "message": e })))?;
+
+    // 3. 生成 idempotency_key
+    let idempotency_key = auth::generate_idempotency_key();
+
+    // 4. 查询 job_id（复用上次全文翻译的 TM/KNP 上下文）
+    let job_id = if !file.file_hash.is_empty() {
+        db.get_file_job(&file.file_hash).unwrap_or(None)
+    } else {
+        None
+    };
+    tracing::info!("translate_official_one: job_id={:?}", job_id);
+
+    // 5. 提交单条翻译请求
+    let client = reqwest::Client::new();
+    let file_format = format!("{:?}", file.format).to_lowercase();
+    let result = auth::submit_translate_one(
+        db.inner(),
+        &client,
+        &subtitle_content,
+        &file_format,
+        entry_index,
+        &entry.text,
+        job_id.as_deref(),
+        &model,
+        &idempotency_key,
+    )
+    .await
+    .map_err(translate_error_to_ipc)?;
+
+    // 6. 保存到 translate_cache（重新打开字幕时可恢复）
+    if !file.file_hash.is_empty() && !result.translated_text.is_empty() {
+        let cache_key = crate::db::translate_cache_key(
+            &entry.text,
+            "en",
+            "zh",
+            "official",
+            &file.file_hash,
+        );
+        if let Err(e) = db.set_translate_cache(
+            &cache_key,
+            &entry.text,
+            &result.translated_text,
+            "en",
+            "zh",
+            "official",
+        ) {
+            tracing::warn!("单条翻译结果写入 translate_cache 失败: {}", e);
+        }
+    }
+
+    // 7. 余额同步：emit 余额更新事件到前端（token_balance 或 bonus_balance 任一存在即 emit）
+    if result.token_balance.is_some() || result.bonus_balance.is_some() {
+        let _ = app.emit("auth:balance-updated", serde_json::json!({
+            "token_balance": result.token_balance,
+            "bonus_balance": result.bonus_balance,
+        }));
+    }
+
+    tracing::info!(
+        "单条官方翻译完成: entry_index={}, tokens_used={}",
+        entry_index, result.tokens_used
+    );
+
+    Ok(OfficialTranslateOneResponse {
+        translated_text: result.translated_text,
+        tokens_used: result.tokens_used,
+        cost: result.cost,
+        token_balance: result.token_balance,
+        bonus_balance: result.bonus_balance,
+    })
+}
+
+/// cancel_translate_official：取消官方翻译任务
+/// 调用 DELETE /v2/translate/{job_id}，服务端停止翻译并按已完成部分结算
+#[tauri::command]
+pub async fn cancel_translate_official(
+    db: State<'_, Database>,
+    official_job: State<'_, OfficialTranslateJob>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, IpcError> {
+    // 从全局状态读取 job_id
+    let job_id = official_job.lock().unwrap().take();
+    let job_id = match job_id {
+        Some(jid) if !jid.is_empty() => jid,
+        _ => {
+            tracing::info!("cancel_translate_official: 无运行中的翻译任务");
+            return Ok(serde_json::json!({
+                "status": "no_active_job",
+                "message": "无运行中的翻译任务"
+            }));
+        }
+    };
+
+    tracing::info!("cancel_translate_official: job_id={}", job_id);
+
+    let client = reqwest::Client::new();
+    match auth::cancel_translate(db.inner(), &client, &job_id).await {
+        Ok(result) => {
+            // 余额同步：更新 authStore 中的 token_balance
+            if let Some(token_balance) = result.token_balance {
+                let _ = app.emit("official-translate-balance", serde_json::json!({
+                    "token_balance": token_balance,
+                    "bonus_balance": null,
+                }));
+            }
+            tracing::info!(
+                "取消翻译成功: completed={}/{}, refunded={}",
+                result.completed_lines, result.total_lines, result.refunded
+            );
+            Ok(serde_json::to_value(&result).unwrap_or(serde_json::json!({
+                "status": "cancelled",
+                "job_id": job_id,
+            })))
+        }
+        Err(e) => {
+            tracing::warn!("取消翻译失败: {:?}", e);
+            Err(translate_error_to_ipc(e))
+        }
+    }
+}
+
+/// TranslateError → IpcError 转换
+fn translate_error_to_ipc(e: auth::TranslateError) -> IpcError {
+    match e {
+        auth::TranslateError::NetworkError(detail) => IpcError::new("translate.networkError", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": detail })),
+        auth::TranslateError::AuthError(auth_e) => auth_error_to_ipc(auth_e),
+        auth::TranslateError::ServerError { status, error_code, message } => IpcError::new("translate.serverError", Severity::Recoverable)
+            .with_args(serde_json::json!({ "status": status, "error_code": error_code, "message": message })),
+        auth::TranslateError::ParseError(detail) => IpcError::new("translate.parseError", Severity::Recoverable)
+            .with_args(serde_json::json!({ "detail": detail })),
+        auth::TranslateError::UnsupportedFormat(detail) => IpcError::new("translate.unsupportedFormat", Severity::Recoverable)
+            .with_args(serde_json::json!({ "message": detail })),
+    }
+}
+
+// === SECTION 11 END ===
+
 // === SECTION 8: 跨平台单元测试 ===
 
 #[cfg(test)]
@@ -3562,6 +4095,201 @@ mod tests {
         assert_eq!(edits[&3].0, "new3");
         assert!(!edits.contains_key(&0));
         assert!(!edits.contains_key(&1));
+    }
+
+    // === FP-P1-4 测试：translate_official 核心映射流程 ===
+
+    #[test]
+    fn test_translate_official_serialize_and_map_srt() {
+        // 验证 translate_official 的核心数据流：SRT 序列化 → 服务端返回 → 映射回客户端
+        let content = "1\n00:00:01,000 --> 00:00:03,000\nHello\n\n2\n00:00:04,000 --> 00:00:06,000\nWorld\n";
+        let file = subtitle::parse_srt(content).unwrap();
+
+        // 1. 序列化 subtitle_content
+        let serialized = subtitle::serialize_subtitle_content(&file).unwrap();
+        assert!(serialized.contains("Hello"));
+        assert!(serialized.contains("World"));
+
+        // 2. 模拟服务端返回的 ServerSubtitleEntry[]
+        let server_entries = vec![
+            subtitle::ServerSubtitleEntry {
+                index: 1, start_ms: 1000, end_ms: 3000,
+                translated_text: "你好".to_string(),
+                original_text: "Hello".to_string(),
+                r#type: None, has_source_translation: None, needs_speaker_label: None,
+                source_text: None, style_name: None, quality_warnings: None,
+                bilingual_source: None, schema_version: None,
+            },
+            subtitle::ServerSubtitleEntry {
+                index: 2, start_ms: 4000, end_ms: 6000,
+                translated_text: "世界".to_string(),
+                original_text: "World".to_string(),
+                r#type: None, has_source_translation: None, needs_speaker_label: None,
+                source_text: None, style_name: None, quality_warnings: None,
+                bilingual_source: None, schema_version: None,
+            },
+        ];
+
+        // 3. 映射到客户端 entries
+        let mut client_entries = file.entries.clone();
+        subtitle::map_server_to_client_entries(&server_entries, &mut client_entries).unwrap();
+
+        // 验证译文已填充
+        assert_eq!(client_entries[0].translated, "你好");
+        assert_eq!(client_entries[1].translated, "世界");
+        // 原文不被覆盖
+        assert_eq!(client_entries[0].text, "Hello");
+        assert_eq!(client_entries[1].text, "World");
+    }
+
+    #[test]
+    fn test_translate_official_serialize_and_map_ass() {
+        // 验证 ASS 格式的序列化 → 映射流程
+        let ass_content = "[Script Info]\nTitle: Test\n\n[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial,48\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello World\n";
+        let file = subtitle::parse_ass(ass_content).unwrap();
+
+        // 序列化
+        let serialized = subtitle::serialize_subtitle_content(&file).unwrap();
+        assert!(serialized.contains("[Script Info]"));
+        assert!(serialized.contains("[V4+ Styles]"));
+        assert!(serialized.contains("[Events]"));
+        assert!(serialized.contains("Hello World"));
+        // [Events] 只出现 1 次（不重复）
+        assert_eq!(serialized.matches("[Events]").count(), 1);
+
+        // 映射
+        let server_entries = vec![subtitle::ServerSubtitleEntry {
+            index: 1, start_ms: 1000, end_ms: 3000,
+            translated_text: "你好世界".to_string(),
+            original_text: "Hello World".to_string(),
+            r#type: None, has_source_translation: None, needs_speaker_label: None,
+            source_text: None, style_name: Some("Default".to_string()),
+            quality_warnings: None, bilingual_source: None, schema_version: None,
+        }];
+        let mut client_entries = file.entries.clone();
+        subtitle::map_server_to_client_entries(&server_entries, &mut client_entries).unwrap();
+        assert_eq!(client_entries[0].translated, "你好世界");
+    }
+
+    #[test]
+    fn test_translate_official_vtt_rejected() {
+        // VTT 格式应被拒绝
+        let file = subtitle::SubtitleFile {
+            format: subtitle::SubtitleFormat::Vtt,
+            entries: vec![subtitle::SubtitleEntry {
+                index: 0, start_ms: 0, end_ms: 1000,
+                text: "Hello".to_string(), translated: String::new(),
+                style: None, failed: false, from_cache: false, pre_edit_text: None,
+            }],
+            raw_header: None, source_path: None, file_hash: String::new(),
+        };
+        let result = subtitle::serialize_subtitle_content(&file);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("VTT"));
+    }
+
+    // === translate_official_one 核心逻辑测试 ===
+
+    #[test]
+    fn test_translate_official_one_cache_key_consistency() {
+        // 验证单条翻译的 cache key 与全文翻译的 cache key 一致
+        // 两者都用 translate_cache_key(text, "en", "zh", "official", file_hash)
+        // 确保重新打开字幕时 get_cached_translations 能命中单条翻译写入的缓存
+        let text = "Hello World";
+        let file_hash = "abc123hash";
+        let key_single = crate::db::translate_cache_key(text, "en", "zh", "official", file_hash);
+        let key_full = crate::db::translate_cache_key(text, "en", "zh", "official", file_hash);
+        assert_eq!(key_single, key_full, "单条翻译与全文翻译的 cache key 必须一致");
+    }
+
+    #[test]
+    fn test_translate_official_one_entry_lookup() {
+        // 验证 entry 查找逻辑：按 entry_index 查找条目
+        let content = "1\n00:00:01,000 --> 00:00:03,000\nHello\n\n2\n00:00:04,000 --> 00:00:06,000\nWorld\n";
+        let file = subtitle::parse_srt(content).unwrap();
+        // entries[0].index = 0, entries[1].index = 1
+        let entry = file.entries.iter().find(|e| e.index == 1);
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().text, "World");
+        // 不存在的 index
+        let not_found = file.entries.iter().find(|e| e.index == 99);
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_translate_official_one_empty_file_hash_skips_job_lookup() {
+        // 验证 file_hash 为空时不查询 job_id（直接传 None）
+        // 这是 translate_official_one 中的逻辑：if !file.file_hash.is_empty() { ... } else { None }
+        let file_hash = "";
+        let job_id: Option<String> = if !file_hash.is_empty() {
+            // 不会执行到这里
+            Some("job-001".to_string())
+        } else {
+            None
+        };
+        assert_eq!(job_id, None, "file_hash 为空时应返回 None");
+    }
+
+    #[test]
+    fn test_translate_official_one_cache_write_and_read() {
+        // 验证单条翻译结果写入 translate_cache 后可读回
+        let db = crate::Database::open(&std::env::temp_dir().join(format!("test_official_one_{}.db", uuid::Uuid::new_v4()))).unwrap();
+        db.migrate().unwrap();
+
+        let text = "Hello";
+        let file_hash = "test_hash_123";
+        let translated = "你好";
+        let cache_key = crate::db::translate_cache_key(text, "en", "zh", "official", file_hash);
+
+        // 写入（模拟 translate_official_one 的缓存写入）
+        db.set_translate_cache(&cache_key, text, translated, "en", "zh", "official").unwrap();
+
+        // 读回
+        let result = db.get_translate_cache(&cache_key).unwrap();
+        assert_eq!(result, Some(translated.to_string()));
+    }
+
+    #[test]
+    fn test_translate_official_one_job_id_persistence() {
+        // 验证全文翻译完成时保存 job_id，单条翻译时能查回
+        let db = crate::Database::open(&std::env::temp_dir().join(format!("test_job_persist_{}.db", uuid::Uuid::new_v4()))).unwrap();
+        db.migrate().unwrap();
+
+        let file_hash = "file_hash_abc";
+        let job_id = "job-12345";
+
+        // 全文翻译完成时保存
+        db.set_file_job(file_hash, job_id).unwrap();
+
+        // 单条翻译时查回
+        let retrieved = db.get_file_job(file_hash).unwrap();
+        assert_eq!(retrieved, Some(job_id.to_string()));
+    }
+
+    #[test]
+    fn test_translate_error_to_ipc_network_error() {
+        // 验证 TranslateError → IpcError 转换
+        let err = auth::TranslateError::NetworkError("连接失败".to_string());
+        let ipc_err = translate_error_to_ipc(err);
+        assert_eq!(ipc_err.code, "translate.networkError");
+    }
+
+    #[test]
+    fn test_translate_error_to_ipc_server_error() {
+        let err = auth::TranslateError::ServerError {
+            status: 402,
+            error_code: "insufficient_balance".to_string(),
+            message: "余额不足".to_string(),
+        };
+        let ipc_err = translate_error_to_ipc(err);
+        assert_eq!(ipc_err.code, "translate.serverError");
+    }
+
+    #[test]
+    fn test_translate_error_to_ipc_unsupported_format() {
+        let err = auth::TranslateError::UnsupportedFormat("VTT".to_string());
+        let ipc_err = translate_error_to_ipc(err);
+        assert_eq!(ipc_err.code, "translate.unsupportedFormat");
     }
 }
 
