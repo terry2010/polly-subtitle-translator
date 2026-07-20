@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { api, formatIpcError } from "../lib/api";
+import i18n from "../lib/i18n";
 import type { TranslateJobItem } from "../lib/ipc-types";
 
 interface DashboardState {
@@ -54,7 +55,7 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
       set({ jobs: result.jobs, total: result.total, loading: false });
     } catch (e: any) {
       set({ loading: false });
-      toast.error(formatIpcError(e));
+      toast.error(i18n.t("dashboard.loadFailed") + ": " + formatIpcError(e));
     }
   },
 
@@ -67,10 +68,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set({ actingJobId: jobId });
     try {
       await api.pauseTranslateJob(jobId);
-      toast.success("任务已暂停");
+      toast.success(i18n.t("dashboard.pauseSuccess"));
       await get().loadJobs();
     } catch (e: any) {
-      toast.error(formatIpcError(e));
+      toast.error(i18n.t("dashboard.pauseFailed") + ": " + formatIpcError(e));
     } finally {
       set({ actingJobId: null });
     }
@@ -80,10 +81,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set({ actingJobId: jobId });
     try {
       await api.resumeTranslateJob(jobId);
-      toast.success("任务已恢复，请点击开始继续翻译");
+      toast.success(i18n.t("dashboard.resumeSuccess"));
       await get().loadJobs();
     } catch (e: any) {
-      toast.error(formatIpcError(e));
+      toast.error(i18n.t("dashboard.resumeFailed") + ": " + formatIpcError(e));
     } finally {
       set({ actingJobId: null });
     }
@@ -93,10 +94,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     set({ actingJobId: jobId });
     try {
       await api.deleteTranslateJob(jobId);
-      toast.success("任务已删除");
+      toast.success(i18n.t("dashboard.deleteSuccess"));
       await get().loadJobs();
     } catch (e: any) {
-      toast.error(formatIpcError(e));
+      toast.error(i18n.t("dashboard.deleteFailed") + ": " + formatIpcError(e));
     } finally {
       set({ actingJobId: null });
     }
