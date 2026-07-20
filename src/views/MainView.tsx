@@ -16,6 +16,8 @@ import { useVideoStore } from "../stores/videoStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { useTranslateStore } from "../stores/translateStore";
 import { useDevModeStore } from "../stores/devModeStore";
+import { useAuthStore } from "../stores/authStore";
+import { useOfficialTranslateStore } from "../stores/officialTranslateStore";
 import { api, formatIpcError, isTimeoutError, isDailyLimitError, isInsufficientBalanceError } from "../lib/api";
 import { warn, error as logError } from "../lib/logger";
 import { withPlayerHidden } from "../lib/utils";
@@ -164,6 +166,10 @@ export default function MainView() {
   const { probeResult, loading, error, openVideo, clearVideo, selectedSubtitleStream, selectSubtitleStream } = useVideoStore();
   const subtitleStore = useSubtitleStore();
   const translateStore = useTranslateStore();
+  const authStatus = useAuthStore((s) => s.status);
+  const authUser = useAuthStore((s) => s.user);
+  const officialTranslateStore = useOfficialTranslateStore();
+  const isLoggedIn = authStatus === "logged_in" && !!authUser;
   const namePrecisionEnabled = useDevModeStore((s) => s.namePrecisionEnabled);
   const devModeEnabled = useDevModeStore((s) => s.devMode);
   // 人名精译状态从 translateStore 读取（跨路由保持）
@@ -202,6 +208,22 @@ export default function MainView() {
   const autoTranslateAfterExtractRef = useRef(false);
   // 用户是否已点击过翻译按钮（控制"提取后自动翻译"选项的显示时机）
   const [translateClicked, setTranslateClicked] = useState(false);
+  // 官方翻译是否进行中（与第三方 translating 对等）
+  const officialTranslating = officialTranslateStore.status === "translating";
+  // 官方翻译 partial 事件增量回填字幕
+  const officialPartialEntries = officialTranslateStore.partialEntries;
+  useEffect(() => {
+    if (officialPartialEntries.length === 0 || !subtitleStore.file) return;
+    // 用 partial 译文增量更新 subtitleStore（替换，不是追加）
+    // pre_edit_text 跟踪的是原文编辑（用户修改了原文），不是译文编辑。
+    // 用户编辑原文后发送给服务端翻译，译文结果应该正常回填。
+    const updatedEntries = subtitleStore.file.entries.map((e) => {
+      // 服务端 index 是 1-based，客户端 index 是 0-based
+      const matched = officialPartialEntries.find((pe) => pe.index === e.index + 1);
+      return matched ? { ...e, translated: matched.translated_text } : e;
+    });
+    subtitleStore.setFile({ ...subtitleStore.file, entries: updatedEntries });
+  }, [officialPartialEntries]);
   // 是否已加载持久化配置
   const [autoTranslateLoaded, setAutoTranslateLoaded] = useState(false);
   // 导入的外部字幕列表
@@ -671,11 +693,17 @@ export default function MainView() {
       api.getConfig("translate_provider").catch(() => null),
       api.getConfig("translate_openai_service_id").catch(() => null),
       api.getConfig("translate_current_model").catch(() => null),
+      api.getConfig("translate_official_model").catch(() => null),
     ]);
 
-    Promise.all([traditionalPromise, aiPromise, savedConfigPromise]).then(async ([tradResults, aiResults, [savedProvider, savedServiceId, savedModel]]) => {
+    Promise.all([traditionalPromise, aiPromise, savedConfigPromise]).then(async ([tradResults, aiResults, [savedProvider, savedServiceId, savedModel, savedOfficialModel]]) => {
       const configured = Object.fromEntries([...tradResults, ...aiResults]);
       setProviderConfigured(configured);
+
+      // 恢复官方翻译档位
+      if (savedOfficialModel) {
+        officialTranslateStore.setSelectedModel(savedOfficialModel);
+      }
 
       // 1. 先用 db 中保存的值恢复 provider（修复旧版本可能把 serviceId 存为 provider 的 bug）
       const aiServiceIds = aiServices.map((s) => s.id);
@@ -714,9 +742,12 @@ export default function MainView() {
 
       // 2. 检查 effectiveProvider 是否已配置
       // 对于 AI 服务，必须同时检查 serviceId 已配置且当前 model 在该服务的已选模型列表中
+      // 官方翻译：只需登录即可，无需凭据配置
       let isCurrentConfigured = false;
       let currentSelectedModels: string[] = [];
-      if (effectiveProvider === "openai" && effectiveServiceId) {
+      if (effectiveProvider === "official") {
+        isCurrentConfigured = isLoggedIn;
+      } else if (effectiveProvider === "openai" && effectiveServiceId) {
         const savedModels = await api.getConfig(`translate_openai_${effectiveServiceId}_selected_models`).catch(() => null);
         currentSelectedModels = savedModels ? savedModels.split(",").filter(Boolean) : [];
         isCurrentConfigured = configured[effectiveServiceId] && currentSelectedModels.includes(effectiveModel || "");
@@ -724,13 +755,33 @@ export default function MainView() {
         isCurrentConfigured = configured[effectiveProvider];
       }
 
+      // 官方翻译未登录时的处理：
+      // - auth 初始化未完成（initialized=false）：保留 official，等 auth 完成后 effect 重新运行恢复
+      // - 用户退出登录（initialized=true）：降级到第一个已配置的第三方引擎，不覆盖 db 中的 official
+      if (!isCurrentConfigured && effectiveProvider === "official" && !isLoggedIn) {
+        const authInitialized = useAuthStore.getState().initialized;
+        if (!authInitialized) {
+          // auth 还在初始化，保留 official，等 effect 重新运行
+          isCurrentConfigured = true;
+        }
+        // else: auth 已初始化但未登录（用户退出登录），走降级逻辑
+      }
+
       if (!isCurrentConfigured) {
+        // 降级到第一个已配置的第三方引擎
+        // 如果是 official 降级（用户退出登录），不覆盖 db 中的 official，重新登录后可恢复
+        const isOfficialLogout = effectiveProvider === "official";
         // 优先找传统翻译
         const firstTrad = traditionalProviders.find((p) => configured[p]);
         if (firstTrad) {
           effectiveProvider = firstTrad;
           effectiveServiceId = null;
           effectiveModel = "";
+          if (!isOfficialLogout) {
+            api.setConfig("translate_provider", firstTrad).catch(() => {});
+            api.setConfig("translate_openai_service_id", "").catch(() => {});
+            api.setConfig("translate_current_model", "").catch(() => {});
+          }
         } else {
           // 找第一个已配置的 AI 服务
           const firstAi = aiServices.find((s) => configured[s.id]);
@@ -742,18 +793,22 @@ export default function MainView() {
             if (models) {
               effectiveModel = models.split(",")[0] || "";
             }
-            // 持久化
-            api.setConfig("translate_provider", "openai").catch(() => {});
-            api.setConfig("translate_openai_service_id", firstAi.id).catch(() => {});
-            api.setConfig("translate_current_model", effectiveModel).catch(() => {});
+            // 持久化（official 退出登录降级时不覆盖 db）
+            if (!isOfficialLogout) {
+              api.setConfig("translate_provider", "openai").catch(() => {});
+              api.setConfig("translate_openai_service_id", firstAi.id).catch(() => {});
+              api.setConfig("translate_current_model", effectiveModel).catch(() => {});
+            }
           } else {
             // 没有任何引擎已配置：清空 provider，让 Select 显示 placeholder
             effectiveProvider = "";
             effectiveServiceId = null;
             effectiveModel = "";
-            api.setConfig("translate_provider", "").catch(() => {});
-            api.setConfig("translate_openai_service_id", "").catch(() => {});
-            api.setConfig("translate_current_model", "").catch(() => {});
+            if (!isOfficialLogout) {
+              api.setConfig("translate_provider", "").catch(() => {});
+              api.setConfig("translate_openai_service_id", "").catch(() => {});
+              api.setConfig("translate_current_model", "").catch(() => {});
+            }
           }
         }
       } else if (effectiveProvider === "openai" && effectiveServiceId && !currentSelectedModels.includes(effectiveModel || "")) {
@@ -792,7 +847,7 @@ export default function MainView() {
         console.info(`[MainView] 翻译引擎已切换: ${oldName} -> ${newName}`);
       }
     });
-  }, []);
+  }, [isLoggedIn]);
 
   // OpenAi：加载所有已配置 AI 服务的模型列表（用于引擎下拉）
   // 遍历所有 AI 服务，收集已配置的 serviceId + models
@@ -1065,12 +1120,39 @@ export default function MainView() {
     baidu: true,
     bing: false,
     google: false,
+    official: true,
   };
 
   const handleTranslateAndMerge = useCallback(async () => {
     if (!subtitleStore.file) return;
     setTranslateClicked(true);
     const { sourceLang, provider, serviceId } = translateStore;
+
+    // 官方翻译模式：走独立 IPC 路径，跳过客户端后处理
+    if (provider === "official") {
+      try {
+        await officialTranslateStore.translate(subtitleStore.file);
+        // 翻译完成后，将译文合并到 subtitleStore
+        // 只回填与当前译文不一致的条目（空白/错误等）
+        // pre_edit_text 跟踪的是原文编辑（用户修改了原文），不是译文编辑。
+        // 用户编辑原文后发送给服务端翻译，译文结果应该正常回填。
+        const result = officialTranslateStore.result;
+        if (result && result.entries && subtitleStore.file) {
+          const updatedEntries = subtitleStore.file.entries.map((e) => {
+            const matched = result.entries.find((re) => re.index === e.index);
+            if (!matched) return e;
+            // 只在译文不一致时回填（避免覆盖 partial 已回填的相同译文）
+            if (e.translated === matched.translated) return e;
+            return { ...e, translated: matched.translated };
+          });
+          subtitleStore.setFile({ ...subtitleStore.file, entries: updatedEntries });
+        }
+      } catch (e: any) {
+        // error 已在 store 中处理（toast + state）
+      }
+      return;
+    }
+
     // 检查：翻译 API 是否已配置凭据
     // AI 服务：检查 serviceId 对应的配置；传统翻译：检查 provider 对应的配置
     const configKey = provider === "openai" ? (serviceId || "openai") : provider;
@@ -1542,12 +1624,26 @@ export default function MainView() {
               <div className="flex items-center gap-2">
                 <label className="text-xs text-muted-foreground flex-shrink-0">{t("translate.engine")}</label>
                 <Select
-                  value={translateStore.provider === "openai" && translateStore.model
+                  value={translateStore.provider === "official" && isLoggedIn
+                    ? `official:${officialTranslateStore.selectedModel}`
+                    : translateStore.provider === "openai" && translateStore.model
                     ? encodeAiSelectValue(translateStore.serviceId || "openai", translateStore.model)
                     : translateStore.provider === "openai" ? "" : (translateStore.provider || undefined)}
                   onValueChange={(val) => {
                     if (val === "__add_more__") {
                       navigate("/settings?tab=translate");
+                      return;
+                    }
+                    // 官方翻译
+                    if (val.startsWith("official:")) {
+                      const model = val.slice("official:".length);
+                      translateStore.setProvider("official");
+                      translateStore.setServiceId(null);
+                      translateStore.setModel("");
+                      officialTranslateStore.setSelectedModel(model);
+                      // 持久化
+                      api.setConfig("translate_provider", "official").catch(() => {});
+                      api.setConfig("translate_official_model", model).catch(() => {});
                       return;
                     }
                     const decoded = decodeAiSelectValue(val);
@@ -1576,9 +1672,67 @@ export default function MainView() {
                   }}
                 >
                   <SelectTrigger className="h-8 text-xs flex-1 overflow-hidden">
-                    <SelectValue placeholder={t("translate.noEngineAvailable", "无可用引擎")} className="truncate min-w-0 text-muted-foreground" />
+                    {translateStore.provider === "official" && isLoggedIn ? (
+                      <span className="truncate min-w-0">
+                        {(() => {
+                          const model = officialTranslateStore.selectedModel;
+                          const models = authUser?.available_models?.filter((m) => m.enabled) || [];
+                          const found = models.find((m) => m.model === model);
+                          if (found) return found.name;
+                          // 服务端未返回 available_models 时用默认名称
+                          if (model === "polly-fine") return t("translate.officialFine", "精品翻译");
+                          if (model === "polly-standard") return t("translate.officialStandard", "高质翻译");
+                          if (model === "polly-fast") return t("translate.officialFast", "标准翻译");
+                          return model;
+                        })()}
+                      </span>
+                    ) : (
+                      <SelectValue placeholder={t("translate.noEngineAvailable", "无可用引擎")} className="truncate min-w-0 text-muted-foreground" />
+                    )}
                   </SelectTrigger>
                   <SelectContent>
+                    {/* 官方翻译分组：仅登录后显示，从 available_models 动态渲染 */}
+                    {isLoggedIn && (
+                      <SelectGroup>
+                        <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.officialEngines", "官方翻译")}</SelectLabel>
+                        {(() => {
+                          const models = authUser?.available_models?.filter((m) => m.enabled) || [];
+                          if (models.length > 0) {
+                            return models.map((m) => (
+                              <SelectItem key={`official:${m.model}`} value={`official:${m.model}`}>
+                                <span className="flex flex-col w-full">
+                                  <span className="flex items-center gap-1 w-full">
+                                    <span className="truncate">{m.name}</span>
+                                    {m.price_url && (
+                                      <span
+                                        className="instant-tooltip flex-shrink-0 cursor-pointer text-primary/60 hover:text-primary"
+                                        data-tooltip={t("settings.viewPrice", "查看价格")}
+                                        onPointerDown={(e) => e.stopPropagation()}
+                                        onPointerUp={(e) => e.stopPropagation()}
+                                        onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(m.price_url!).catch(() => {}); }}
+                                      >
+                                        <Home className="h-3 w-3" />
+                                      </span>
+                                    )}
+                                  </span>
+                                  {m.description && (
+                                    <span className="text-[10px] text-muted-foreground truncate">{m.description}</span>
+                                  )}
+                                </span>
+                              </SelectItem>
+                            ));
+                          }
+                          // 服务端未返回 available_models 时用默认三档
+                          return (
+                            <>
+                              <SelectItem value="official:polly-fine">{t("translate.officialFine", "高质量精译")}</SelectItem>
+                              <SelectItem value="official:polly-standard">{t("translate.officialStandard", "标准翻译")}</SelectItem>
+                              <SelectItem value="official:polly-fast">{t("translate.officialFast", "快速翻译")}</SelectItem>
+                            </>
+                          );
+                        })()}
+                      </SelectGroup>
+                    )}
                     {/* 传统引擎分组：从 SERVICES 动态渲染已配置的传统翻译引擎 */}
                     {(() => {
                       const traditionalServices = SERVICES.filter((s) => s.category === "traditional");
@@ -1650,12 +1804,18 @@ export default function MainView() {
               </div>
 
               {/* 翻译按钮 / 停止按钮 */}
-              {translateStore.translating ? (
+              {translateStore.translating || officialTranslating ? (
                 <Button
                   size="sm"
                   variant="destructive"
                   className="w-full"
-                  onClick={() => translateStore.cancelTranslate()}
+                  onClick={() => {
+                    if (officialTranslating) {
+                      officialTranslateStore.cancel();
+                    } else {
+                      translateStore.cancelTranslate();
+                    }
+                  }}
                 >
                   <Square className="mr-1 h-4 w-4" />
                   {t("translate.stop")}
@@ -1739,6 +1899,22 @@ export default function MainView() {
                 </div>
               )}
 
+              {/* 官方翻译进度 */}
+              {officialTranslating && (
+                <div className="space-y-1">
+                  <div className="flex justify-between text-xs">
+                    <span>{t("translate.progress")}</span>
+                    <span>{officialTranslateStore.current} / {officialTranslateStore.total}</span>
+                  </div>
+                  <Progress value={officialTranslateStore.total > 0 ? (officialTranslateStore.current / officialTranslateStore.total) * 100 : 0} />
+                  {officialTranslateStore.phase && (
+                    <div className="text-[10px] text-muted-foreground">
+                      {officialTranslateStore.phase}{officialTranslateStore.step ? ` · ${officialTranslateStore.step}` : ""}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* 人名预扫描进度 */}
               {nameExtracting && translateStore.extractNamesTotal > 0 && (
                 <div className="space-y-1">
@@ -1770,11 +1946,6 @@ export default function MainView() {
                   )}
                 </div>
               )}
-
-              {/* 翻译错误 */}
-              {translateStore.error && (
-                <p className="text-xs text-destructive">{translateStore.error}</p>
-              )}
             </CardContent>
           </Card>
 
@@ -1803,7 +1974,7 @@ export default function MainView() {
       {/* 状态栏 */}
       <footer className="flex items-center justify-between border-t px-4 py-1 text-xs text-muted-foreground">
         <div className="flex items-center gap-3">
-          <span>{translateStore.translating ? t("translate.progress") : t("common.ready")}</span>
+          <span>{translateStore.translating || officialTranslating ? t("translate.progress") : t("common.ready")}</span>
           {subtitleStore.file && (
             <span>{t("subtitle.count", "条目数")}: {subtitleStore.file.entries.length}</span>
           )}

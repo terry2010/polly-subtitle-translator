@@ -173,6 +173,7 @@
     "playFromHere": "从此处播放",
     "translateOne": "翻译此条字幕",
     "retranslateOne": "重新翻译字幕",
+    "translateOneSuccess": "单条翻译完成",
     "editTranslation": "编辑译文",
     "undoDelete": "撤销删除",
     "langType": {
@@ -232,6 +233,10 @@
     "selectModel": "选择模型",
     "addMoreEngines": "添加更多翻译引擎",
     "traditionalEngines": "传统翻译",
+    "officialEngines": "官方翻译",
+    "officialFine": "精品翻译",
+    "officialFast": "标准翻译",
+    "officialStandard": "高质翻译",
     "engineSwitched": "上次使用的翻译引擎（{{oldProvider}}）已不可用，已自动切换为 {{newProvider}}"
   },
   "settings": {
@@ -471,7 +476,14 @@
     "testVersionDesc": "填入版本号模拟旧版本，测试更新流程。留空恢复真实版本。",
     "testVersionSave": "保存",
     "testVersionClear": "清除",
-    "updateChannelNote": "切换后下次检查更新时生效（手动检查或重启后自动检查）。"
+    "updateChannelNote": "切换后下次检查更新时生效（手动检查或重启后自动检查）。",
+    "officialApiLoggedIn": "已登录",
+    "officialApiBalance": "余额",
+    "officialApiVip": "等级",
+    "officialApiLogoutButton": "退出登录",
+    "officialApiWaiting": "等待浏览器登录...",
+    "officialApiBrowserHint": "已在浏览器中打开登录页面，请在浏览器中完成登录",
+    "officialApiLoginFailed": "登录失败，请重试"
   },
   "batch": {
     "status": {
@@ -702,6 +714,26 @@
       "downloadTaskFailed": "下载任务失败：{{detail}}",
       "ioError": "IO 错误：{{detail}}",
       "jsonError": "JSON 错误：{{detail}}"
+    },
+    "auth": {
+      "refreshTokenExpired": "登录已过期，请重新登录",
+      "refreshFailed": "刷新 token 失败：{{detail}}",
+      "networkError": "网络错误：{{detail}}",
+      "websocketConnectFailed": "WebSocket 连接失败：{{detail}}",
+      "websocketMessageParseFailed": "WebSocket 消息解析失败：{{detail}}",
+      "loginTimeout": "登录超时，请重试",
+      "loginFailed": "{{message}}"
     }
+  },
+  "auth": {
+    "loginTitle": "登录",
+    "waitingForLogin": "等待浏览器登录...",
+    "browserOpenedHint": "已在浏览器中打开登录页面，请在浏览器中完成登录",
+    "offlineMode": "离线模式（网络不可用）",
+    "loginFailed": "登录失败",
+    "retryLogin": "重新登录",
+    "retry": "重试",
+    "loginPrompt": "请登录以使用 AI 精译功能",
+    "startLogin": "开始登录"
   }
 }

@@ -172,6 +172,7 @@
     "playFromHereHint": "Play video from this subtitle's start time",
     "playFromHere": "Play From Here",
     "translateOne": "Translate This Entry",
+    "translateOneSuccess": "Single-entry translation completed",
     "editTranslation": "Edit Translation",
     "undoDelete": "Undo Delete",
     "langType": {
@@ -220,6 +221,10 @@
     "selectModel": "Select model",
     "addMoreEngines": "Add more translation engines",
     "traditionalEngines": "Traditional",
+    "officialEngines": "Official Translation",
+    "officialFine": "Premium",
+    "officialFast": "Standard",
+    "officialStandard": "Quality",
     "engineSwitched": "Previous engine ({{oldProvider}}) is no longer available, switched to {{newProvider}}"
   },
   "settings": {
@@ -459,7 +464,14 @@
     "testVersionDesc": "Enter a version number to simulate an older version for testing update flow. Leave empty to restore real version.",
     "testVersionSave": "Save",
     "testVersionClear": "Clear",
-    "updateChannelNote": "Takes effect on next update check (manual check or auto-check after restart)."
+    "updateChannelNote": "Takes effect on next update check (manual check or auto-check after restart).",
+    "officialApiLoggedIn": "Logged in",
+    "officialApiBalance": "Balance",
+    "officialApiVip": "Tier",
+    "officialApiLogoutButton": "Logout",
+    "officialApiWaiting": "Waiting for browser login...",
+    "officialApiBrowserHint": "Login page opened in browser, please complete login there",
+    "officialApiLoginFailed": "Login failed, please retry"
   },
   "batch": {
     "status": {
@@ -690,6 +702,26 @@
       "downloadTaskFailed": "Download task failed: {{detail}}",
       "ioError": "IO error: {{detail}}",
       "jsonError": "JSON error: {{detail}}"
+    },
+    "auth": {
+      "refreshTokenExpired": "Login expired, please login again",
+      "refreshFailed": "Token refresh failed: {{detail}}",
+      "networkError": "Network error: {{detail}}",
+      "websocketConnectFailed": "WebSocket connection failed: {{detail}}",
+      "websocketMessageParseFailed": "WebSocket message parse failed: {{detail}}",
+      "loginTimeout": "Login timeout, please retry",
+      "loginFailed": "{{message}}"
     }
+  },
+  "auth": {
+    "loginTitle": "Login",
+    "waitingForLogin": "Waiting for browser login...",
+    "browserOpenedHint": "Login page opened in browser, please complete login there",
+    "offlineMode": "Offline mode (network unavailable)",
+    "loginFailed": "Login failed",
+    "retryLogin": "Login Again",
+    "retry": "Retry",
+    "loginPrompt": "Please login to use AI translation",
+    "startLogin": "Start Login"
   }
 }
