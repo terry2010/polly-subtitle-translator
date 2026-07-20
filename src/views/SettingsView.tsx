@@ -19,6 +19,7 @@ import { useLibmpvStore } from "../stores/libmpvStore";
 import { useFfmpegStore } from "../stores/ffmpegStore";
 import { useUpdateStore } from "../stores/updateStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
+import { useAuthStore } from "../stores/authStore";
 import { api, formatIpcError, isTimeoutError, isInsufficientBalanceError } from "../lib/api";
 import type { PromptFailLogEntry } from "../lib/ipc-types";
 import { warn } from "../lib/logger";
@@ -404,6 +405,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   const { t } = useTranslation();
   const navigate = useNavigate();
   const devMode = useDevModeStore((s) => s.devMode);
+  const { status: authStatus, user: authUser, login: authLogin, logout: authLogout } = useAuthStore();
   const [searchParams] = useSearchParams();
 
   // 左列表选中项：null=官方API, "add:traditional"=添加传统, "add:ai"=添加AI, 否则=服务id
@@ -460,15 +462,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     setSelectedServiceId(null); // 默认显示官方 API
   }, [searchParams]);
 
-  // 非开发者模式下隐藏官方 API 卡片：若当前选中官方 API，则切到第一个已配置服务或添加面板
-  useEffect(() => {
-    if (!devMode && selectedServiceId === null) {
-      const traditional = SERVICES.filter((s) => s.category === "traditional" && configuredIds.has(s.id));
-      const ai = SERVICES.filter((s) => s.category === "ai" && configuredIds.has(s.id));
-      const firstConfigured = [...traditional, ...ai][0];
-      setSelectedServiceId(firstConfigured ? firstConfigured.id : "add:ai");
-    }
-  }, [devMode, selectedServiceId, configuredIds]);
+  // 官方 API 始终默认显示，无需开发者模式
 
   // 根据模型 id 自动识别 model_type
   const autoDetectModelTypeStr = useCallback((m: string): string => {
@@ -990,18 +984,57 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiMianfeiDesc", "转发到作者的电脑上，使用 Qwen 3.5 9B 翻译。速度慢但完全免费。")}</p>
           </div>
           <div className="border-t pt-4 space-y-2">
-            <p className="text-sm text-muted-foreground">{t("settings.officialApiLoginPrompt", "登陆认证后即可使用官方 API 服务。")}</p>
-            <Button
-              size="sm"
-              onClick={() => {
-                openUrl("https://www.baidu.com").catch(() => {
-                  toast.error(t("settings.openBrowserFailed"));
-                });
-              }}
-            >
-              {t("settings.officialApiLoginButton", "登陆认证")}
-            </Button>
-            <p className="text-xs text-muted-foreground">{t("settings.officialApiLoginNote", "（当前版本登陆认证功能尚未实现，点击跳转到百度，后续版本替换为官方认证）")}</p>
+            {authStatus === "logged_in" && authUser ? (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  {t("settings.officialApiLoggedIn", "已登录")}：{authUser.email}
+                </p>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>
+                    {t("settings.officialApiBonusBalance", "会员点数")}:{" "}
+                    {(authUser.bonus_balance || 0).toLocaleString()}
+                    {authUser.bonus_expires_at &&
+                      `（${t("settings.officialApiValidUntil", "有效期至")} ${authUser.bonus_expires_at.slice(0, 10).replace(/-/g, "/")}）`}
+                  </p>
+                  <p>
+                    {t("settings.officialApiTokenBalance", "按量点数")}:{" "}
+                    {(authUser.token_balance || 0).toLocaleString()}
+                  </p>
+                  <p>
+                    {t("settings.officialApiVip", "等级")}: {authUser.vip_level}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { void authLogout(); }}
+                >
+                  {t("settings.officialApiLogoutButton", "退出登录")}
+                </Button>
+              </>
+            ) : authStatus === "logging_in" ? (
+              <>
+                <p className="text-sm text-muted-foreground">{t("settings.officialApiWaiting", "等待浏览器登录...")}</p>
+                <Button size="sm" disabled>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  {t("settings.officialApiLoginButton", "登陆认证")}
+                </Button>
+                <p className="text-xs text-muted-foreground">{t("settings.officialApiBrowserHint", "已在浏览器中打开登录页面，请在浏览器中完成登录")}</p>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground">{t("settings.officialApiLoginPrompt", "登陆认证后即可使用官方 API 服务。")}</p>
+                <Button
+                  size="sm"
+                  onClick={() => { void authLogin(); }}
+                >
+                  {t("settings.officialApiLoginButton", "登陆认证")}
+                </Button>
+                {authStatus === "error" && (
+                  <p className="text-xs text-destructive">{t("settings.officialApiLoginFailed", "登录失败，请重试")}</p>
+                )}
+              </>
+            )}
           </div>
         </CardContent>
       </Card>

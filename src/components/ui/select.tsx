@@ -62,12 +62,17 @@ SelectContent.displayName = "SelectContent";
 
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
+  React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item> & {
+    /// 渲染在选项右侧的交互元素（如链接图标），在 ItemText 外面，收起时不显示
+    actionSlot?: React.ReactNode;
+    /// 渲染在名称下方的描述文字，在 ItemText 外面，收起时不显示
+    descriptionSlot?: React.ReactNode;
+  }
+>(({ className, children, actionSlot, descriptionSlot, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex flex-wrap w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className
     )}
     {...props}
@@ -78,6 +83,10 @@ const SelectItem = React.forwardRef<
       </SelectPrimitive.ItemIndicator>
     </span>
     <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
+    {actionSlot}
+    {descriptionSlot && (
+      <div className="basis-full w-full text-[10px] text-muted-foreground truncate">{descriptionSlot}</div>
+    )}
   </SelectPrimitive.Item>
 ));
 SelectItem.displayName = "SelectItem";

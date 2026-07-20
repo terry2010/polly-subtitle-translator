@@ -46,6 +46,7 @@ export default defineConfig({
     watch: {
       ignored: [
         "**/src-tauri/**",
+        "**/zimufan.com-v2/**",
         "**/*.srt", "**/*.ass", "**/*.ssa", "**/*.vtt",
         "**/*.mkv", "**/*.mp4", "**/*.avi", "**/*.mov",
         "**/*.txt", "**/*.log",

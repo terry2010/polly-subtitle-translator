@@ -12,6 +12,7 @@ import { useVideoStore } from "../stores/videoStore";
 import { useDevModeStore } from "../stores/devModeStore";
 import { AutoTextarea } from "./AutoTextarea";
 import { api } from "../lib/api";
+import { useOfficialTranslateStore } from "../stores/officialTranslateStore";
 import { error } from "../lib/logger";
 import type { SubtitleEntry } from "../lib/ipc-types";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -533,6 +534,28 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       return;
     }
     closeContextMenu();
+    // 官方翻译走独立的单条翻译 IPC 路径（translate_official_one）
+    // 上传完整字幕文件 + entry_id + 原文，服务端用上下文翻译单条
+    if (translateStore.provider === "official") {
+      const model = useOfficialTranslateStore.getState().selectedModel;
+      try {
+        const result = await api.translateOfficialOne({
+          file,
+          entry_index: entryIndex,
+          model,
+        });
+        // 更新条目译文
+        store.updateEntry(entryIndex, {
+          translated: result.translated_text,
+          failed: false,
+        });
+        toast.success(t("subtitle.translateOneSuccess", "单条翻译完成"));
+      } catch (e: any) {
+        error("官方单条翻译失败:", e);
+        toast.error(typeof e === "string" ? e : (e?.message || "单条翻译失败"));
+      }
+      return;
+    }
     // 已有翻译时跳过缓存，强制重新请求 API
     const skipCache = !!entry.translated;
     try {
@@ -553,7 +576,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       error("翻译单条失败:", e);
       toast.error(typeof e === "string" ? e : (e?.message || "翻译单条失败"));
     }
-  }, [file, translateStore, store, closeContextMenu]);
+  }, [file, translateStore, store, closeContextMenu, t]);
 
   // 复制原文到剪贴板
   const handleCopyOriginal = useCallback((entryIndex: number) => {

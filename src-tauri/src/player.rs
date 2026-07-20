@@ -2544,6 +2544,78 @@ mod macos {
         });
     }
 
+    /// 将 -[NSOpenGLContext update] swizzle 为 no-op，防止主线程 layer flush 时
+    /// performAsyncResize: → NSOpenGLContext update → CGLSetVirtualScreen → gldAttachDrawable
+    /// 与 vo 线程的 GL 渲染竞争导致 Metal fence 空指针崩溃（SIGSEGV at 0x50）。
+    ///
+    /// 崩溃根因（见 docs/crash.log）：
+    /// - macOS 10.14+ 所有窗口默认 layer-backed，setWantsLayer:NO 无法阻止
+    ///   NSOpenGLView 的 _NSOpenGLViewBackingLayer 被 AppKit 创建
+    /// - Runloop 每次 flush 时 CA::Transaction::commit → _NSOpenGLViewBackingLayer display
+    ///   → MpvCocoaAdapter performAsyncResize: → NSOpenGLContext update
+    ///   → CGLSetVirtualScreen → gldAttachDrawable（修改 GL context 的 drawable 附件）
+    /// - 同时 vo 线程在 gl_vao_draw_data → gl_renderpass_run → GLRResourceList::addFence
+    ///   访问被 gldAttachDrawable 失效的 Metal fence 资源 → 空指针解引用
+    ///
+    /// 修复策略：
+    /// - 将 -[NSOpenGLContext update] 的实现替换为 no-op
+    /// - Metal-backed OpenGL renderer 每帧自行获取新 CAMetalDrawable，
+    ///   不依赖 NSOpenGLContext update 来切换 drawable
+    /// - update 主要更新 virtual screen 映射，跳过后最坏情况是
+    ///   多显示器场景下视频渲染在错误的 screen（不崩溃，仅视觉异常）
+    static SWIZZLE_ONCE: std::sync::Once = std::sync::Once::new();
+    fn swizzle_nsopenglcontext_update() {
+        SWIZZLE_ONCE.call_once(|| {
+            use objc::runtime::{
+                Imp, Method, class_getInstanceMethod, class_addMethod,
+                method_exchangeImplementations,
+            };
+            use std::os::raw::c_char;
+            unsafe {
+                let cls = match Class::get("NSOpenGLContext") {
+                    Some(c) => c,
+                    None => {
+                        tracing::error!("swizzle_nsopenglcontext_update: NSOpenGLContext 类未找到");
+                        return;
+                    }
+                };
+                let update_sel = sel!(update);
+                let original = class_getInstanceMethod(cls as *const Class, update_sel);
+                if original.is_null() {
+                    tracing::error!("swizzle_nsopenglcontext_update: -[NSOpenGLContext update] 方法未找到");
+                    return;
+                }
+                // no-op 实现：-(void)update { } 签名为 v@:
+                extern "C" fn noop_update(_this: *mut Object, _sel: Sel) {}
+                // 注册新 selector 用于存放 no-op 实现
+                let safe_sel = Sel::register("zimufan_safe_update");
+                let types = b"v@:\0";
+                let added = class_addMethod(
+                    cls as *const Class as *mut Class,
+                    safe_sel,
+                    std::mem::transmute::<extern "C" fn(*mut Object, Sel), Imp>(noop_update),
+                    types.as_ptr() as *const c_char,
+                );
+                if !added {
+                    tracing::error!("swizzle_nsopenglcontext_update: class_addMethod 失败");
+                    return;
+                }
+                let safe_method = class_getInstanceMethod(cls as *const Class, safe_sel);
+                if safe_method.is_null() {
+                    tracing::error!("swizzle_nsopenglcontext_update: zimufan_safe_update 方法未找到");
+                    return;
+                }
+                // 交换后：调用 update → 执行 noop_update（安全 no-op）
+                //         调用 zimufan_safe_update → 执行原始 update（备用，本场景不调用）
+                method_exchangeImplementations(
+                    original as *mut Method,
+                    safe_method as *mut Method,
+                );
+                tracing::info!("swizzle_nsopenglcontext_update: 已将 -[NSOpenGLContext update] 替换为 no-op");
+            }
+        });
+    }
+
     /// 恢复父窗口 key 状态的上下文
     struct RestoreParentKeyCtx {
         parent_window: *mut Object,
@@ -2675,6 +2747,50 @@ mod macos {
         );
     }
 
+    /// 递归遍历 view 及其所有子视图，禁用 layer backing（setWantsLayer:NO）。
+    /// mpv cocoa vo 会在 wid view 上创建 NSOpenGLView 子视图，该子视图默认 layer-backed，
+    /// CoreAnimation commit 时触发 _NSOpenGLViewBackingLayer display → performAsyncResize
+    /// → NSOpenGLContext update → gldAttachDrawable 空指针崩溃。
+    /// 禁用 layer 后，NSOpenGLContext 走传统直绘模式，不经过 CoreAnimation layer 系统。
+    unsafe fn disable_layer_backing_recursive(view: *mut Object) {
+        if view.is_null() { return; }
+        let wants_layer: bool = msg_send![view, wantsLayer];
+        if wants_layer {
+            let _: () = msg_send![view, setWantsLayer: false];
+            tracing::info!("disable_layer_backing: 已禁用 view {:?} 的 layer backing", view);
+        }
+        // 递归处理子视图
+        let subviews: *mut Object = msg_send![view, subviews];
+        if !subviews.is_null() {
+            let count: usize = msg_send![subviews, count];
+            for i in 0..count {
+                let subview: *mut Object = msg_send![subviews, objectAtIndex: i];
+                disable_layer_backing_recursive(subview);
+            }
+        }
+    }
+
+    /// 派发到主线程执行 disable_layer_backing_recursive（AppKit 调用必须在主线程）
+    struct DisableLayerCtx { ns_view: *mut Object }
+    extern "C" fn disable_layer_backing_on_main(context: *mut c_void) {
+        unsafe {
+            let ctx = Box::from_raw(context as *mut DisableLayerCtx);
+            disable_layer_backing_recursive(ctx.ns_view);
+        }
+    }
+    unsafe fn disable_layer_backing_on_main_thread(ns_view: *mut Object) {
+        if is_main_thread() {
+            disable_layer_backing_recursive(ns_view);
+            return;
+        }
+        let ctx = Box::new(DisableLayerCtx { ns_view });
+        dispatch_sync_f(
+            &_dispatch_main_q as *const c_void,
+            Box::into_raw(ctx) as *mut c_void,
+            disable_layer_backing_on_main,
+        );
+    }
+
     /// 在主线程直接显示悬浮窗口（原始版本）
     /// 使用 setAlphaValue:1.0 恢复可见，而非 setIsVisible/orderFront。
     /// 窗口始终保持 visible 状态（hide 时 alpha=0），NSOpenGLContext 持续活跃，
@@ -2793,6 +2909,10 @@ mod macos {
             x: i32, y: i32, w: i32, h: i32,
         ) -> Result<Self, AppError> {
             let _ = GLOBAL_APP_HANDLE.set(app_handle.clone());
+            // 在创建任何 NSOpenGLContext 之前 swizzle -[NSOpenGLContext update] 为 no-op，
+            // 防止主线程 layer flush 时 NSOpenGLContext update 与 vo 线程 GL 渲染竞争崩溃。
+            // 必须在 mpv_initialize（创建 NSOpenGLContext）之前完成。
+            swizzle_nsopenglcontext_update();
             unsafe {
                 tracing::info!("Player::new (macOS): 加载 dylib: {}", dylib_path);
                 let api = MpvApi::load(dylib_path)?;
@@ -2865,6 +2985,14 @@ mod macos {
                     return Err(AppError::PlayerInitFailed { code: ret.to_string() });
                 }
                 tracing::info!("Player::new (macOS): mpv_initialize 成功");
+                // mpv cocoa vo 会在 ns_view 上创建 NSOpenGLView 子视图用于渲染。
+                // NSOpenGLView 默认 layer-backed（_NSOpenGLViewBackingLayer），
+                // CoreAnimation transaction flush 时会触发
+                //   _NSOpenGLViewBackingLayer display → performAsyncResize → NSOpenGLContext update
+                // 与 vo 线程的 GL 渲染竞争，导致 gldAttachDrawable 空指针崩溃。
+                // 遍历 ns_view 的所有子视图，禁用 layer backing，强制走传统 NSOpenGLContext 直绘模式。
+                // 必须在主线程执行（AppKit 调用线程安全要求）
+                disable_layer_backing_on_main_thread(ns_view);
                 let _ = set_property(&api, mpv, "osc", "no");
                 let _ = set_property(&api, mpv, "osd-level", "0");
                 // 启动位置轮询线程
@@ -2906,6 +3034,10 @@ mod macos {
                 if ret < 0 {
                     return Err(AppError::PlayerLoadVideoFailed { path: file_path.to_string(), code: ret.to_string() });
                 }
+                // loadfile 后 mpv vo 线程可能创建/重建 NSOpenGLView 子视图，
+                // 再次禁用 layer backing 防止 CoreAnimation 竞争崩溃
+                let ns_view: *mut Object = msg_send![self.ns_window, contentView];
+                disable_layer_backing_on_main_thread(ns_view);
                 Ok(())
             }
         }

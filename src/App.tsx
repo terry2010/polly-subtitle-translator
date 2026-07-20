@@ -13,6 +13,7 @@ import { useVideoStore } from "./stores/videoStore";
 import { useSubtitleStore } from "./stores/subtitleStore";
 import { useTranslateStore } from "./stores/translateStore";
 import { useDevModeStore } from "./stores/devModeStore";
+import { useAuthStore } from "./stores/authStore";
 import { useLibmpvStore } from "./stores/libmpvStore";
 import { useFfmpegStore } from "./stores/ffmpegStore";
 import { useUpdateStore } from "./stores/updateStore";
@@ -52,6 +53,10 @@ export default function App() {
   // 启动时检查开发者模式重启计数（开启后重启 3 次自动关闭）
   const initDevMode = useDevModeStore((s) => s.initOnStartup);
   useEffect(() => { void initDevMode(); }, [initDevMode]);
+
+  // P0 auth：启动时初始化认证状态（refresh → /auth/me → 离线降级）
+  const initAuth = useAuthStore((s) => s.initOnStartup);
+  useEffect(() => { void initAuth(); }, [initAuth]);
 
   // 全局监听 libmpv 下载进度事件（路由切换时组件卸载也不丢失）
   const onLibmpvProgress = useLibmpvStore((s) => s.onProgressEvent);

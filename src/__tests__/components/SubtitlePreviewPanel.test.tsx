@@ -6,6 +6,7 @@ import { SubtitlePreviewPanel } from "../../components/SubtitlePreviewPanel";
 import { useSubtitleStore } from "../../stores/subtitleStore";
 import { useVideoStore } from "../../stores/videoStore";
 import { useTranslateStore } from "../../stores/translateStore";
+import { useOfficialTranslateStore } from "../../stores/officialTranslateStore";
 import type { SubtitleEntry, SubtitleFile } from "../../lib/ipc-types";
 
 vi.mock("../../lib/api", () => ({
@@ -14,6 +15,13 @@ vi.mock("../../lib/api", () => ({
     playerShow: vi.fn(() => Promise.resolve()),
     devLog: vi.fn(),
     exportSubtitle: vi.fn(() => Promise.resolve()),
+    translateOfficialOne: vi.fn(() => Promise.resolve({
+      translated_text: "你好世界",
+      tokens_used: 10,
+      cost: 5,
+      token_balance: 9990,
+      bonus_balance: null,
+    })),
   },
   formatIpcError: vi.fn((e: unknown) => String(e)),
 }));
@@ -270,3 +278,110 @@ describe("SubtitlePreviewPanel - 原文编辑", () => {
 });
 
 // === SECTION 4 END ===
+
+// === 官方单条翻译测试 ===
+
+describe("SubtitlePreviewPanel - 官方单条翻译", () => {
+  function setFile(entries: SubtitleEntry[]) {
+    useSubtitleStore.setState({
+      file: { format: "srt", entries, raw_header: null, source_path: "/test/sub.srt", file_hash: "H1" },
+      updateEntry: vi.fn(),
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useSubtitleStore.setState({
+      file: null, loading: false, error: null, bilingualDetect: null,
+      isSplit: false, preSplitFile: null, preSplitBilingualDetect: null,
+      undoStack: [], redoStack: [],
+      findQuery: "", replaceQuery: "", findTarget: "all",
+      findMatchCount: 0, findCurrentMatch: 0, findMatchEntryIndex: null,
+      updateEntry: vi.fn(),
+    });
+    useVideoStore.setState({ probeResult: null, loading: false, error: null, selectedSubtitleStream: null });
+    useTranslateStore.setState({
+      translating: false, progress: 0, total: 0, result: null, error: null,
+      sourceLang: "en", targetLang: "zh", provider: "official",
+      model: "", modelType: "", serviceId: null,
+    });
+    useOfficialTranslateStore.setState({ selectedModel: "polly-standard" });
+  });
+
+  it("official provider 下右键菜单显示翻译按钮（不被拦截）", () => {
+    setFile([makeEntry(0, "Hello", "")]);
+    const { container } = render(<SubtitlePreviewPanel />);
+    // 触发右键菜单：条目行有 onContextMenu
+    const entryRows = container.querySelectorAll("[class*='group border-b']");
+    expect(entryRows.length).toBeGreaterThan(0);
+    fireEvent.contextMenu(entryRows[0]);
+    // 右键菜单应出现翻译按钮
+    expect(screen.getByText("subtitle.translateOne")).toBeInTheDocument();
+  });
+
+  it("official provider 下点击翻译调用 translateOfficialOne 并更新条目译文", async () => {
+    const { api } = await import("../../lib/api");
+    const updateEntrySpy = vi.fn();
+    setFile([makeEntry(0, "Hello", "")]);
+    useSubtitleStore.setState({ updateEntry: updateEntrySpy });
+
+    const { container } = render(<SubtitlePreviewPanel />);
+
+    // 触发右键菜单
+    const entryRows = container.querySelectorAll("[class*='group border-b']");
+    fireEvent.contextMenu(entryRows[0]);
+
+    // 点击翻译按钮
+    const translateBtn = screen.getByText("subtitle.translateOne");
+    fireEvent.click(translateBtn);
+
+    // 验证 translateOfficialOne 被调用
+    await waitFor(() => {
+      expect(api.translateOfficialOne).toHaveBeenCalledWith({
+        file: expect.objectContaining({ format: "srt" }),
+        entry_index: 0,
+        model: "polly-standard",
+      });
+    });
+
+    // 验证条目译文被更新
+    await waitFor(() => {
+      expect(updateEntrySpy).toHaveBeenCalledWith(0, {
+        translated: "你好世界",
+        failed: false,
+      });
+    });
+  });
+
+  it("translateOfficialOne 失败时不更新条目译文", async () => {
+    const { api } = await import("../../lib/api");
+    (api.translateOfficialOne as any).mockRejectedValueOnce(new Error("翻译失败"));
+
+    const updateEntrySpy = vi.fn();
+    setFile([makeEntry(0, "Hello", "")]);
+    useSubtitleStore.setState({ updateEntry: updateEntrySpy });
+
+    const { container } = render(<SubtitlePreviewPanel />);
+
+    // 触发右键菜单
+    const entryRows = container.querySelectorAll("[class*='group border-b']");
+    fireEvent.contextMenu(entryRows[0]);
+
+    // 点击翻译按钮
+    const translateBtn = screen.getByText("subtitle.translateOne");
+    fireEvent.click(translateBtn);
+
+    // 验证 translateOfficialOne 被调用
+    await waitFor(() => {
+      expect(api.translateOfficialOne).toHaveBeenCalled();
+    });
+
+    // 等一下确保异步错误处理完成
+    await new Promise(r => setTimeout(r, 100));
+
+    // 验证 updateEntry 未被调用（翻译失败）
+    expect(updateEntrySpy).not.toHaveBeenCalled();
+  });
+});
+
+// === SECTION 5 END ===

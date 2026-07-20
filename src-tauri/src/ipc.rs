@@ -223,6 +223,11 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         translate_official,
         translate_official_one,
         cancel_translate_official,
+        // Dashboard API（FP-D4）
+        list_translate_jobs,
+        pause_translate_job,
+        resume_translate_job,
+        delete_translate_job,
     ])
 }
 
@@ -3882,6 +3887,84 @@ pub async fn cancel_translate_official(
             Err(translate_error_to_ipc(e))
         }
     }
+}
+
+/// list_translate_jobs：查询官方翻译任务列表
+/// 调用 GET /v2/translate/jobs，支持可选状态筛选和分页
+#[tauri::command]
+pub async fn list_translate_jobs(
+    db: State<'_, Database>,
+    status: Option<String>,
+    page: Option<i64>,
+    page_size: Option<i64>,
+) -> Result<serde_json::Value, IpcError> {
+    tracing::info!(
+        "list_translate_jobs: status={:?}, page={:?}, page_size={:?}",
+        status, page, page_size
+    );
+
+    let client = reqwest::Client::new();
+    let result = auth::list_jobs(
+        db.inner(),
+        &client,
+        status.as_deref(),
+        page,
+        page_size,
+    )
+    .await
+    .map_err(translate_error_to_ipc)?;
+
+    Ok(serde_json::to_value(&result).unwrap_or(serde_json::json!({
+        "jobs": [],
+        "total": 0,
+        "page": page.unwrap_or(1),
+        "page_size": page_size.unwrap_or(20),
+    })))
+}
+
+/// pause_translate_job：暂停官方翻译任务
+/// 调用 POST /v2/translate/{job_id}/pause
+#[tauri::command]
+pub async fn pause_translate_job(
+    db: State<'_, Database>,
+    job_id: String,
+) -> Result<serde_json::Value, IpcError> {
+    tracing::info!("pause_translate_job: job_id={}", job_id);
+
+    let client = reqwest::Client::new();
+    auth::pause_job(db.inner(), &client, &job_id)
+        .await
+        .map_err(translate_error_to_ipc)
+}
+
+/// resume_translate_job：恢复官方翻译任务
+/// 调用 POST /v2/translate/{job_id}/resume
+#[tauri::command]
+pub async fn resume_translate_job(
+    db: State<'_, Database>,
+    job_id: String,
+) -> Result<serde_json::Value, IpcError> {
+    tracing::info!("resume_translate_job: job_id={}", job_id);
+
+    let client = reqwest::Client::new();
+    auth::resume_job(db.inner(), &client, &job_id)
+        .await
+        .map_err(translate_error_to_ipc)
+}
+
+/// delete_translate_job：删除官方翻译任务
+/// 调用 DELETE /v2/translate/{job_id}/delete
+#[tauri::command]
+pub async fn delete_translate_job(
+    db: State<'_, Database>,
+    job_id: String,
+) -> Result<serde_json::Value, IpcError> {
+    tracing::info!("delete_translate_job: job_id={}", job_id);
+
+    let client = reqwest::Client::new();
+    auth::delete_job(db.inner(), &client, &job_id)
+        .await
+        .map_err(translate_error_to_ipc)
 }
 
 /// TranslateError → IpcError 转换

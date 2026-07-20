@@ -374,3 +374,115 @@ export const DEFAULT_ASS_STYLE: AssBilingualStyle = {
   shadow: 2,
   shadow_color: "&H000000&",
 };
+
+// === auth 相关（FP-P0-6）===
+
+export interface ModelOption {
+  model: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  price_url?: string;
+}
+
+export interface UserInfo {
+  id: number;
+  email: string;
+  token_balance: number;
+  bonus_balance: number;
+  traffic_pack_balance: number;
+  status: string;
+  vip_level: string;
+  vip_expires_at: string | null;
+  bonus_expires_at: string | null;
+  traffic_pack_expires_at: string | null;
+  max_concurrent_jobs: number;
+  available_models: ModelOption[];
+}
+
+export interface LoginSuccess {
+  user: UserInfo;
+  expires_in: number;
+}
+
+export interface AuthInitResult {
+  user: UserInfo | null;
+  offline: boolean;
+  error: string | null;
+}
+
+// === P1 翻译核心类型 ===
+
+/// 官方翻译请求参数
+export interface OfficialTranslateParams {
+  file: SubtitleFile;
+  model: string;
+}
+
+/// 官方翻译返回结果
+export interface OfficialTranslateResponse {
+  entries: SubtitleEntry[];
+  tokens_used: number;
+  cost: number;
+  token_balance: number | null;
+  bonus_balance: number | null;
+}
+
+/// 官方单条翻译请求参数
+export interface OfficialTranslateOneParams {
+  file: SubtitleFile;
+  entry_index: number;
+  model: string;
+}
+
+/// 官方单条翻译返回结果
+export interface OfficialTranslateOneResponse {
+  translated_text: string;
+  tokens_used: number;
+  cost: number;
+  token_balance: number | null;
+  bonus_balance: number | null;
+}
+
+/// SSE 进度事件（listen "official-translate-progress"）
+export interface OfficialTranslateProgress {
+  phase: string;
+  step: string;
+  current: number;
+  total: number;
+}
+
+/// SSE 错误事件（listen "official-translate-error"）
+export interface OfficialTranslateError {
+  phase: string;
+  step: string;
+  error_code: string;
+  message: string;
+}
+
+/// SSE 余额事件（listen "official-translate-balance"）
+export interface OfficialTranslateBalance {
+  tokens_used: number;
+  cost: number;
+  token_balance: number | null;
+  bonus_balance: number | null;
+}
+
+/// 翻译任务列表项（Dashboard）
+export interface TranslateJobItem {
+  job_id: string;
+  filename: string;
+  status: string;
+  source_language: string;
+  target_language: string;
+  total_entries: number;
+  completed_entries: number;
+  estimated_points: number;
+  consumed_points: number;
+  frozen_points: number;
+  created_at: string;
+  completed_at?: string | null;
+  error_message?: string | null;
+  tier?: string | null;
+  vip_level?: string | null;
+}

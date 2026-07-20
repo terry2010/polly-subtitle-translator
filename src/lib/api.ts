@@ -34,6 +34,7 @@ import type {
   OfficialTranslateResponse,
   OfficialTranslateOneParams,
   OfficialTranslateOneResponse,
+  TranslateJobItem,
 } from "./ipc-types";
 
 /// 调用 IPC 命令并解析 IpcResult 包装
@@ -566,4 +567,37 @@ export const api = {
       refunded?: number;
       token_balance?: number | null;
     }>("cancel_translate_official"),
+
+  // === D4 Dashboard API ===
+
+  /// 查询官方翻译任务列表
+  listTranslateJobs: (params?: { status?: string; page?: number; pageSize?: number }) =>
+    callIpc<{
+      jobs: TranslateJobItem[];
+      total: number;
+      page: number;
+      page_size: number;
+    }>("list_translate_jobs", {
+      status: params?.status ?? null,
+      page: params?.page ?? null,
+      page_size: params?.pageSize ?? null,
+    }),
+
+  /// 暂停官方翻译任务
+  pauseTranslateJob: (jobId: string) =>
+    callIpc<{ job_id: string; status: string; completed_entries?: number }>(
+      "pause_translate_job",
+      { jobId }
+    ),
+
+  /// 恢复官方翻译任务
+  resumeTranslateJob: (jobId: string) =>
+    callIpc<{ job_id: string; status: string; completed_entries?: number }>(
+      "resume_translate_job",
+      { jobId }
+    ),
+
+  /// 删除官方翻译任务
+  deleteTranslateJob: (jobId: string) =>
+    callIpc<{ code: number; message: string }>("delete_translate_job", { jobId }),
 };

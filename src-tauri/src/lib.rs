@@ -12,6 +12,7 @@ pub mod search;
 pub mod context_menu;
 pub mod player;
 pub mod batch;
+pub mod auth;
 
 use tauri::{Manager, Listener};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -749,6 +750,12 @@ pub fn run() {
                 Ok(_) => {}
                 Err(e) => tracing::warn!("启动清理假翻译缓存失败: {:?}", e),
             }
+            // 启动时清理过期的 file_translation_jobs 记录（服务端 job_id TTL 24h）
+            match db.cleanup_expired_file_jobs() {
+                Ok(n) if n > 0 => tracing::info!("启动清理：删除 {} 条过期 job_id 记录", n),
+                Ok(_) => {}
+                Err(e) => tracing::warn!("启动清理过期 job_id 记录失败: {:?}", e),
+            }
 
             // 在 manage(db) 之前读取批量配置（manage 会 move db）
             let saved_batch_config = db.get_config("batch_config").ok().flatten()
@@ -759,6 +766,9 @@ pub fn run() {
 
             // 初始化翻译取消令牌
             app.manage(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)) as crate::ipc::CancelToken);
+
+            // 初始化官方翻译 job_id 跟踪（用于取消任务）
+            app.manage(std::sync::Arc::new(std::sync::Mutex::new(None::<String>)) as crate::ipc::OfficialTranslateJob);
 
             // 初始化 ffmpeg 的 app_data_dir（供 find_ffmpeg 查找下载的 ffmpeg）
             crate::ffmpeg::init_app_data_dir(app_data_dir.clone());
@@ -847,6 +857,28 @@ pub fn run() {
             }
 
             tracing::info!("AI-SubTrans 启动完成，数据目录: {:?}", app_data_dir);
+
+            // P0 auth：启动 token 刷新后台循环
+            // 在 init_auth_on_startup（前端调用）完成后，refresh loop 负责过期前 5 分钟自动刷新
+            {
+                // 重新打开 db 连接供后台 task 持有
+                let db_for_auth = db::Database::open(&db_path)?;
+                let db_arc = std::sync::Arc::new(db_for_auth);
+                let client = reqwest::Client::new();
+                tauri::async_runtime::spawn(async move {
+                    // 先执行一次启动初始化（refresh + /auth/me），再进入刷新循环
+                    let init_result = crate::auth::init_auth_on_startup(&db_arc, &client).await;
+                    if let Some(user) = &init_result.user {
+                        tracing::info!("auth 启动初始化成功: user={}", user.email);
+                    } else if init_result.offline {
+                        tracing::warn!("auth 启动初始化: 离线模式 ({})", init_result.error.unwrap_or_default());
+                    } else {
+                        tracing::info!("auth 启动初始化: 未登录");
+                    }
+                    // 进入后台刷新循环
+                    crate::auth::start_token_refresh_loop(db_arc, client).await;
+                });
+            }
 
             // 窗口初始位置：根据鼠标所在显示器居中计算（先定位不显示）
             #[allow(unused_variables)]

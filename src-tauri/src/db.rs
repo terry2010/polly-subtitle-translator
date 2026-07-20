@@ -38,6 +38,15 @@ impl Database {
         })
     }
 
+    /// 从已有 Connection 构造 Database（仅供测试使用）
+    /// 调用方需自行建表（credentials / config 等）
+    #[cfg(test)]
+    pub fn from_connection(conn: Connection) -> Self {
+        Self {
+            conn: Mutex::new(conn),
+        }
+    }
+
     pub fn with_conn<F, R>(&self, f: F) -> Result<R, AppError>
     where
         F: FnOnce(&Connection) -> Result<R, AppError>,
@@ -238,6 +247,18 @@ CREATE TABLE IF NOT EXISTS source_edit_cache (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_source_edit_orig_hash_index
     ON source_edit_cache(original_file_hash, entry_index);
 "#,
+}, Migration {
+    version: 5,
+    sql: r#"
+-- v5: 官方翻译 job_id 持久化（单条翻译复用 TM/KNP 上下文）
+-- 全文翻译完成时保存 file_hash → job_id，单条翻译时按 file_hash 查回
+-- job_id 有 24h TTL（服务端限制），启动时清理过期记录
+CREATE TABLE IF NOT EXISTS file_translation_jobs (
+    file_hash TEXT PRIMARY KEY,
+    job_id    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"#,
 }];
 
 // === SECTION 2 END ===
@@ -420,6 +441,45 @@ impl Database {
     pub fn clear_translate_cache(&self) -> Result<usize, AppError> {
         self.with_conn(|conn| {
             let count = conn.execute("DELETE FROM translate_cache", [])?;
+            Ok(count)
+        })
+    }
+
+    /// 保存官方翻译 job_id（全文翻译完成时调用）
+    /// 单条翻译时按 file_hash 查回 job_id，复用 TM/KNP 上下文
+    pub fn set_file_job(&self, file_hash: &str, job_id: &str) -> Result<(), AppError> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO file_translation_jobs (file_hash, job_id) VALUES (?1, ?2)",
+                rusqlite::params![file_hash, job_id],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// 查询官方翻译 job_id（单条翻译时调用）
+    /// 返回 None 表示无记录或已过期（由调用方判断）
+    pub fn get_file_job(&self, file_hash: &str) -> Result<Option<String>, AppError> {
+        self.with_conn(|conn| {
+            let result = conn
+                .query_row(
+                    "SELECT job_id FROM file_translation_jobs WHERE file_hash = ?1",
+                    rusqlite::params![file_hash],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok();
+            Ok(result)
+        })
+    }
+
+    /// 清理过期的 job_id 记录（服务端 job_id TTL 24h）
+    /// 启动时调用，删除超过 24 小时的记录
+    pub fn cleanup_expired_file_jobs(&self) -> Result<usize, AppError> {
+        self.with_conn(|conn| {
+            let count = conn.execute(
+                "DELETE FROM file_translation_jobs WHERE created_at < datetime('now', '-24 hours')",
+                [],
+            )?;
             Ok(count)
         })
     }
@@ -1023,6 +1083,52 @@ mod tests {
         assert_eq!(db.get_translate_cache("k2").unwrap(), None);
     }
 
+    #[test]
+    fn test_file_job_set_get() {
+        let db = test_db();
+        let file_hash = "abc123";
+        // 初始无记录
+        assert_eq!(db.get_file_job(file_hash).unwrap(), None);
+        // 写入 job_id
+        db.set_file_job(file_hash, "job-001").unwrap();
+        // 读取
+        assert_eq!(db.get_file_job(file_hash).unwrap(), Some("job-001".to_string()));
+    }
+
+    #[test]
+    fn test_file_job_replace() {
+        let db = test_db();
+        let file_hash = "abc456";
+        // 同一 file_hash 再次写入，覆盖旧 job_id
+        db.set_file_job(file_hash, "job-001").unwrap();
+        db.set_file_job(file_hash, "job-002").unwrap();
+        assert_eq!(db.get_file_job(file_hash).unwrap(), Some("job-002".to_string()));
+    }
+
+    #[test]
+    fn test_cleanup_expired_file_jobs() {
+        let db = test_db();
+        // 插入一条过期记录（created_at 设为 25 小时前）
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO file_translation_jobs (file_hash, job_id, created_at) VALUES (?1, ?2, datetime('now', '-25 hours'))",
+                rusqlite::params!["expired_hash", "job-old"],
+            )?;
+            Ok(())
+        }).unwrap();
+        // 插入一条新记录
+        db.set_file_job("fresh_hash", "job-fresh").unwrap();
+
+        // 清理过期记录
+        let deleted = db.cleanup_expired_file_jobs().unwrap();
+        assert_eq!(deleted, 1, "应删除 1 条过期记录");
+
+        // 过期记录已删除
+        assert_eq!(db.get_file_job("expired_hash").unwrap(), None);
+        // 新记录保留
+        assert_eq!(db.get_file_job("fresh_hash").unwrap(), Some("job-fresh".to_string()));
+    }
+
     // === SECTION 8 END ===
 
     #[test]
@@ -1030,11 +1136,11 @@ mod tests {
         let db = test_db();
         // 再次执行 migrate 不应报错
         db.migrate().unwrap();
-        // schema_migrations 应有 v1、v2、v3、v4 四条
+        // schema_migrations 应有 v1、v2、v3、v4、v5 五条
         let count: i64 = db.with_conn(|conn| {
             Ok(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))?)
         }).unwrap();
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
     }
 
     // === SECTION 9 END ===

@@ -45,6 +45,7 @@ vi.mock("../../lib/api", () => ({
     getProxy: mockGetProxy,
     listOpenaiModels: mockListOpenaiModels,
     testTranslateConnection: mockTestTranslateConnection,
+    authLogin: vi.fn().mockResolvedValue({ user: { id: 1, email: "test@test.com" }, expires_in: 3600 }),
   },
   formatIpcError: vi.fn((e: unknown) => String(e)),
 }));
@@ -204,7 +205,7 @@ describe("TranslateApiSettings - 添加 API 面板", () => {
 // === SECTION 4 END ===
 
 describe("TranslateApiSettings - 官方 API 登陆按钮", () => {
-  it("点击登陆按钮调用 openUrl", async () => {
+  it("点击登陆按钮调用 authLogin", async () => {
     useDevModeStore.setState({ devMode: true });
     const user = userEvent.setup();
     renderComponent();
@@ -212,7 +213,10 @@ describe("TranslateApiSettings - 官方 API 登陆按钮", () => {
       expect(screen.getByText("settings.officialApiLoginButton")).toBeInTheDocument();
     });
     await user.click(screen.getByText("settings.officialApiLoginButton"));
-    expect(mockOpenUrl).toHaveBeenCalledWith("https://www.baidu.com");
+    const { api } = await import("../../lib/api");
+    await waitFor(() => {
+      expect(api.authLogin).toHaveBeenCalled();
+    });
   });
 });
 

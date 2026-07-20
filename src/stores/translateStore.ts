@@ -272,6 +272,9 @@ export const useTranslateStore = create<TranslateState>()(
           // 致命错误（超时/网络错误/余额不足/接口未授权）：持久化 toast（需用户主动关闭）
           if (isTimeoutError(e) || isInsufficientBalanceError(e) || e?.code === "translate.networkError") {
             toast.error(errMsg, { duration: Infinity, closeButton: true });
+          } else {
+            // 非致命错误也用 toast 提示（不再 inline 显示在翻译引擎下拉框下方）
+            toast.error(errMsg);
           }
           return null;
         } finally {

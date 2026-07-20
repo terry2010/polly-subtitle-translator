@@ -1422,6 +1422,187 @@ pub async fn cancel_translate(
     }
 }
 
+// === Dashboard API：list/pause/resume/delete ===
+
+/// 任务列表项（来自 GET /v2/translate/jobs）
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct JobListItem {
+    pub job_id: String,
+    pub filename: String,
+    pub status: String,
+    pub source_language: String,
+    pub target_language: String,
+    pub total_entries: i64,
+    pub completed_entries: i64,
+    pub estimated_points: i64,
+    pub consumed_points: i64,
+    pub frozen_points: i64,
+    pub created_at: String,
+    #[serde(default)]
+    pub completed_at: Option<String>,
+    #[serde(default)]
+    pub error_message: Option<String>,
+    #[serde(default)]
+    pub tier: Option<String>,
+    #[serde(default)]
+    pub vip_level: Option<String>,
+}
+
+/// 任务列表响应
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct ListJobsResult {
+    pub jobs: Vec<JobListItem>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+}
+
+/// 查询任务列表（GET /v2/translate/jobs）
+pub async fn list_jobs(
+    db: &Database,
+    client: &reqwest::Client,
+    status: Option<&str>,
+    page: Option<i64>,
+    page_size: Option<i64>,
+) -> Result<ListJobsResult, TranslateError> {
+    let base_url = get_api_base_url(db);
+    let mut url = format!("{}/v2/translate/jobs", base_url);
+    let mut params = Vec::new();
+    if let Some(s) = status {
+        params.push(format!("status={}", s));
+    }
+    if let Some(p) = page {
+        params.push(format!("page={}", p));
+    }
+    if let Some(ps) = page_size {
+        params.push(format!("page_size={}", ps));
+    }
+    if !params.is_empty() {
+        url.push('?');
+        url.push_str(&params.join("&"));
+    }
+
+    tracing::info!("查询任务列表: GET {}", url);
+
+    let resp = authenticated_request(db, client, reqwest::Method::GET, &url, None).await?;
+    let status_code = resp.status().as_u16();
+
+    if status_code == 200 {
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| TranslateError::ParseError(format!("解析任务列表响应失败: {}", e)))?;
+        // 后端返回 { code, data: { jobs, total, page, page_size } }
+        let data = body.get("data").ok_or_else(|| {
+            TranslateError::ParseError("响应缺少 data 字段".to_string())
+        })?;
+        let result: ListJobsResult = serde_json::from_value(data.clone())
+            .map_err(|e| TranslateError::ParseError(format!("解析任务列表失败: {}", e)))?;
+        Ok(result)
+    } else {
+        let body = resp.text().await.unwrap_or_default();
+        Err(TranslateError::ServerError {
+            status: status_code,
+            error_code: "list_jobs_failed".to_string(),
+            message: format!("查询任务列表失败 ({}): {}", status_code, body),
+        })
+    }
+}
+
+/// 暂停任务（POST /v2/translate/{job_id}/pause）
+pub async fn pause_job(
+    db: &Database,
+    client: &reqwest::Client,
+    job_id: &str,
+) -> Result<serde_json::Value, TranslateError> {
+    let base_url = get_api_base_url(db);
+    let url = format!("{}/v2/translate/{}/pause", base_url, job_id);
+
+    tracing::info!("暂停任务: POST {}", url);
+
+    let resp = authenticated_request(db, client, reqwest::Method::POST, &url, None).await?;
+    let status_code = resp.status().as_u16();
+
+    if status_code == 200 {
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| TranslateError::ParseError(format!("解析暂停响应失败: {}", e)))?;
+        // 返回 data 字段
+        Ok(body.get("data").cloned().unwrap_or(body))
+    } else {
+        let body = resp.text().await.unwrap_or_default();
+        Err(TranslateError::ServerError {
+            status: status_code,
+            error_code: "pause_failed".to_string(),
+            message: format!("暂停任务失败 ({}): {}", status_code, body),
+        })
+    }
+}
+
+/// 恢复任务（POST /v2/translate/{job_id}/resume）
+pub async fn resume_job(
+    db: &Database,
+    client: &reqwest::Client,
+    job_id: &str,
+) -> Result<serde_json::Value, TranslateError> {
+    let base_url = get_api_base_url(db);
+    let url = format!("{}/v2/translate/{}/resume", base_url, job_id);
+
+    tracing::info!("恢复任务: POST {}", url);
+
+    let resp = authenticated_request(db, client, reqwest::Method::POST, &url, None).await?;
+    let status_code = resp.status().as_u16();
+
+    if status_code == 200 {
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| TranslateError::ParseError(format!("解析恢复响应失败: {}", e)))?;
+        Ok(body.get("data").cloned().unwrap_or(body))
+    } else {
+        let body = resp.text().await.unwrap_or_default();
+        Err(TranslateError::ServerError {
+            status: status_code,
+            error_code: "resume_failed".to_string(),
+            message: format!("恢复任务失败 ({}): {}", status_code, body),
+        })
+    }
+}
+
+/// 删除任务（DELETE /v2/translate/{job_id}/delete）
+pub async fn delete_job(
+    db: &Database,
+    client: &reqwest::Client,
+    job_id: &str,
+) -> Result<serde_json::Value, TranslateError> {
+    let base_url = get_api_base_url(db);
+    let url = format!("{}/v2/translate/{}/delete", base_url, job_id);
+
+    tracing::info!("删除任务: DELETE {}", url);
+
+    let resp = authenticated_request(db, client, reqwest::Method::DELETE, &url, None).await?;
+    let status_code = resp.status().as_u16();
+
+    if status_code == 200 {
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| TranslateError::ParseError(format!("解析删除响应失败: {}", e)))?;
+        Ok(body.get("data").cloned().unwrap_or(body))
+    } else if status_code == 404 {
+        // 任务不存在，视为已删除
+        Ok(serde_json::json!({ "code": 0, "message": "ok" }))
+    } else {
+        let body = resp.text().await.unwrap_or_default();
+        Err(TranslateError::ServerError {
+            status: status_code,
+            error_code: "delete_failed".to_string(),
+            message: format!("删除任务失败 ({}): {}", status_code, body),
+        })
+    }
+}
+
 /// 单条翻译响应（POST /v2/translate/entry 返回的 JSON）
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct TranslateEntryResult {
@@ -3884,6 +4065,156 @@ mod tests {
         assert_eq!(handler.progress_calls.lock().unwrap().len(), 1);
         assert!(handler.done_called.load(std::sync::atomic::Ordering::SeqCst));
         assert!(result.is_none());
+    }
+
+    // === FP-D4 测试：list_jobs / pause_job / resume_job / delete_job ===
+
+    #[tokio::test]
+    async fn test_list_jobs_200_success() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let mock_body = r#"{"code":0,"data":{"jobs":[{"job_id":"uuid-1","filename":"test.srt","status":"completed","source_language":"en","target_language":"zh","total_entries":100,"completed_entries":100,"estimated_points":50,"consumed_points":50,"frozen_points":0,"created_at":"2024-01-01T00:00:00Z"}],"total":1,"page":1,"page_size":20},"message":"ok"}"#;
+        let (addr, _, _) = start_mock_server_with_capture(200, "OK", mock_body.to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = list_jobs(&db, &client, None, None, None).await;
+
+        assert!(result.is_ok(), "list_jobs 应返回 Ok: {:?}", result.err());
+        let result = result.unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.jobs.len(), 1);
+        assert_eq!(result.jobs[0].job_id, "uuid-1");
+        assert_eq!(result.jobs[0].status, "completed");
+
+        clear_access_token().await;
+    }
+
+    #[tokio::test]
+    async fn test_list_jobs_500_error() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let (addr, _, _) = start_mock_server_with_capture(500, "Internal Server Error", "{}".to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = list_jobs(&db, &client, None, None, None).await;
+
+        assert!(result.is_err(), "list_jobs 500 应返回 Err");
+        match result.unwrap_err() {
+            TranslateError::ServerError { status, .. } => assert_eq!(status, 500),
+            other => panic!("期望 ServerError，得到 {:?}", other),
+        }
+
+        clear_access_token().await;
+    }
+
+    #[tokio::test]
+    async fn test_pause_job_200_success() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let mock_body = r#"{"code":0,"data":{"job_id":"uuid-1","status":"paused","completed_entries":30},"message":"ok"}"#;
+        let (addr, _, _) = start_mock_server_with_capture(200, "OK", mock_body.to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = pause_job(&db, &client, "uuid-1").await;
+
+        assert!(result.is_ok(), "pause_job 应返回 Ok: {:?}", result.err());
+        let data = result.unwrap();
+        assert_eq!(data["status"], "paused");
+
+        clear_access_token().await;
+    }
+
+    #[tokio::test]
+    async fn test_resume_job_200_success() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let mock_body = r#"{"code":0,"data":{"job_id":"uuid-1","status":"pending","completed_entries":30},"message":"ok"}"#;
+        let (addr, _, _) = start_mock_server_with_capture(200, "OK", mock_body.to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = resume_job(&db, &client, "uuid-1").await;
+
+        assert!(result.is_ok(), "resume_job 应返回 Ok: {:?}", result.err());
+        let data = result.unwrap();
+        assert_eq!(data["status"], "pending");
+
+        clear_access_token().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_job_200_success() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let mock_body = r#"{"code":0,"message":"ok"}"#;
+        let (addr, _, _) = start_mock_server_with_capture(200, "OK", mock_body.to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = delete_job(&db, &client, "uuid-1").await;
+
+        assert!(result.is_ok(), "delete_job 应返回 Ok: {:?}", result.err());
+
+        clear_access_token().await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_job_404_treated_as_success() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let (addr, _, _) = start_mock_server_with_capture(404, "Not Found", "{}".to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = delete_job(&db, &client, "non-existent").await;
+
+        assert!(result.is_ok(), "delete_job 404 应视为已删除: {:?}", result.err());
+
+        clear_access_token().await;
+    }
+
+    #[tokio::test]
+    async fn test_pause_job_400_error() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let error_body = r#"{"code":40001,"message":"任务状态不允许暂停"}"#;
+        let (addr, _, _) = start_mock_server_with_capture(400, "Bad Request", error_body.to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = pause_job(&db, &client, "uuid-1").await;
+
+        assert!(result.is_err(), "pause_job 400 应返回 Err");
+        match result.unwrap_err() {
+            TranslateError::ServerError { status, .. } => assert_eq!(status, 400),
+            other => panic!("期望 ServerError，得到 {:?}", other),
+        }
+
+        clear_access_token().await;
     }
 }
 

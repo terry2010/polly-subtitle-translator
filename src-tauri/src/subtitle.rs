@@ -1298,6 +1298,177 @@ use std::path::Path;
 
 // === SECTION 5 END ===
 
+// === SECTION 8: 官方服务模式 - serialize_subtitle_content + ServerSubtitleEntry 映射 ===
+
+/// 将 SubtitleFile 序列化为 subtitle_content 文本（上传给服务端翻译）
+/// SRT: 标准 SRT 格式（序号 + 时间轴 + 原文 text）
+/// ASS: raw_header + entries 的 Dialogue 行（override tags 保留）
+/// VTT: 拒绝（FP-7 阶段不支持）
+pub fn serialize_subtitle_content(file: &SubtitleFile) -> Result<String, String> {
+    match file.format {
+        SubtitleFormat::Srt => Ok(serialize_srt_content(&file.entries)),
+        SubtitleFormat::Ass | SubtitleFormat::Ssa => {
+            // raw_header 包含 [Script Info] + [V4+ Styles] + [Events] 行
+            // serialize_ass_dialogues 会重新输出 [Events] 段，需从 header 中剥离 [Events] 及之后内容
+            let header = file.raw_header.as_deref().unwrap_or("");
+            let header = strip_events_from_header(header);
+            Ok(format!(
+                "{}\n{}",
+                header,
+                serialize_ass_dialogues(&file.entries)
+            ))
+        }
+        SubtitleFormat::Vtt => Err("VTT 格式暂不支持，请转换为 SRT 或 ASS 格式后重试".to_string()),
+    }
+}
+
+/// 从 raw_header 中剥离 [Events] 段（含 [Events] 行及其后的 Format 行）
+/// 避免序列化后出现重复的 [Events] 段
+fn strip_events_from_header(header: &str) -> String {
+    let mut result = String::new();
+    let mut in_events = false;
+    for line in header.lines() {
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("[events]") {
+            in_events = true;
+            continue;  // 跳过 [Events] 行
+        }
+        if in_events {
+            // 跳过 [Events] 段内的所有行（Format 行等）
+            // 直到下一个 section 开始
+            if trimmed.starts_with('[') && trimmed.ends_with(']') {
+                in_events = false;
+                result.push_str(line);
+                result.push('\n');
+            }
+            continue;
+        }
+        result.push_str(line);
+        result.push('\n');
+    }
+    result
+}
+
+/// SRT 序列化（只含原文 text，不含译文）
+fn serialize_srt_content(entries: &[SubtitleEntry]) -> String {
+    let mut output = String::new();
+    for (i, entry) in entries.iter().enumerate() {
+        output.push_str(&format!("{}\n", i + 1));
+        output.push_str(&format!(
+            "{} --> {}\n",
+            format_srt_timecode(entry.start_ms),
+            format_srt_timecode(entry.end_ms)
+        ));
+        // 只传原文 text，不传 translated
+        output.push_str(&entry.text);
+        output.push_str("\n\n");
+    }
+    output
+}
+
+/// ASS Dialogue 行序列化（只含原文 text，override tags 保留）
+fn serialize_ass_dialogues(entries: &[SubtitleEntry]) -> String {
+    let mut output = String::new();
+    output.push_str("[Events]\n");
+    output.push_str("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+    for entry in entries {
+        // ASS 文本中换行符用 \N 标记
+        let text = entry.text.replace('\n', "\\N").replace('\r', "");
+        let style = entry.style.as_deref().unwrap_or("Default");
+        output.push_str(&format!(
+            "Dialogue: 0,{},{},{},,0,0,0,,{}\n",
+            format_ass_timecode(entry.start_ms),
+            format_ass_timecode(entry.end_ms),
+            style,
+            text
+        ));
+    }
+    output
+}
+
+// === SECTION 8 END ===
+
+// === SECTION 9: ServerSubtitleEntry + 映射层 ===
+
+/// 服务端返回的 SubtitleEntry 结构（与客户端 SubtitleEntry 字段名不同，禁止共用）
+/// 联调文档 02-P1 第 95-131 行字段契约
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ServerSubtitleEntry {
+    pub index: i64,           // 1-based
+    pub start_ms: i64,
+    pub end_ms: i64,
+    pub translated_text: String,
+    pub original_text: String,
+    // 可选字段（FP-7 阶段大部分为空，FP-18/19+ 才有值）
+    #[serde(default)]
+    pub r#type: Option<String>,
+    #[serde(default)]
+    pub has_source_translation: Option<bool>,
+    #[serde(default)]
+    pub needs_speaker_label: Option<bool>,
+    #[serde(default)]
+    pub source_text: Option<String>,
+    #[serde(default)]
+    pub style_name: Option<String>,
+    #[serde(default)]
+    pub quality_warnings: Option<serde_json::Value>,
+    #[serde(default)]
+    pub bilingual_source: Option<String>,
+    #[serde(default)]
+    pub schema_version: Option<i32>,
+}
+
+/// SSE result 事件中的 subtitles 数组 + 余额信息
+#[derive(Debug, Clone, Deserialize)]
+pub struct TranslateResult {
+    pub subtitles: Vec<ServerSubtitleEntry>,
+    #[serde(alias = "points_used")]
+    pub tokens_used: i64,
+    pub cost: i64,
+    #[serde(default)]
+    pub token_balance: Option<i64>,
+    #[serde(default)]
+    pub bonus_balance: Option<i64>,
+}
+
+/// 将服务端 ServerSubtitleEntry[] 映射到客户端 SubtitleEntry[]
+/// 只更新 translated 字段，不覆盖 text / pre_edit_text / failed / from_cache
+/// 服务端 index 是 1-based，客户端 index 是 0-based（SRT 的 idx 和 ASS 的 entries.len()）
+pub fn map_server_to_client_entries(
+    server_entries: &[ServerSubtitleEntry],
+    client_entries: &mut [SubtitleEntry],
+) -> Result<(), String> {
+    for server in server_entries {
+        // 1-based → 0-based
+        let client_idx = server.index as usize;
+        if client_idx == 0 {
+            return Err(format!(
+                "服务端 index 从 0 开始，预期 1-based: server.index={}",
+                server.index
+            ));
+        }
+        let client_idx = client_idx - 1;
+        if client_idx >= client_entries.len() {
+            return Err(format!(
+                "服务端 index 超出客户端范围: server.index={}, client.len={}",
+                server.index,
+                client_entries.len()
+            ));
+        }
+        // 只更新 translated，不覆盖 text/pre_edit_text/failed/from_cache
+        client_entries[client_idx].translated = server.translated_text.clone();
+        // style_name 映射到 style（如果服务端返回了且客户端原本没有）
+        if let Some(style_name) = &server.style_name {
+            if client_entries[client_idx].style.is_none() {
+                client_entries[client_idx].style = Some(style_name.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
+// === SECTION 9 END ===
+
 // === 导出弹层相关（export-dialog-plan.md §2/§4） ===
 
 /// 导出模式
@@ -2358,5 +2529,278 @@ Dialogue: 0,0:03:42.30,0:03:43.76,Primary,,0,0,0,,{\\rPrimary}里克的头：哦
         };
         let content = export_subtitle(&file, &options);
         assert!(!content.contains("Hello"));  // pre_edit_text 不泄露
+    }
+
+    // === SECTION 8/9 测试：serialize_subtitle_content + ServerSubtitleEntry 映射 ===
+
+    #[test]
+    fn test_serialize_srt_content_basic() {
+        let file = parse_srt(
+            "1\n00:00:01,000 --> 00:00:03,000\nHello World\n\n2\n00:00:04,000 --> 00:00:06,000\nThis is a test\n",
+        )
+        .unwrap();
+        let content = serialize_subtitle_content(&file).unwrap();
+        // 应包含原文，不含译文
+        assert!(content.contains("Hello World"));
+        assert!(content.contains("This is a test"));
+        // SRT 序号从 1 开始
+        assert!(content.starts_with("1\n"));
+        // 时间轴格式
+        assert!(content.contains("00:00:01,000 --> 00:00:03,000"));
+    }
+
+    #[test]
+    fn test_serialize_srt_content_uses_text_not_translated() {
+        // translated 有值时，serialize 仍应输出 text（原文）
+        let mut file = parse_srt("1\n00:00:01,000 --> 00:00:03,000\nHello\n").unwrap();
+        file.entries[0].translated = "你好".to_string();
+        let content = serialize_subtitle_content(&file).unwrap();
+        assert!(content.contains("Hello"));
+        assert!(!content.contains("你好"));
+    }
+
+    #[test]
+    fn test_serialize_ass_content_includes_header() {
+        let ass_content = "[Script Info]\nTitle: Test\n\n[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial,48\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello World\n";
+        let file = parse_ass(ass_content).unwrap();
+        let serialized = serialize_subtitle_content(&file).unwrap();
+        // 必须包含 raw_header
+        assert!(serialized.contains("[Script Info]"));
+        assert!(serialized.contains("[V4+ Styles]"));
+        // 必须包含 [Events] 和 Dialogue 行
+        assert!(serialized.contains("[Events]"));
+        assert!(serialized.contains("Dialogue:"));
+        // 应包含原文
+        assert!(serialized.contains("Hello World"));
+    }
+
+    #[test]
+    fn test_serialize_ass_content_no_duplicate_events_section() {
+        // 验证 [Events] 段在序列化后只出现 1 次（不重复）
+        let ass_content = "[Script Info]\nTitle: Test\n\n[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial,48\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,Hello World\n";
+        let file = parse_ass(ass_content).unwrap();
+        let serialized = serialize_subtitle_content(&file).unwrap();
+        // [Events] 应只出现 1 次
+        let events_count = serialized.matches("[Events]").count();
+        assert_eq!(
+            events_count, 1,
+            "[Events] 段应只出现 1 次，实际出现 {} 次\n---\n{}\n---",
+            events_count, serialized
+        );
+    }
+
+    #[test]
+    fn test_serialize_ass_content_preserves_override_tags() {
+        let ass_content = "[Script Info]\n\n[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial,48\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\an8}Hello World\n";
+        let file = parse_ass(ass_content).unwrap();
+        let serialized = serialize_subtitle_content(&file).unwrap();
+        // override tags 保留
+        assert!(serialized.contains("{\\an8}"));
+    }
+
+    #[test]
+    fn test_serialize_vtt_rejected() {
+        let file = SubtitleFile {
+            format: SubtitleFormat::Vtt,
+            entries: vec![SubtitleEntry {
+                index: 0,
+                start_ms: 0,
+                end_ms: 1000,
+                text: "Hello".to_string(),
+                translated: String::new(),
+                style: None,
+                failed: false,
+                from_cache: false,
+                pre_edit_text: None,
+            }],
+            raw_header: None,
+            source_path: None,
+            file_hash: String::new(),
+        };
+        let result = serialize_subtitle_content(&file);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("VTT"));
+    }
+
+    #[test]
+    fn test_server_subtitle_entry_deserialize() {
+        let json = r#"{"index":1,"start_ms":1000,"end_ms":3000,"translated_text":"你好","original_text":"Hello"}"#;
+        let entry: ServerSubtitleEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.index, 1);
+        assert_eq!(entry.start_ms, 1000);
+        assert_eq!(entry.end_ms, 3000);
+        assert_eq!(entry.translated_text, "你好");
+        assert_eq!(entry.original_text, "Hello");
+        assert!(entry.r#type.is_none());
+        assert!(entry.style_name.is_none());
+    }
+
+    #[test]
+    fn test_server_subtitle_entry_deserialize_with_optional_fields() {
+        let json = r#"{"index":2,"start_ms":4000,"end_ms":6000,"translated_text":"世界","original_text":"World","type":"normal","style_name":"Default","quality_warnings":[]}"#;
+        let entry: ServerSubtitleEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(entry.index, 2);
+        assert_eq!(entry.r#type.as_deref(), Some("normal"));
+        assert_eq!(entry.style_name.as_deref(), Some("Default"));
+    }
+
+    #[test]
+    fn test_map_server_to_client_basic() {
+        let mut client_entries = vec![
+            SubtitleEntry {
+                index: 0, start_ms: 1000, end_ms: 3000,
+                text: "Hello".to_string(), translated: String::new(),
+                style: None, failed: false, from_cache: false, pre_edit_text: None,
+            },
+            SubtitleEntry {
+                index: 1, start_ms: 4000, end_ms: 6000,
+                text: "World".to_string(), translated: String::new(),
+                style: None, failed: false, from_cache: false, pre_edit_text: None,
+            },
+        ];
+        let server_entries = vec![
+            ServerSubtitleEntry {
+                index: 1, start_ms: 1000, end_ms: 3000,
+                translated_text: "你好".to_string(), original_text: "Hello".to_string(),
+                r#type: None, has_source_translation: None, needs_speaker_label: None,
+                source_text: None, style_name: None, quality_warnings: None,
+                bilingual_source: None, schema_version: None,
+            },
+            ServerSubtitleEntry {
+                index: 2, start_ms: 4000, end_ms: 6000,
+                translated_text: "世界".to_string(), original_text: "World".to_string(),
+                r#type: None, has_source_translation: None, needs_speaker_label: None,
+                source_text: None, style_name: None, quality_warnings: None,
+                bilingual_source: None, schema_version: None,
+            },
+        ];
+        map_server_to_client_entries(&server_entries, &mut client_entries).unwrap();
+        assert_eq!(client_entries[0].translated, "你好");
+        assert_eq!(client_entries[1].translated, "世界");
+        // text（原文）不被覆盖
+        assert_eq!(client_entries[0].text, "Hello");
+        assert_eq!(client_entries[1].text, "World");
+    }
+
+    #[test]
+    fn test_map_server_to_client_preserves_pre_edit_and_failed() {
+        let mut client_entries = vec![
+            SubtitleEntry {
+                index: 0, start_ms: 0, end_ms: 1000,
+                text: "edited text".to_string(), translated: String::new(),
+                style: None, failed: true, from_cache: true,
+                pre_edit_text: Some("original text".to_string()),
+            },
+        ];
+        let server_entries = vec![
+            ServerSubtitleEntry {
+                index: 1, start_ms: 0, end_ms: 1000,
+                translated_text: "译文".to_string(), original_text: "original text".to_string(),
+                r#type: None, has_source_translation: None, needs_speaker_label: None,
+                source_text: None, style_name: None, quality_warnings: None,
+                bilingual_source: None, schema_version: None,
+            },
+        ];
+        map_server_to_client_entries(&server_entries, &mut client_entries).unwrap();
+        // translated 被更新
+        assert_eq!(client_entries[0].translated, "译文");
+        // text 不被覆盖（保持编辑后的值）
+        assert_eq!(client_entries[0].text, "edited text");
+        // pre_edit_text 不被覆盖
+        assert_eq!(client_entries[0].pre_edit_text.as_deref(), Some("original text"));
+        // failed / from_cache 不被重置
+        assert!(client_entries[0].failed);
+        assert!(client_entries[0].from_cache);
+    }
+
+    #[test]
+    fn test_map_server_to_client_index_out_of_range() {
+        let mut client_entries = vec![SubtitleEntry {
+            index: 0, start_ms: 0, end_ms: 1000,
+            text: "Hello".to_string(), translated: String::new(),
+            style: None, failed: false, from_cache: false, pre_edit_text: None,
+        }];
+        let server_entries = vec![ServerSubtitleEntry {
+            index: 5, start_ms: 0, end_ms: 1000,
+            translated_text: "你好".to_string(), original_text: "Hello".to_string(),
+            r#type: None, has_source_translation: None, needs_speaker_label: None,
+            source_text: None, style_name: None, quality_warnings: None,
+            bilingual_source: None, schema_version: None,
+        }];
+        let result = map_server_to_client_entries(&server_entries, &mut client_entries);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("超出客户端范围"));
+    }
+
+    #[test]
+    fn test_map_server_to_client_index_zero_based_error() {
+        let mut client_entries = vec![SubtitleEntry {
+            index: 0, start_ms: 0, end_ms: 1000,
+            text: "Hello".to_string(), translated: String::new(),
+            style: None, failed: false, from_cache: false, pre_edit_text: None,
+        }];
+        let server_entries = vec![ServerSubtitleEntry {
+            index: 0, start_ms: 0, end_ms: 1000,
+            translated_text: "你好".to_string(), original_text: "Hello".to_string(),
+            r#type: None, has_source_translation: None, needs_speaker_label: None,
+            source_text: None, style_name: None, quality_warnings: None,
+            bilingual_source: None, schema_version: None,
+        }];
+        let result = map_server_to_client_entries(&server_entries, &mut client_entries);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("从 0 开始"));
+    }
+
+    #[test]
+    fn test_map_server_to_client_partial_entries() {
+        // 服务端只返回部分条目（断点续传场景）
+        let mut client_entries = vec![
+            SubtitleEntry {
+                index: 0, start_ms: 0, end_ms: 1000,
+                text: "A".to_string(), translated: String::new(),
+                style: None, failed: false, from_cache: false, pre_edit_text: None,
+            },
+            SubtitleEntry {
+                index: 1, start_ms: 1000, end_ms: 2000,
+                text: "B".to_string(), translated: String::new(),
+                style: None, failed: false, from_cache: false, pre_edit_text: None,
+            },
+            SubtitleEntry {
+                index: 2, start_ms: 2000, end_ms: 3000,
+                text: "C".to_string(), translated: String::new(),
+                style: None, failed: false, from_cache: false, pre_edit_text: None,
+            },
+        ];
+        // 只返回 index=2 的译文
+        let server_entries = vec![ServerSubtitleEntry {
+            index: 2, start_ms: 1000, end_ms: 2000,
+            translated_text: "B译文".to_string(), original_text: "B".to_string(),
+            r#type: None, has_source_translation: None, needs_speaker_label: None,
+            source_text: None, style_name: None, quality_warnings: None,
+            bilingual_source: None, schema_version: None,
+        }];
+        map_server_to_client_entries(&server_entries, &mut client_entries).unwrap();
+        assert_eq!(client_entries[0].translated, "");  // 未返回，保持空
+        assert_eq!(client_entries[1].translated, "B译文");
+        assert_eq!(client_entries[2].translated, "");  // 未返回，保持空
+    }
+
+    #[test]
+    fn test_translate_result_deserialize() {
+        let json = r#"{"subtitles":[{"index":1,"start_ms":1000,"end_ms":3000,"translated_text":"你好","original_text":"Hello"}],"tokens_used":100,"cost":50,"token_balance":9000,"bonus_balance":3000}"#;
+        let result: TranslateResult = serde_json::from_str(json).unwrap();
+        assert_eq!(result.subtitles.len(), 1);
+        assert_eq!(result.tokens_used, 100);
+        assert_eq!(result.cost, 50);
+        assert_eq!(result.token_balance, Some(9000));
+        assert_eq!(result.bonus_balance, Some(3000));
+    }
+
+    #[test]
+    fn test_translate_result_deserialize_without_balance() {
+        let json = r#"{"subtitles":[],"tokens_used":0,"cost":0}"#;
+        let result: TranslateResult = serde_json::from_str(json).unwrap();
+        assert!(result.token_balance.is_none());
+        assert!(result.bonus_balance.is_none());
     }
 }
