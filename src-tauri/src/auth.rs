@@ -4216,6 +4216,29 @@ mod tests {
 
         clear_access_token().await;
     }
+
+    #[tokio::test]
+    async fn test_resume_job_400_error() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let error_body = r#"{"code":40001,"message":"任务状态不允许恢复"}"#;
+        let (addr, _, _) = start_mock_server_with_capture(400, "Bad Request", error_body.to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = resume_job(&db, &client, "uuid-1").await;
+
+        assert!(result.is_err(), "resume_job 400 应返回 Err");
+        match result.unwrap_err() {
+            TranslateError::ServerError { status, .. } => assert_eq!(status, 400),
+            other => panic!("期望 ServerError，得到 {:?}", other),
+        }
+
+        clear_access_token().await;
+    }
 }
 
 // === SECTION 4 END ===
