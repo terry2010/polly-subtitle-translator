@@ -3586,8 +3586,9 @@ pub async fn translate_official(
     // 3. 提交翻译请求（multipart 文件上传到 /v2/translate/file）
     let client = reqwest::Client::new();
     let file_format = format!("{:?}", file.format).to_lowercase();
+    let upload_filename = auth::build_upload_filename(file.source_path.as_deref(), &file_format);
     let submit_result = auth::submit_translate(
-        db.inner(), &client, &subtitle_content, &file_format, &model, &idempotency_key,
+        db.inner(), &client, &subtitle_content, &file_format, &model, &idempotency_key, &upload_filename,
     )
     .await
     .map_err(translate_error_to_ipc)?;
@@ -3783,6 +3784,7 @@ pub async fn translate_official_one(
     // 5. 提交单条翻译请求
     let client = reqwest::Client::new();
     let file_format = format!("{:?}", file.format).to_lowercase();
+    let upload_filename = auth::build_upload_filename(file.source_path.as_deref(), &file_format);
     let result = auth::submit_translate_one(
         db.inner(),
         &client,
@@ -3793,6 +3795,7 @@ pub async fn translate_official_one(
         job_id.as_deref(),
         &model,
         &idempotency_key,
+        &upload_filename,
     )
     .await
     .map_err(translate_error_to_ipc)?;

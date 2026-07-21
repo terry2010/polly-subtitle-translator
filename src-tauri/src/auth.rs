@@ -1120,6 +1120,34 @@ pub fn generate_idempotency_key() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
+/// 根据原始字幕文件路径 + 字幕格式，构造上传用的文件名。
+/// - 有 source_path：取 basename，把扩展名替换为字幕格式扩展名（如 movie.mkv.srt → movie.srt）
+/// - 无 source_path：兜底 "subtitle.{ext}"
+/// 这样后端记录的 filename 是真实视频名，而非 "subtitle.srt"。
+pub fn build_upload_filename(source_path: Option<&str>, file_format: &str) -> String {
+    let ext = match file_format.to_lowercase().as_str() {
+        "ass" | "ssa" => "ass",
+        _ => "srt",
+    };
+    match source_path.and_then(|p| {
+        std::path::Path::new(p)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .map(|s| s.to_string())
+    }) {
+        Some(basename) => {
+            // 去掉原始扩展名（含多段如 .mkv.srt 都去掉），加上字幕格式扩展名
+            let stem = std::path::Path::new(&basename)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("subtitle")
+                .to_string();
+            format!("{}.{}", stem, ext)
+        }
+        None => format!("subtitle.{}", ext),
+    }
+}
+
 /// 提交翻译请求（POST /v2/translate/file，multipart 文件上传）
 /// 联调文档 02-P1 SECTION 1：multipart/form-data 上传字幕文件
 /// 返回 TranslateSubmitResponse，调用方根据类型处理
@@ -1127,18 +1155,16 @@ pub async fn submit_translate(
     db: &Database,
     client: &reqwest::Client,
     subtitle_content: &str,
-    file_format: &str,
+    _file_format: &str,
     model: &str,
     idempotency_key: &str,
+    original_filename: &str,
 ) -> Result<TranslateSubmitResponse, TranslateError> {
     let base_url = get_api_base_url(db);
     let url = format!("{}/v2/translate/file", base_url);
 
-    // 文件名根据格式确定扩展名（服务端通过扩展名 + 内容检测格式）
-    let filename = match file_format.to_lowercase().as_str() {
-        "ass" | "ssa" => "subtitle.ass",
-        _ => "subtitle.srt",
-    };
+    // 调用方用 build_upload_filename 构造真实文件名（含正确扩展名）
+    let filename = original_filename;
 
     // 构建 multipart form 的闭包（401 重试时需重新构建，因 Form 未实现 Clone）
     let subtitle_bytes = subtitle_content.as_bytes().to_vec();
@@ -1631,20 +1657,18 @@ pub async fn submit_translate_one(
     db: &Database,
     client: &reqwest::Client,
     subtitle_content: &str,
-    file_format: &str,
+    _file_format: &str,
     entry_id: usize,
     original_text: &str,
     job_id: Option<&str>,
     model: &str,
     idempotency_key: &str,
+    original_filename: &str,
 ) -> Result<TranslateEntryResult, TranslateError> {
     let base_url = get_api_base_url(db);
     let url = format!("{}/v2/translate/entry", base_url);
 
-    let filename = match file_format.to_lowercase().as_str() {
-        "ass" | "ssa" => "subtitle.ass",
-        _ => "subtitle.srt",
-    };
+    let filename = original_filename;
 
     // 构建 multipart form 的闭包（401 重试时需重新构建）
     let subtitle_bytes = subtitle_content.as_bytes().to_vec();
@@ -3348,6 +3372,33 @@ mod tests {
         assert_ne!(key1, key2);
     }
 
+    #[test]
+    fn test_build_upload_filename() {
+        // 有 source_path：取 basename + 替换扩展名
+        assert_eq!(
+            build_upload_filename(Some("/movies/Star.Wars.mkv"), "srt"),
+            "Star.Wars.srt"
+        );
+        assert_eq!(
+            build_upload_filename(Some("/movies/曼达洛人.2026.mkv"), "srt"),
+            "曼达洛人.2026.srt"
+        );
+        assert_eq!(
+            build_upload_filename(Some("/movies/movie.ass"), "ass"),
+            "movie.ass"
+        );
+        // 多段扩展名：取 file_stem（去掉最后一段）+ 加字幕扩展名
+        assert_eq!(
+            build_upload_filename(Some("/tmp/movie.mkv.srt"), "srt"),
+            "movie.mkv.srt" // file_stem 是 "movie.mkv"，加 .srt
+        );
+        // 无 source_path：兜底
+        assert_eq!(build_upload_filename(None, "srt"), "subtitle.srt");
+        assert_eq!(build_upload_filename(None, "ass"), "subtitle.ass");
+        // source_path 是目录名（无 file_name）：兜底
+        assert_eq!(build_upload_filename(Some("/"), "srt"), "subtitle.srt");
+    }
+
     #[tokio::test]
     async fn test_submit_translate_402_insufficient_balance() {
         let _guard = test_lock();
@@ -3361,7 +3412,7 @@ mod tests {
         db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
 
         let client = reqwest::Client::new();
-        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-1").await;
+        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-1", "subtitle.srt").await;
 
         assert!(result.is_ok(), "submit_translate 应返回 Ok，错误在 response 中: {:?}", result.err());
         match result.unwrap() {
@@ -3386,7 +3437,7 @@ mod tests {
         db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
 
         let client = reqwest::Client::new();
-        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-2").await;
+        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-2", "subtitle.srt").await;
 
         match result.unwrap() {
             TranslateSubmitResponse::Accepted { job_id } => {
@@ -3409,7 +3460,7 @@ mod tests {
         db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
 
         let client = reqwest::Client::new();
-        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-3").await;
+        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-3", "subtitle.srt").await;
 
         match result.unwrap() {
             TranslateSubmitResponse::CompletedJson(result) => {
@@ -3434,7 +3485,7 @@ mod tests {
         db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
 
         let client = reqwest::Client::new();
-        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-4").await;
+        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-4", "subtitle.srt").await;
 
         match result.unwrap() {
             TranslateSubmitResponse::Error { status, error_code, .. } => {
@@ -3457,7 +3508,7 @@ mod tests {
         db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
 
         let client = reqwest::Client::new();
-        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-5").await;
+        let result = submit_translate(&db, &client, "test content", "srt", "polly-standard", "key-5", "subtitle.srt").await;
 
         match result.unwrap() {
             TranslateSubmitResponse::Error { status, error_code, .. } => {
@@ -3483,7 +3534,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let result = submit_translate_one(
-            &db, &client, "test content", "srt", 5, "Hello World", None, "polly-standard", "entry-key-1",
+            &db, &client, "test content", "srt", 5, "Hello World", None, "polly-standard", "entry-key-1", "subtitle.srt",
         ).await;
 
         assert!(result.is_ok(), "submit_translate_one 应返回 Ok: {:?}", result.err());
@@ -3508,7 +3559,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let result = submit_translate_one(
-            &db, &client, "test content", "srt", 3, "Hello", Some("job-abc"), "polly-standard", "entry-key-2",
+            &db, &client, "test content", "srt", 3, "Hello", Some("job-abc"), "polly-standard", "entry-key-2", "subtitle.srt",
         ).await;
 
         assert!(result.is_ok(), "submit_translate_one 应返回 Ok: {:?}", result.err());
@@ -3536,7 +3587,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let result = submit_translate_one(
-            &db, &client, "test content", "srt", 0, "Hello", None, "polly-standard", "entry-key-3",
+            &db, &client, "test content", "srt", 0, "Hello", None, "polly-standard", "entry-key-3", "subtitle.srt",
         ).await;
 
         match result {
@@ -3562,7 +3613,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let result = submit_translate_one(
-            &db, &client, "test content", "srt", 0, "Hello", None, "polly-standard", "entry-key-4",
+            &db, &client, "test content", "srt", 0, "Hello", None, "polly-standard", "entry-key-4", "subtitle.srt",
         ).await;
 
         match result {
@@ -3587,7 +3638,7 @@ mod tests {
 
         let client = reqwest::Client::new();
         let result = submit_translate_one(
-            &db, &client, "test content", "srt", 0, "Hello", None, "polly-standard", "entry-key-5",
+            &db, &client, "test content", "srt", 0, "Hello", None, "polly-standard", "entry-key-5", "subtitle.srt",
         ).await;
 
         match result {
