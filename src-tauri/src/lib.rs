@@ -646,6 +646,13 @@ fn install_exception_filter() {
 /// Tauri 应用入口
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 确保 localhost 请求不走系统代理（HTTP_PROXY/HTTPS_PROXY 环境变量）
+    // reqwest::Client::new() 会自动读取代理环境变量，导致 localhost 请求被发到代理
+    // 这里设置 NO_PROXY 让 reqwest 对 localhost/127.0.0.1 绕过代理
+    if std::env::var("NO_PROXY").unwrap_or_default().is_empty() {
+        std::env::set_var("NO_PROXY", "localhost,127.0.0.1,::1");
+    }
+
     // 安装 panic hook：捕获 Rust panic，写入崩溃日志文件
     install_panic_hook();
     // 安装 Windows 异常过滤器：捕获原生异常（如内存访问违规、栈溢出等），
