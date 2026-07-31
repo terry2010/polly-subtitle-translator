@@ -246,8 +246,12 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
       if (!isBilingual) {
         try {
           const { sourceLang, targetLang, provider, serviceId, model } = useTranslateStore.getState();
+          // 官方翻译固定 en→zh，缓存写入时用硬编码 en/zh（见 ipc.rs translate_official），
+          // 查询时也必须用 en/zh，否则 store 中 sourceLang 被用户改过后会查不到缓存
+          const cacheSourceLang = provider === "official" ? "en" : sourceLang;
+          const cacheTargetLang = provider === "official" ? "zh" : targetLang;
           const cached = await api.getCachedTranslations(
-            correctedFile.entries, sourceLang, targetLang, provider,
+            correctedFile.entries, cacheSourceLang, cacheTargetLang, provider,
             provider === "openai" ? (serviceId || undefined) : undefined,
             provider === "openai" ? (model || undefined) : undefined,
             correctedFile.file_hash,

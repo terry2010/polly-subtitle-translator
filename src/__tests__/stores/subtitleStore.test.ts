@@ -27,8 +27,9 @@ vi.mock("../../lib/i18n", () => ({
 }));
 
 // mock translateStore（避免循环依赖）
+const mockTranslateState = { sourceLang: "en", targetLang: "zh", provider: "baidu", serviceId: null, model: "" };
 vi.mock("../../stores/translateStore", () => ({
-  useTranslateStore: { getState: () => ({ sourceLang: "en", targetLang: "zh", provider: "baidu", serviceId: null, model: "" }) },
+  useTranslateStore: { getState: () => mockTranslateState },
 }));
 
 function makeEntry(index: number, text: string, translated = "", startMs = 0, endMs = 1000): SubtitleEntry {
@@ -671,6 +672,35 @@ describe("subtitleStore - 原文编辑", () => {
     expect(entries[0].pre_edit_text).toBe("Hello"); // 标记
     expect(entries[0].translated).toBe("你好"); // 从缓存恢复
     expect(entries[0].from_cache).toBe(true);
+  });
+
+  // T15b: loadSubtitle 官方翻译缓存查询用固定 en/zh（与写入时一致）
+  it("loadSubtitle 官方翻译缓存查询用固定 en/zh，不受 store sourceLang 影响", async () => {
+    // 模拟 store 中 sourceLang 被用户改成 zh（与写入时的 en 不一致）
+    const saved = { ...mockTranslateState };
+    mockTranslateState.sourceLang = "zh";
+    mockTranslateState.targetLang = "zh";
+    mockTranslateState.provider = "official";
+    mockTranslateState.model = "polly-fast";
+
+    (api.parseSubtitleFile as any).mockResolvedValue({
+      format: "srt",
+      entries: [{ index: 0, start_ms: 0, end_ms: 1000, text: "Hello", translated: "", style: null, pre_edit_text: null }],
+      raw_header: null, source_path: null, file_hash: "H1",
+    });
+    (api.getSourceEdits as any).mockResolvedValue([]);
+    (api.getCachedTranslations as any).mockResolvedValue([]);
+
+    await getStore().loadSubtitle("/test/sub.srt");
+
+    // 验证缓存查询用 en/zh 而非 store 中的 zh/zh
+    expect(api.getCachedTranslations).toHaveBeenCalledWith(
+      expect.any(Array), "en", "zh", "official",
+      undefined, undefined, "H1",
+    );
+
+    // 恢复 mock
+    Object.assign(mockTranslateState, saved);
   });
 
   // T16: swapOriginalTranslated 清除所有 pre_edit_text
