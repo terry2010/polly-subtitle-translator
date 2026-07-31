@@ -584,6 +584,7 @@
   },
   "subtitle.error": {
     "parseFailed": "Subtitle parse failed for {{path}}",
+    "emptyFile": "Subtitle file is empty, no content to parse",
     "encodingDetectedLow": "Subtitle encoding uncertain for {{path}}, select manually",
     "saveFailed": "Subtitle save failed to {{path}}",
     "exportFailed": "Subtitle export failed to {{path}}",
@@ -677,6 +678,7 @@
     },
     "subtitle": {
       "parseFailed": "Subtitle parse failed for {{path}}",
+      "emptyFile": "Subtitle file is empty, no content to parse",
       "encodingDetectedLow": "Subtitle encoding uncertain for {{path}}, select manually",
       "saveFailed": "Subtitle save failed to {{path}}",
       "exportFailed": "Subtitle export failed to {{path}}",

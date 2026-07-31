@@ -308,6 +308,9 @@ pub enum AppError {
     #[error("Subtitle parse failed: {path}")]
     SubtitleParseFailed { path: String },
 
+    #[error("Subtitle file is empty: {path}")]
+    SubtitleEmptyFile { path: String },
+
     #[error("Subtitle encoding uncertain: {path}")]
     SubtitleEncodingLow { path: String },
 
@@ -645,6 +648,8 @@ impl AppError {
             SubtitleParseFailed { path } => IpcError::new("subtitle.parseFailed", Severity::Recoverable)
                 .with_args(serde_json::json!({ "path": path })),
 
+            SubtitleEmptyFile { path: _ } => IpcError::new("subtitle.emptyFile", Severity::Recoverable),
+
             SubtitleEncodingLow { path } => IpcError::new("subtitle.encodingDetectedLow", Severity::Recoverable)
                 .with_args(serde_json::json!({ "path": path })),
 
@@ -895,6 +900,14 @@ mod tests {
     #[test]
     fn test_err_subtitle_parse_failed() {
         assert_ipc_with_arg(AppError::SubtitleParseFailed { path: "/test.srt".into() }, "subtitle.parseFailed", Severity::Recoverable, "path", &serde_json::json!("/test.srt"));
+    }
+
+    #[test]
+    fn test_err_subtitle_empty_file() {
+        let err = AppError::SubtitleEmptyFile { path: "/test.srt".into() };
+        let ipc = err.to_ipc_error();
+        assert_eq!(ipc.code, "subtitle.emptyFile");
+        assert_eq!(ipc.severity, Severity::Recoverable);
     }
 
     #[test]

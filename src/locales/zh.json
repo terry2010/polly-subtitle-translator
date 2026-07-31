@@ -596,6 +596,7 @@
   },
   "subtitle.error": {
     "parseFailed": "字幕解析失败：{{path}}",
+    "emptyFile": "字幕文件为空，没有可解析的内容",
     "encodingDetectedLow": "字幕编码不确定：{{path}}，请手动选择编码",
     "saveFailed": "字幕保存失败：{{path}}",
     "exportFailed": "字幕导出失败：{{path}}",
@@ -689,6 +690,7 @@
     },
     "subtitle": {
       "parseFailed": "字幕解析失败：{{path}}",
+      "emptyFile": "字幕文件为空，没有可解析的内容",
       "encodingDetectedLow": "字幕编码不确定：{{path}}，请手动选择",
       "saveFailed": "字幕保存失败：{{path}}",
       "exportFailed": "字幕导出失败：{{path}}",

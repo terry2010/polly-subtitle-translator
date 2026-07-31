@@ -275,6 +275,7 @@ export const useSubtitleStore = create<SubtitleState>((set, get) => ({
     } catch (e: any) {
       const msg = formatIpcError(e);
       set({ loading: false, error: msg });
+      toast.error(msg);
     }
   },
 

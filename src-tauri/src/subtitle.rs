@@ -1266,10 +1266,26 @@ pub fn load_subtitle_file(path: &str) -> Result<SubtitleFile, AppError> {
     }
 
     let bytes = std::fs::read(path).map_err(AppError::Io)?;
+
+    // 空文件检查：0 字节或解析后 0 条条目都视为空文件
+    if bytes.is_empty() {
+        return Err(AppError::SubtitleEmptyFile {
+            path: path.to_string(),
+        });
+    }
+
     let (content, encoding) = decode_bytes(&bytes)?;
 
     let format = detect_format(path)?;
     let mut file = parse_subtitle(&content, &format)?;
+
+    // 解析后条目为空也视为空文件（如文件只有 BOM 或空白字符）
+    if file.entries.is_empty() {
+        return Err(AppError::SubtitleEmptyFile {
+            path: path.to_string(),
+        });
+    }
+
     file.source_path = Some(path.to_string());
 
     if encoding != "utf-8" && encoding != "utf-8-bom" {
