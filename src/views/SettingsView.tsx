@@ -1496,27 +1496,23 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   const listContent = (
     <div className="flex-1 overflow-y-auto space-y-3 p-2">
       {/* 快速接入 */}
-      {devMode && (
-        <>
-          <p className="text-xs text-muted-foreground px-3 pt-9">{t("settings.quickAccess")}</p>
-          {/* 官方 API */}
-          <button
-            onClick={() => setSelectedServiceId(null)}
-            className={cn(
-              "w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors border",
-              selectedServiceId === null ? "bg-accent text-accent-foreground border-primary/50" : "hover:bg-accent/50 border-border"
-            )}
-          >
-            <span className="flex items-center gap-1 font-medium">
-              <Star className="h-4 w-4 text-yellow-500" />
-              {t("settings.officialApi", "官方 API")}
-            </span>
-            <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
-              {t("settings.officialApiDesc", "精译·省钱·免费")}
-            </p>
-          </button>
-        </>
-      )}
+      <p className="text-xs text-muted-foreground px-3 pt-9">{t("settings.quickAccess")}</p>
+      {/* 官方 API */}
+      <button
+        onClick={() => setSelectedServiceId(null)}
+        className={cn(
+          "w-full text-left px-2 py-1.5 rounded-md text-sm transition-colors border",
+          selectedServiceId === null ? "bg-accent text-accent-foreground border-primary/50" : "hover:bg-accent/50 border-border"
+        )}
+      >
+        <span className="flex items-center gap-1 font-medium">
+          <Star className="h-4 w-4 text-yellow-500" />
+          {t("settings.officialApi", "官方 API")}
+        </span>
+        <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
+          {t("settings.officialApiDesc", "精译·省钱·免费")}
+        </p>
+      </button>
 
       {/* 传统翻译 */}
       <div className="space-y-1">

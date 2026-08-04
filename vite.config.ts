@@ -47,6 +47,8 @@ export default defineConfig({
       ignored: [
         "**/src-tauri/**",
         "**/zimufan.com-v2/**",
+        "**/zimufan.com-v3/**",
+        "**/zimufan.com-v5/**",
         "**/*.srt", "**/*.ass", "**/*.ssa", "**/*.vtt",
         "**/*.mkv", "**/*.mp4", "**/*.avi", "**/*.mov",
         "**/*.txt", "**/*.log",

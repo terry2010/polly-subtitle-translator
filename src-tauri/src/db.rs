@@ -5,10 +5,16 @@
 use crate::error::AppError;
 use rusqlite::Connection;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 pub struct Database {
-    conn: Mutex<Connection>,
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl Clone for Database {
+    fn clone(&self) -> Self {
+        Database { conn: self.conn.clone() }
+    }
 }
 
 impl Database {
@@ -34,7 +40,7 @@ impl Database {
 
         tracing::info!("数据库已打开: {:?}", path);
         Ok(Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         })
     }
 
@@ -43,7 +49,7 @@ impl Database {
     #[cfg(test)]
     pub fn from_connection(conn: Connection) -> Self {
         Self {
-            conn: Mutex::new(conn),
+            conn: Arc::new(Mutex::new(conn)),
         }
     }
 
@@ -937,7 +943,7 @@ mod tests {
         for migration in MIGRATIONS {
             conn.execute_batch(migration.sql).unwrap();
         }
-        Database { conn: Mutex::new(conn) }
+        Database { conn: Arc::new(Mutex::new(conn)) }
     }
 
     #[test]

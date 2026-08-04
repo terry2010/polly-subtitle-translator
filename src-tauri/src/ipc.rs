@@ -3505,6 +3505,8 @@ struct OfficialTranslateError {
 /// SSE 事件处理器实现（通过 Tauri app handle emit 事件到前端）
 struct TauriSseHandler {
     app: tauri::AppHandle,
+    db: Database,
+    file_hash: String,
 }
 
 impl auth::SseEventHandler for TauriSseHandler {
@@ -3523,6 +3525,31 @@ impl auth::SseEventHandler for TauriSseHandler {
             "current": current,
             "total": total,
         }));
+        // 增量写入 translate_cache，客户端断开后重新打开字幕可恢复已翻译的部分
+        if !self.file_hash.is_empty() {
+            let provider_name = "official";
+            let source_lang = "en";
+            let target_lang = "zh";
+            for sub in subtitles {
+                if !sub.translated_text.is_empty() {
+                    let cache_key = crate::db::translate_cache_key(
+                        &sub.original_text,
+                        source_lang,
+                        target_lang,
+                        provider_name,
+                        &self.file_hash,
+                    );
+                    let _ = self.db.set_translate_cache(
+                        &cache_key,
+                        &sub.original_text,
+                        &sub.translated_text,
+                        source_lang,
+                        target_lang,
+                        provider_name,
+                    );
+                }
+            }
+        }
     }
 
     fn on_result(&self, result: auth::TranslateResult) {
@@ -3615,7 +3642,7 @@ pub async fn translate_official(
                     }
                 }
             }
-            let handler = TauriSseHandler { app: app.clone() };
+            let handler = TauriSseHandler { app: app.clone(), db: db.inner().clone(), file_hash: file.file_hash.clone() };
             let sse_result = auth::handle_sse_stream(response, &handler).await
                 .map_err(translate_error_to_ipc)?;
             // 翻译结束（正常或错误），清除 job_id
@@ -3663,7 +3690,7 @@ pub async fn translate_official(
                 .map_err(translate_error_to_ipc)?;
 
             // 3. 处理 SSE 流（复用 SseStream 的处理逻辑）
-            let handler = TauriSseHandler { app: app.clone() };
+            let handler = TauriSseHandler { app: app.clone(), db: db.inner().clone(), file_hash: file.file_hash.clone() };
             let sse_result = auth::handle_sse_stream(sse_response, &handler).await
                 .map_err(translate_error_to_ipc)?;
             *official_job.lock().unwrap() = None;

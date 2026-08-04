@@ -148,11 +148,11 @@ describe("TranslateApiSettings - 左列表渲染", () => {
     });
   });
 
-  it("非开发者模式下隐藏官方 API 卡片", async () => {
+  it("非开发者模式下仍显示官方 API 卡片", async () => {
     useDevModeStore.setState({ devMode: false });
     renderComponent();
     await waitFor(() => {
-      expect(screen.queryByText("settings.officialApi")).not.toBeInTheDocument();
+      expect(screen.getAllByText("settings.officialApi").length).toBeGreaterThanOrEqual(1);
     });
   });
 });

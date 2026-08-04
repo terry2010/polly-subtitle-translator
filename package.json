@@ -10,7 +10,7 @@
     "typecheck": "tsc -b",
     "preview": "vite preview",
     "tauri": "tauri",
-    "start": "tauri dev",
+    "start": "node scripts/kill-ports.js 5173 && tauri dev",
     "build:release": "tauri build",
     "build:debug": "tauri build --debug",
     "build:nsis": "tauri build -- --bundles nsis",
