@@ -1,9 +1,0 @@
-/Volumes/2t/code/polly-subtitle-translator/client/src-tauri/target/debug/deps/mac_notification_sys-ff484e0944537b14.d: /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/lib.rs /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/bridge.rs /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/error.rs /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/notification.rs /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/pending_guard.rs
-
-/Volumes/2t/code/polly-subtitle-translator/client/src-tauri/target/debug/deps/libmac_notification_sys-ff484e0944537b14.rmeta: /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/lib.rs /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/bridge.rs /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/error.rs /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/notification.rs /Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/pending_guard.rs
-
-/Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/lib.rs:
-/Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/bridge.rs:
-/Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/error.rs:
-/Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/notification.rs:
-/Users/terry/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mac-notification-sys-0.6.15/src/pending_guard.rs:
