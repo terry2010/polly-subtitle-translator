@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: |
           # 从 Cargo.toml 读取基础版本号
-          BASE_VERSION=$(grep '^version = ' client/src-tauri/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          BASE_VERSION=$(grep '^version = ' src-tauri/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           # 生成时间戳 YYYYMMDD-HHMMSS（UTC）
           # 用连字符分隔日期和时间，避免时间段以 0 开头时 semver 报 leading zero 错误
           TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
@@ -95,7 +95,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: client/src-tauri
+          workspaces: src-tauri
 
       - run: npm ci
         working-directory: client
@@ -121,11 +121,11 @@ jobs:
           body: ${{ needs.prepare.outputs.notes }}
           prerelease: true
           files: |
-            client/src-tauri/target/release/bundle/nsis/*.exe
-            client/src-tauri/target/release/bundle/nsis/*.sig
-            client/src-tauri/target/release/bundle/dmg/*.dmg
-            client/src-tauri/target/release/bundle/macos/*.app.tar.gz
-            client/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
 
   # ──────────────────────────────────────────────
   # 清单更新阶段：合并双平台签名，生成 nightly.json

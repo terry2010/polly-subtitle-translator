@@ -215,13 +215,13 @@ cd client && node scripts/publish.mjs <版本号> "更新内容"
 
 ```bash
 # 编译检查
-cd client/src-tauri && cargo check --lib
+cd src-tauri && cargo check --lib
 
 # 运行单元测试（260 个）
-cd client/src-tauri && cargo test --lib
+cd src-tauri && cargo test --lib
 
 # Clippy 检查（约 28 个 warning，主要是函数参数过多/复杂类型等风格问题）
-cd client/src-tauri && cargo clippy --lib
+cd src-tauri && cargo clippy --lib
 
 # 前端类型检查
 cd client && npx tsc --noEmit

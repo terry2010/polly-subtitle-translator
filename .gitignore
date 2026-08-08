@@ -52,8 +52,3 @@ translated.txt
 # Redis dump 文件不入库
 dump.rdb
 
-# 嵌套 git 仓库（各自独立管理）
-translate-service/
-zimufan.com-v2-bak1/
-zimufan.com-v3/
-zimufan.com-v5/

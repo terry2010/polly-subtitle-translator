@@ -86,7 +86,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: client/src-tauri
+          workspaces: src-tauri
 
       - run: npm ci
         working-directory: client
@@ -109,11 +109,11 @@ jobs:
           name: v${{ needs.prepare.outputs.version }}
           body: ${{ needs.prepare.outputs.notes }}
           files: |
-            client/src-tauri/target/release/bundle/nsis/*.exe
-            client/src-tauri/target/release/bundle/nsis/*.sig
-            client/src-tauri/target/release/bundle/dmg/*.dmg
-            client/src-tauri/target/release/bundle/macos/*.app.tar.gz
-            client/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/nsis/*.sig
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
 
   # ──────────────────────────────────────────────
   # 清单更新阶段：合并双平台签名，生成 latest.json
