@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E2E 测试报告</title>
+<style>
+body { font-family: -apple-system, sans-serif; margin: 20px; background: #f5f5f5; }
+.header { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+.summary { display: flex; gap: 20px; }
+.stat { padding: 15px 25px; border-radius: 8px; color: #fff; font-size: 24px; font-weight: bold; }
+.stat.pass { background: #22c55e; }
+.stat.warn { background: #f59e0b; }
+.stat.fail { background: #ef4444; }
+.fixture { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 15px; }
+.fixture-header { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e5e5; }
+th { background: #f0f0f0; }
+.pass { color: #22c55e; }
+.warn { color: #f59e0b; }
+.fail { color: #ef4444; }
+</style>
+</head>
+<body>
+<div class="header">
+<h1>E2E 测试报告</h1>
+<p>运行时间: 2026-07-09 20:32:05</p>
+<p>总用时: 45分6秒</p>
+<div class="summary">
+<div class="stat pass">0<br><small>通过</small></div>
+<div class="stat warn">1<br><small>警告</small></div>
+<div class="stat fail">0<br><small>失败</small></div>
+</div>
+</div>
+<div class="fixture">
+<div class="fixture-header">⚠️ rick_and_morty (560 条目, 17/6/0)</div>
+<table>
+<thead><tr><th>检查项</th><th>层级</th><th>状态</th><th>详情</th><th>相关代码</th></tr></thead>
+<tbody>
+<tr><td>entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数 560，序号唯一递增</td><td></td></tr>
+<tr><td>timeline_validity</td><td>L1</td><td class="pass">✅ pass</td><td>560 条时间轴全部有效</td><td></td></tr>
+<tr><td>format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>560 条往返一致</td><td></td></tr>
+<tr><td>translated_entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数一致: 560</td><td></td></tr>
+<tr><td>translated_timeline</td><td>L1</td><td class="pass">✅ pass</td><td>时间轴全部对齐</td><td></td></tr>
+<tr><td>translated_format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>翻译后格式往返一致</td><td></td></tr>
+<tr><td>subtitle_shift</td><td>L1</td><td class="warn">⚠️ warn</td><td>1 条译文长度比值异常（可能合并/截断）: [(2, 0.13793103448275862)]</td><td>translate.rs batch 翻译逻辑</td></tr>
+<tr><td>empty_translations</td><td>L2</td><td class="pass">✅ pass</td><td>无空译文</td><td></td></tr>
+<tr><td>fake_translations</td><td>L2</td><td class="warn">⚠️ warn</td><td>假翻译 5 条 (0.89%)</td><td>translate.rs prompt 模板</td></tr>
+<tr><td>cjk_check</td><td>L2</td><td class="pass">✅ pass</td><td>译文均含 CJK 字符</td><td></td></tr>
+<tr><td>sound_effect_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>音效标记一致</td><td></td></tr>
+<tr><td>name_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>人名一致，无残留标签</td><td></td></tr>
+<tr><td>length_ratio</td><td>L2</td><td class="warn">⚠️ warn</td><td>1 条译文长度异常: [(2, 29, 4, 0.13793103448275862)]</td><td>translate.rs prompt 或 batch 逻辑</td></tr>
+<tr><td>alignment_check</td><td>L2</td><td class="pass">✅ pass</td><td>无错位迹象</td><td></td></tr>
+<tr><td>truncation_check</td><td>L2</td><td class="warn">⚠️ warn</td><td>76 条疑似截断: [(2, &quot;长度比 0.10&quot;), (3, &quot;句子数 2→1&quot;), (8, &quot;长度比 0.29&quot;), (10, &quot;句子数 2→1&quot;), (16, &quot;长度比 0.28&quot;)]</td><td>translate.rs prompt 或 batch 翻译逻辑</td></tr>
+<tr><td>translate_failures</td><td>L2</td><td class="warn">⚠️ warn</td><td>失败 24 条, 缓存 18 条, token 43701 | 详情: #39: &quot;UGG! Glugg UGG!&quot; → &quot;UGG！Glugg UGG！&quot;; #60: &quot;I know you're probably\\ndistracted by the mups.&quot; → &quot;I know you're probably\\ndistracted by the mups.&quot;; #63: &quot;You know?\\nCh-Chill? Hang?&quot; → &quot;You know?\\nCh-Chill? Hang?&quot;; #272: &quot;from our mothers!\\n[ Mup crying ]&quot; → &quot;from our mothers!\\n[ Mup crying ]&quot;; #273: &quot;I-I probably know\\nsome of this.&quot; → &quot;\&quot;I-I probably know\\nsome of this.\&quot;&quot;; #274: &quot;They made me watch the\\nmup video. Three times.&quot; → &quot;\&quot;They made me watch the\\nmup video. Three times.\&quot;&quot;; #275: &quot;\&quot;Mup\&quot; is the language\\nof the oppressor!&quot; → &quot;\&quot;Mup\&quot; is the language\\nof the oppressor!\&quot;&quot;; #276: &quot;You're still trapped\\nin their way of thinking!&quot; → &quot;\&quot;You're still trapped\\nin their way of thinking!\&quot;&quot;; #277: &quot;Again, just getting out\\nin front of this,&quot; → &quot;\&quot;Again, just getting out\\nin front of this,\&quot;&quot;; #278: &quot;I'm not looking\\nto get caught up&quot; → &quot;\&quot;I'm not looking\\nto get caught up\&quot;&quot;; #279: &quot;in all the colonization,\\neugenics, hierarchies.&quot; → &quot;\&quot;in all the colonization,\\neugenics, hierarchies.\&quot;&quot;; #281: &quot;Humans kind of started this\\ncycle a billion years ago.&quot; → &quot;\&quot;Humans kind of started this\\ncycle a billion years ago.\&quot;&quot;; #282: &quot;You don't want me\\ninvolved.&quot; → &quot;\&quot;You don't want me\\ninvolved.\&quot;&quot;; #283: &quot;So this is &lt;i&gt;your &lt;/i&gt;fault?&quot; → &quot;\&quot;So this is &lt;i&gt;your &lt;/i&gt;fault?\&quot;&quot;; #284: &quot;Not directly enough\\nthat I need to fix it.&quot; → &quot;\&quot;Not directly enough\\nthat I need to fix it.\&quot;&quot;; #285: &quot;I just come from a world where\\nthe humans are in charge&quot; → &quot;\&quot;I just come from a world where\\nthe humans are in charge\&quot;&quot;; #287: &quot;[ Gasps ]\\nHe will help us!&quot; → &quot;[ Gasps ]\\nHe will help us!\&quot;&quot;; #290: &quot;- Scared! Scared!\\n- Scared! Scared!&quot; → &quot;\&quot;- Scared! Scared!\\n- Scared! Scared!\&quot;&quot;; #293: &quot;Dog commander:\\nSearch everywhere!&quot; → &quot;\&quot;Dog commander:\\nSearch everywhere!\&quot;&quot;; #294: &quot;&lt;i&gt;Do you have eyes&lt;/i&gt;\\n&lt;i&gt;on Morty?&lt;/i&gt;&quot; → &quot;&lt;i&gt;Do you have eyes&lt;/i&gt;\\n&lt;i&gt;on Morty?&lt;/i&gt;\&quot;&quot;; #295: &quot;Commander:\\nNot yet. &lt;i&gt;Find him.&lt;/i&gt;&quot; → &quot;\&quot;Commander:\\nNot yet. &lt;i&gt;Find him.&lt;/i&gt;\&quot;&quot;; #296: &quot;&lt;i&gt;He said we were asshole,&lt;/i&gt;\\n&lt;i&gt;racist piece-of-shit bigots!&lt;/i&gt;&quot; → &quot;&lt;i&gt;He said we were asshole,&lt;/i&gt;\\n&lt;i&gt;racist piece-of-shit bigots!&lt;/i&gt;\&quot;&quot;; #315: &quot;&lt;i&gt;Yes, General?&lt;/i&gt;\\n&lt;i&gt;Awww! Morty!&lt;/i&gt;&quot; → &quot;&lt;i&gt;Yes, General?&lt;/i&gt;\\n&lt;i&gt;Awww! Morty!&lt;/i&gt;&quot;; #323: &quot;Guest house is here.&quot; → &quot;Guest house is here.&quot;</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>judge_27b</td><td>L5</td><td class="warn">⚠️ warn</td><td>27b judge: 449 pass, 109 fail, 2 shift (共 560 条判定, 问题批次: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])</td><td>27b judge 翻译质量问题</td></tr>
+<tr><td>bilingual_roundtrip_srt</td><td>L3</td><td class="pass">✅ pass</td><td>SRT 双语字幕往返一致: translated=518, failed=0, missing=24 (翻译时 failed=24, missing=24)</td><td></td></tr>
+<tr><td>bilingual_roundtrip_ass</td><td>L3</td><td class="pass">✅ pass</td><td>ASS 双语字幕往返一致: translated=518, failed=0, missing=24 (翻译时 failed=24, missing=24)</td><td></td></tr>
+<tr><td>bilingual_roundtrip_vtt</td><td>L3</td><td class="pass">✅ pass</td><td>VTT 双语字幕往返一致: translated=518, failed=0, missing=24 (翻译时 failed=24, missing=24)</td><td></td></tr>
+<tr><td>repeated_open_1</td><td>L3</td><td class="pass">✅ pass</td><td>第 1 次打开一致: 560 条命中, failed=24, missing=24</td><td></td></tr>
+<tr><td>repeated_open_2</td><td>L3</td><td class="pass">✅ pass</td><td>第 2 次打开一致: 560 条命中, failed=24, missing=24</td><td></td></tr>
+<tr><td>repeated_open_3</td><td>L3</td><td class="pass">✅ pass</td><td>第 3 次打开一致: 560 条命中, failed=24, missing=24</td><td></td></tr>
+</tbody></table>
+</div>
+</body>
+</html>

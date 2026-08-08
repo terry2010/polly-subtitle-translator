@@ -1,0 +1,544 @@
+{
+  "timestamp": "2026-07-09 02:50:26",
+  "summary": {
+    "total_fixtures": 3,
+    "passed": 0,
+    "warned": 0,
+    "failed": 3,
+    "total_checks": 72,
+    "checks_passed": 48,
+    "checks_warned": 9,
+    "checks_failed": 15
+  },
+  "fixtures": [
+    {
+      "name": "clarksons_farm",
+      "file": "clarksons_farm.srt",
+      "status": "failed",
+      "entries": 1054,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 1054，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "1054 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "1054 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数一致: 1054",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_timeline",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "时间轴全部对齐",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "翻译后格式往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] subtitle_shift",
+          "tier": "L1",
+          "status": "warn",
+          "detail": "1024 条空译文（可能是平移或降级失败）: [30, 31, 32, 33, 34]",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "[NP] empty_translations",
+          "tier": "L2",
+          "status": "fail",
+          "detail": "1024 条空译文: [30, 31, 32, 33, 34]",
+          "source_hint": "translate.rs translate_batch_with_fallback 降级重试"
+        },
+        {
+          "name": "[NP] fake_translations",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无假翻译",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] cjk_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文均含 CJK 字符",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] sound_effect_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "音效标记一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] name_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "人名一致，无残留标签",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] length_ratio",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文长度全部在合理范围",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] alignment_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无错位迹象",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] truncation_check",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "5 条疑似截断: [(16, \"长度比 0.25\"), (21, \"句末标点缺失\"), (23, \"句末标点缺失\"), (24, \"句子数 3→1\"), (25, \"句子数 2→1\")]",
+          "source_hint": "translate.rs prompt 或 batch 翻译逻辑"
+        },
+        {
+          "name": "[NP] translate_failures",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "失败 0 条, 缓存 0 条, token 2222",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "[NP] judge_27b",
+          "tier": "L5",
+          "status": "warn",
+          "detail": "27b judge: 26 pass, 4 fail, 0 shift (共 30 条判定, 问题批次: [])",
+          "source_hint": "27b judge 翻译质量问题"
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_srt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "SRT 双语字幕往返一致: translated=30, failed=0, missing=951 (翻译时 failed=0, missing=951)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_ass",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "ASS 双语字幕往返一致: translated=30, failed=0, missing=951 (翻译时 failed=0, missing=951)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_vtt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "VTT 双语字幕往返一致: translated=30, failed=0, missing=951 (翻译时 failed=0, missing=951)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] repeated_open_1",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 1 次打开问题数不一致: 翻译时=951, 恢复后=973 (缓存命中 0 条), 差异条目: [6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24, 25, 26, 27]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] repeated_open_2",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 2 次打开问题数不一致: 翻译时=951, 恢复后=973 (缓存命中 0 条), 差异条目: [6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24, 25, 26, 27]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] repeated_open_3",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 3 次打开问题数不一致: 翻译时=951, 恢复后=973 (缓存命中 0 条), 差异条目: [6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24, 25, 26, 27]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] code_bug_stopped",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "批次 1 L3 持久化验证发现代码 bug，测试已停止。修复代码后用 E2E_RESET=1 重跑",
+          "source_hint": "translate.rs 缓存质量校验 / subtitle.rs 双语导出"
+        }
+      ]
+    },
+    {
+      "name": "rick_and_morty",
+      "file": "rick_and_morty.srt",
+      "status": "failed",
+      "entries": 560,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 560，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "560 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "560 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数一致: 560",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_timeline",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "时间轴全部对齐",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "翻译后格式往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] subtitle_shift",
+          "tier": "L1",
+          "status": "warn",
+          "detail": "530 条空译文（可能是平移或降级失败）: [30, 31, 32, 33, 34]",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "[NP] empty_translations",
+          "tier": "L2",
+          "status": "fail",
+          "detail": "530 条空译文: [30, 31, 32, 33, 34]",
+          "source_hint": "translate.rs translate_batch_with_fallback 降级重试"
+        },
+        {
+          "name": "[NP] fake_translations",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无假翻译",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] cjk_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文均含 CJK 字符",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] sound_effect_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "音效标记一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] name_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "人名一致，无残留标签",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] length_ratio",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文长度全部在合理范围",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] alignment_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无错位迹象",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] truncation_check",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "5 条疑似截断: [(14, \"长度比 0.30\"), (16, \"长度比 0.26\"), (20, \"长度比 0.30\"), (22, \"长度比 0.27\"), (27, \"长度比 0.27\")]",
+          "source_hint": "translate.rs prompt 或 batch 翻译逻辑"
+        },
+        {
+          "name": "[NP] translate_failures",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "失败 0 条, 缓存 0 条, token 2640",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "[NP] judge_27b",
+          "tier": "L5",
+          "status": "warn",
+          "detail": "27b judge: 25 pass, 5 fail, 0 shift (共 30 条判定, 问题批次: [])",
+          "source_hint": "27b judge 翻译质量问题"
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_srt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "SRT 双语字幕往返一致: translated=30, failed=0, missing=451 (翻译时 failed=0, missing=451)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_ass",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "ASS 双语字幕往返一致: translated=30, failed=0, missing=451 (翻译时 failed=0, missing=451)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_vtt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "VTT 双语字幕往返一致: translated=30, failed=0, missing=451 (翻译时 failed=0, missing=451)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] repeated_open_1",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 1 次打开问题数不一致: 翻译时=451, 恢复后=480 (缓存命中 0 条), 差异条目: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] repeated_open_2",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 2 次打开问题数不一致: 翻译时=451, 恢复后=480 (缓存命中 0 条), 差异条目: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] repeated_open_3",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 3 次打开问题数不一致: 翻译时=451, 恢复后=480 (缓存命中 0 条), 差异条目: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] code_bug_stopped",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "批次 1 L3 持久化验证发现代码 bug，测试已停止。修复代码后用 E2E_RESET=1 重跑",
+          "source_hint": "translate.rs 缓存质量校验 / subtitle.rs 双语导出"
+        }
+      ]
+    },
+    {
+      "name": "rick_s09e07",
+      "file": "rick_s09e07.srt",
+      "status": "failed",
+      "entries": 501,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 501，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "501 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "501 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数一致: 501",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_timeline",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "时间轴全部对齐",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "翻译后格式往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] subtitle_shift",
+          "tier": "L1",
+          "status": "warn",
+          "detail": "411 条空译文（可能是平移或降级失败）: [90, 91, 92, 93, 94]",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "[NP] empty_translations",
+          "tier": "L2",
+          "status": "fail",
+          "detail": "411 条空译文: [90, 91, 92, 93, 94]",
+          "source_hint": "translate.rs translate_batch_with_fallback 降级重试"
+        },
+        {
+          "name": "[NP] fake_translations",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无假翻译",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] cjk_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文均含 CJK 字符",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] sound_effect_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "音效标记一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] name_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "人名一致，无残留标签",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] length_ratio",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文长度全部在合理范围",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] alignment_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无错位迹象",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] truncation_check",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "8 条疑似截断: [(1, \"长度比 0.21, 句子数 2→1\"), (4, \"长度比 0.21, 句子数 2→1\"), (26, \"句末标点缺失\"), (42, \"长度比 0.23\"), (50, \"长度比 0.29\")]",
+          "source_hint": "translate.rs prompt 或 batch 翻译逻辑"
+        },
+        {
+          "name": "[NP] translate_failures",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "失败 0 条, 缓存 4 条, token 6333",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "[NP] judge_27b",
+          "tier": "L5",
+          "status": "warn",
+          "detail": "27b judge: 80 pass, 9 fail, 1 shift (共 90 条判定, 问题批次: [1, 2])",
+          "source_hint": "27b judge 翻译质量问题"
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_srt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "SRT 双语字幕往返一致: translated=84, failed=0, missing=310 (翻译时 failed=0, missing=310)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_ass",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "ASS 双语字幕往返一致: translated=84, failed=0, missing=310 (翻译时 failed=0, missing=310)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_vtt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "VTT 双语字幕往返一致: translated=84, failed=0, missing=310 (翻译时 failed=0, missing=310)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] repeated_open_1",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 1 次打开问题数不一致: 翻译时=310, 恢复后=374 (缓存命中 0 条), 差异条目: [1, 4, 5, 6, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 30]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] repeated_open_2",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 2 次打开问题数不一致: 翻译时=310, 恢复后=374 (缓存命中 0 条), 差异条目: [1, 4, 5, 6, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 30]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] repeated_open_3",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 3 次打开问题数不一致: 翻译时=310, 恢复后=374 (缓存命中 0 条), 差异条目: [1, 4, 5, 6, 10, 11, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 26, 30]",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "[NP] code_bug_stopped",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "批次 3 L3 持久化验证发现代码 bug，测试已停止。修复代码后用 E2E_RESET=1 重跑",
+          "source_hint": "translate.rs 缓存质量校验 / subtitle.rs 双语导出"
+        }
+      ]
+    }
+  ],
+  "elapsed": "15分50秒"
+}

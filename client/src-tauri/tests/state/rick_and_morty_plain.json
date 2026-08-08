@@ -1,0 +1,3785 @@
+{
+  "fixture_name": "rick_and_morty",
+  "name_precision": false,
+  "source_lang": "en",
+  "target_lang": "zh",
+  "total_entries": 560,
+  "batch_size": 30,
+  "names": [],
+  "names_status": "Passed",
+  "batches": [
+    {
+      "batch_num": 1,
+      "start": 0,
+      "end": 30,
+      "translations": [
+        {
+          "index": 0,
+          "original": "Jerry:\nUhh, I'm so nervous!",
+          "translated": "杰瑞：\n呃，我太紧张了！",
+          "failed": false
+        },
+        {
+          "index": 1,
+          "original": "It's been so long, no one\neven makes fun of me",
+          "translated": "这么久没见，没人\n甚至再拿我失业的事取笑我了。",
+          "failed": false
+        },
+        {
+          "index": 2,
+          "original": "for being unemployed\nanymore.",
+          "translated": "for being unemployed\nanymore.",
+          "failed": true
+        },
+        {
+          "index": 3,
+          "original": "Aw. We can make fun of you\nif you want, sweetie.",
+          "translated": "哎呀。\n如果你想的话，我们可以继续取笑你，亲爱的。",
+          "failed": false
+        },
+        {
+          "index": 4,
+          "original": "You could also\ntake one of these.",
+          "translated": "\n你也可以试试这个。",
+          "failed": false
+        },
+        {
+          "index": 5,
+          "original": "It's a worry worm.",
+          "translated": "它是一个忧虑虫。",
+          "failed": false
+        },
+        {
+          "index": 6,
+          "original": "It eats your worries\nand dies out in a couple hours.",
+          "translated": "\n它能帮你消除烦恼，几个小时后就会失效。",
+          "failed": false
+        },
+        {
+          "index": 7,
+          "original": "I'm on one right now.\nSuper chill.",
+          "translated": "\n我现在正用着呢。\n超级放松。",
+          "failed": false
+        },
+        {
+          "index": 8,
+          "original": "I'm not taking\nbreakfast drugs!",
+          "translated": "\n我才不吃早餐药呢！",
+          "failed": false
+        },
+        {
+          "index": 9,
+          "original": "We doing\nbreakfast drugs?",
+          "translated": "我们要进行\n早餐药物测试吗？",
+          "failed": false
+        },
+        {
+          "index": 10,
+          "original": "I'm just dropping\nMorty off. Deal me in.",
+          "translated": "\n我只是送莫蒂过来。\n算我一个。",
+          "failed": false
+        },
+        {
+          "index": 11,
+          "original": "Nobody's dealer-ing\nanyone.",
+          "translated": "\n没人要给你当药剂师。\n",
+          "failed": false
+        },
+        {
+          "index": 12,
+          "original": "Seriously, guys, this\ninterview is important to me!",
+          "translated": "\n说真的，伙计们，这次采访对我很重要！",
+          "failed": false
+        },
+        {
+          "index": 13,
+          "original": "Wow! Good luck, Dad!",
+          "translated": "哇！祝你好运，爸爸！",
+          "failed": false
+        },
+        {
+          "index": 14,
+          "original": "Didn't -- Didn't realize\nyou were still trying.",
+          "translated": "\n难道——没想到你还一直在努力。",
+          "failed": false
+        },
+        {
+          "index": 15,
+          "original": "Yeah. Why?",
+          "translated": "是的。为什么？",
+          "failed": false
+        },
+        {
+          "index": 16,
+          "original": "No one's on your ass\nto contribute a thing.",
+          "translated": "\n也没人逼你贡献什么。",
+          "failed": false
+        },
+        {
+          "index": 17,
+          "original": "Ah, if you're trying to\nneg me into taking a worm,",
+          "translated": "\n啊，如果你是想用虫子把我骗过去的话，",
+          "failed": false
+        },
+        {
+          "index": 18,
+          "original": "you've succeeded.",
+          "translated": "你已经成功了。",
+          "failed": false
+        },
+        {
+          "index": 19,
+          "original": "Negging works.\n[ Gulps ]",
+          "translated": "Negging 很有效。\n[ 吞咽声 ]",
+          "failed": false
+        },
+        {
+          "index": 20,
+          "original": "See you all in a week!\nMnh.",
+          "translated": "\n那我们下周见！\n嗯哼。",
+          "failed": false
+        },
+        {
+          "index": 21,
+          "original": "I'm so excited!",
+          "translated": "我太兴奋了！",
+          "failed": false
+        },
+        {
+          "index": 22,
+          "original": "Guh-uh, this is what it feels\nlike to have friends?",
+          "translated": "\n咕——唔，这就是有朋友的感觉吗？",
+          "failed": false
+        },
+        {
+          "index": 23,
+          "original": "Wouldn't know.\nPick you up on Sunday?",
+          "translated": "\n那谁知道。\n周日来接你？",
+          "failed": false
+        },
+        {
+          "index": 24,
+          "original": "See you then!",
+          "translated": "到时候见！",
+          "failed": false
+        },
+        {
+          "index": 25,
+          "original": "- Snowball!\n- Morty!",
+          "translated": "-雪球!\n-莫蒂!",
+          "failed": false
+        },
+        {
+          "index": 26,
+          "original": "- [ Panting ]\n- [ Laughs ]",
+          "translated": "- [ 喘息声 ]\n- [ 笑声 ]",
+          "failed": false
+        },
+        {
+          "index": 27,
+          "original": "Oh, my God!\nI missed you so much!",
+          "translated": "\n噢，天哪！\n我太想你了！",
+          "failed": false
+        },
+        {
+          "index": 28,
+          "original": "Me too, Morty. Me too.",
+          "translated": "我也是，莫蒂。我也是。",
+          "failed": false
+        },
+        {
+          "index": 29,
+          "original": "[ Laughs ]",
+          "translated": "[ Laughs ]",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 1,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 2,
+          "verdict": "fail",
+          "reason": "Semantic error/Context loss. The source is a fragment dependent on the next line. The translation adds specific context ('unemployment') that belongs to line 3, causing redundancy and breaking the sentence flow across lines.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 3,
+          "verdict": "fail",
+          "reason": "Missing translation. The source text is left in English.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 4,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 5,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 6,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 7,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 8,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 9,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 10,
+          "verdict": "fail",
+          "reason": "Semantic error. 'We doing breakfast drugs?' is a colloquial way of asking 'Are we taking these drugs?'. The translation 'Are we conducting a breakfast drug test?' changes the meaning entirely to a formal testing scenario.",
+          "suggestion": "context"
+        },
+        {
+          "index": 11,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 12,
+          "verdict": "fail",
+          "reason": "Semantic error. 'Dealer-ing' is a pun on 'dealing' (drugs). The translation 'pharmacist' (药剂师) misses the drug-dealing context and the pun, making the joke fall flat.",
+          "suggestion": "context"
+        },
+        {
+          "index": 13,
+          "verdict": "fail",
+          "reason": "Semantic error. In the context of a job application, 'interview' should be translated as '面试' (job interview), not '采访' (media interview/reporting).",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 14,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 15,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 16,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 17,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 18,
+          "verdict": "fail",
+          "reason": "Semantic error. 'Neg me' refers to the psychological tactic of 'negging' (backhanded compliments to lower self-esteem). The translation 'trick me with a worm' misses the specific slang term 'neg' which is central to the joke in the next line.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 19,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 20,
+          "verdict": "fail",
+          "reason": "Glossary term lost. 'Negging' is a specific slang term (PUA tactic). Leaving it as 'Negging' in Chinese subtitles is incorrect; it should be translated (e.g., '打压' or '否定') or explained, especially since the previous line failed to translate it.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 21,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 22,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 23,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 24,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 25,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 26,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 27,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 28,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 29,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 30,
+          "verdict": "fail",
+          "reason": "Missing translation. The source text is left in English.",
+          "suggestion": "prompt"
+        }
+      ],
+      "judge_pass": 22,
+      "judge_fail": 8,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 2,
+      "start": 30,
+      "end": 60,
+      "translations": [
+        {
+          "index": 30,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 31,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 32,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 33,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 34,
+          "original": "[ Shutter clicking ]",
+          "translated": "[ Shutter clicking ]",
+          "failed": false
+        },
+        {
+          "index": 35,
+          "original": "I...was there\nwhen that happened.",
+          "translated": "I...was there\nwhen that happened.",
+          "failed": true
+        },
+        {
+          "index": 36,
+          "original": "Really cool!",
+          "translated": "Really cool!",
+          "failed": true
+        },
+        {
+          "index": 37,
+          "original": "Whoa! They got\na monorail, too?!",
+          "translated": "Whoa! They got\na monorail, too?!",
+          "failed": true
+        },
+        {
+          "index": 38,
+          "original": "Proud of my dog.\nHe built this place, you know.",
+          "translated": "Proud of my dog.\nHe built this place, you know.",
+          "failed": true
+        },
+        {
+          "index": 39,
+          "original": "UGG! Glugg UGG!",
+          "translated": "UGG! Glugg UGG!",
+          "failed": true
+        },
+        {
+          "index": 40,
+          "original": "Agh! Shit!\nWhat the fuck?",
+          "translated": "Agh! Shit!\nWhat the fuck?",
+          "failed": true
+        },
+        {
+          "index": 41,
+          "original": "Paul! Come! Up!\nDon't mess with him.",
+          "translated": "Paul! Come! Up!\nDon't mess with him.",
+          "failed": true
+        },
+        {
+          "index": 42,
+          "original": "We don't know\nif he's had his shots.",
+          "translated": "We don't know\nif he's had his shots.",
+          "failed": true
+        },
+        {
+          "index": 43,
+          "original": "Snowball: Morty.\nOh, I see you've met a mup.",
+          "translated": "Snowball: Morty.\nOh, I see you've met a mup.",
+          "failed": true
+        },
+        {
+          "index": 44,
+          "original": "No big deal.",
+          "translated": "No big deal.",
+          "failed": true
+        },
+        {
+          "index": 45,
+          "original": "Just humanoid creatures\nwe bred to be pets.",
+          "translated": "Just humanoid creatures\nwe bred to be pets.",
+          "failed": true
+        },
+        {
+          "index": 46,
+          "original": "Hopefully that doesn't, heh,\nfreak you out too much.",
+          "translated": "Hopefully that doesn't, heh,\nfreak you out too much.",
+          "failed": true
+        },
+        {
+          "index": 47,
+          "original": "Oh. Nope.\nI've seen a lot of stuff.",
+          "translated": "Oh. Nope.\nI've seen a lot of stuff.",
+          "failed": true
+        },
+        {
+          "index": 48,
+          "original": "Good, because\nit would be weird",
+          "translated": "Good, because\nit would be weird",
+          "failed": true
+        },
+        {
+          "index": 49,
+          "original": "if <i>you </i>were\noffended by it, heh,",
+          "translated": "if <i>you </i>were\noffended by it, heh,",
+          "failed": true
+        },
+        {
+          "index": 50,
+          "original": "since you had pets first.",
+          "translated": "since you had pets first.",
+          "failed": true
+        },
+        {
+          "index": 51,
+          "original": "[ Gasps ]\n[ Sniffing ]",
+          "translated": "[ Gasps ]\n[ Sniffing ]",
+          "failed": false
+        },
+        {
+          "index": 52,
+          "original": "Ugh! Is there anything else\nwe could visit or talk about?",
+          "translated": "Ugh! Is there anything else\nwe could visit or talk about?",
+          "failed": true
+        },
+        {
+          "index": 53,
+          "original": "Yes. Good. Good.\nOf course.",
+          "translated": "Yes. Good. Good.\nOf course.",
+          "failed": true
+        },
+        {
+          "index": 54,
+          "original": "BooBoo, push\nthe Sniff Conference.",
+          "translated": "BooBoo, push\nthe Sniff Conference.",
+          "failed": true
+        },
+        {
+          "index": 55,
+          "original": "I've got a lot to show\nmy old friend.",
+          "translated": "I've got a lot to show\nmy old friend.",
+          "failed": true
+        },
+        {
+          "index": 56,
+          "original": "That's the college\nof New Dog City.",
+          "translated": "That's the college\nof New Dog City.",
+          "failed": true
+        },
+        {
+          "index": 57,
+          "original": "And there is our\nmech-suit warehouse.",
+          "translated": "And there is our\nmech-suit warehouse.",
+          "failed": true
+        },
+        {
+          "index": 58,
+          "original": "We've updated\nyour grandpa's designs.",
+          "translated": "We've updated\nyour grandpa's designs.",
+          "failed": true
+        },
+        {
+          "index": 59,
+          "original": "Cool!",
+          "translated": "Cool!",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 3,
+      "start": 60,
+      "end": 90,
+      "translations": [
+        {
+          "index": 60,
+          "original": "I know you're probably\ndistracted by the mups.",
+          "translated": "I know you're probably\ndistracted by the mups.",
+          "failed": true
+        },
+        {
+          "index": 61,
+          "original": "Sadly, they're all\nI can see now.",
+          "translated": "Sadly, they're all\nI can see now.",
+          "failed": true
+        },
+        {
+          "index": 62,
+          "original": "Okay, m-maybe we should\njust chill at your place.",
+          "translated": "Okay, m-maybe we should\njust chill at your place.",
+          "failed": true
+        },
+        {
+          "index": 63,
+          "original": "You know?\nCh-Chill? Hang?",
+          "translated": "You know?\nCh-Chill? Hang?",
+          "failed": true
+        },
+        {
+          "index": 64,
+          "original": "[ Beeping ]",
+          "translated": "[ Beeping ]",
+          "failed": false
+        },
+        {
+          "index": 65,
+          "original": "Water bowl, sir?",
+          "translated": "Water bowl, sir?",
+          "failed": true
+        },
+        {
+          "index": 66,
+          "original": "It is our finest\nhose water.",
+          "translated": "It is our finest\nhose water.",
+          "failed": true
+        },
+        {
+          "index": 67,
+          "original": "Ohh! It's shaped\nlike a little dog bowl.",
+          "translated": "Ohh! It's shaped\nlike a little dog bowl.",
+          "failed": true
+        },
+        {
+          "index": 68,
+          "original": "Tha-- Hey.\nThat's -- That's fun.",
+          "translated": "Tha-- Hey.\nThat's -- That's fun.",
+          "failed": true
+        },
+        {
+          "index": 69,
+          "original": "Snowball:\nYes, this is good.",
+          "translated": "Snowball:\nYes, this is good.",
+          "failed": true
+        },
+        {
+          "index": 70,
+          "original": "We will hang by the pool\nand reminisce about old times.",
+          "translated": "We will hang by the pool\nand reminisce about old times.",
+          "failed": true
+        },
+        {
+          "index": 71,
+          "original": "No politics. [ Chuckles ]",
+          "translated": "No politics. [ Chuckles ]",
+          "failed": true
+        },
+        {
+          "index": 72,
+          "original": "[ Mancors screeching ]\nWe got company!",
+          "translated": "[ Mancors screeching ]\nWe got company!",
+          "failed": true
+        },
+        {
+          "index": 73,
+          "original": "God damn it!",
+          "translated": "God damn it!",
+          "failed": true
+        },
+        {
+          "index": 74,
+          "original": "- Haaaa!\n- Take, take!",
+          "translated": "- Haaaa!\n- Take, take!",
+          "failed": true
+        },
+        {
+          "index": 75,
+          "original": "Jesus Christ!",
+          "translated": "Jesus Christ!",
+          "failed": true
+        },
+        {
+          "index": 76,
+          "original": "- Take, take, take!\n- Take, take, take!",
+          "translated": "- Take, take, take!\n- Take, take, take!",
+          "failed": true
+        },
+        {
+          "index": 77,
+          "original": "[ Morty screams ]",
+          "translated": "[ Morty screams ]",
+          "failed": false
+        },
+        {
+          "index": 78,
+          "original": "You said we could\nkeep them out!",
+          "translated": "You said we could\nkeep them out!",
+          "failed": true
+        },
+        {
+          "index": 79,
+          "original": "We're trying, sir!",
+          "translated": "We're trying, sir!",
+          "failed": true
+        },
+        {
+          "index": 80,
+          "original": "The Mancors,\nthey're adapting!",
+          "translated": "The Mancors,\nthey're adapting!",
+          "failed": true
+        },
+        {
+          "index": 81,
+          "original": "So we adapt <i>harder,</i>\nGeneral.",
+          "translated": "So we adapt <i>harder,</i>\nGeneral.",
+          "failed": true
+        },
+        {
+          "index": 82,
+          "original": "You're making my friend\nuncomfortable.",
+          "translated": "You're making my friend\nuncomfortable.",
+          "failed": true
+        },
+        {
+          "index": 83,
+          "original": "Okay. Morty...",
+          "translated": "Okay. Morty...",
+          "failed": true
+        },
+        {
+          "index": 84,
+          "original": "I think you're getting\nthe wrong impression.",
+          "translated": "I think you're getting\nthe wrong impression.",
+          "failed": true
+        },
+        {
+          "index": 85,
+          "original": "You're seeing a lot\nof physical deformity",
+          "translated": "You're seeing a lot\nof physical deformity",
+          "failed": true
+        },
+        {
+          "index": 86,
+          "original": "and selective breeding,",
+          "translated": "and selective breeding,",
+          "failed": true
+        },
+        {
+          "index": 87,
+          "original": "and your mind is going\nto all kinds of places.",
+          "translated": "and your mind is going\nto all kinds of places.",
+          "failed": true
+        },
+        {
+          "index": 88,
+          "original": "I mean, it's more that this\nwasn't quite the vacation I --",
+          "translated": "I mean, it's more that this\nwasn't quite the vacation I --",
+          "failed": true
+        },
+        {
+          "index": 89,
+          "original": "Titus, take Morty\nto the mup facility, mm?",
+          "translated": "Titus, take Morty\nto the mup facility, mm?",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 4,
+      "start": 90,
+      "end": 120,
+      "translations": [
+        {
+          "index": 90,
+          "original": "Show him\nhow loved they are.",
+          "translated": "Show him\nhow loved they are.",
+          "failed": true
+        },
+        {
+          "index": 91,
+          "original": "Hey, buddy!",
+          "translated": "Hey, buddy!",
+          "failed": true
+        },
+        {
+          "index": 92,
+          "original": "Okay. Y-You don't\nhave to crouch.",
+          "translated": "Okay. Y-You don't\nhave to crouch.",
+          "failed": true
+        },
+        {
+          "index": 93,
+          "original": "Wow, and it says here\nunder Other Experience:",
+          "translated": "Wow, and it says here\nunder Other Experience:",
+          "failed": true
+        },
+        {
+          "index": 94,
+          "original": "\"jumped dimensions.\"",
+          "translated": "\"jumped dimensions.\"",
+          "failed": true
+        },
+        {
+          "index": 95,
+          "original": "What was <i>that </i>like?",
+          "translated": "What was <i>that </i>like?",
+          "failed": true
+        },
+        {
+          "index": 96,
+          "original": "Well, you see\nsome things, Bob,",
+          "translated": "Well, you see\nsome things, Bob,",
+          "failed": true
+        },
+        {
+          "index": 97,
+          "original": "but at the end\nof the day,",
+          "translated": "but at the end\nof the day,",
+          "failed": true
+        },
+        {
+          "index": 98,
+          "original": "you realize we're all\npretty much the same.",
+          "translated": "you realize we're all\npretty much the same.",
+          "failed": true
+        },
+        {
+          "index": 99,
+          "original": "That's the kind of experience\nI want to bring to the team.",
+          "translated": "That's the kind of experience\nI want to bring to the team.",
+          "failed": true
+        },
+        {
+          "index": 100,
+          "original": "Incredible.",
+          "translated": "Incredible.",
+          "failed": true
+        },
+        {
+          "index": 101,
+          "original": "So can I ask?",
+          "translated": "So can I ask?",
+          "failed": true
+        },
+        {
+          "index": 102,
+          "original": "Any big fish you're\ntrying to take down?",
+          "translated": "Any big fish you're\ntrying to take down?",
+          "failed": true
+        },
+        {
+          "index": 103,
+          "original": "Well, Jerry, I don't normally\ntalk clients during interviews,",
+          "translated": "Well, Jerry, I don't normally\ntalk clients during interviews,",
+          "failed": true
+        },
+        {
+          "index": 104,
+          "original": "but, God, I'm just loving\nthis laid-back attitude!",
+          "translated": "but, God, I'm just loving\nthis laid-back attitude!",
+          "failed": true
+        },
+        {
+          "index": 105,
+          "original": "Nipslip Vodka.",
+          "translated": "Nipslip Vodka.",
+          "failed": true
+        },
+        {
+          "index": 106,
+          "original": "If we can convince them\nto hire us,",
+          "translated": "If we can convince them\nto hire us,",
+          "failed": true
+        },
+        {
+          "index": 107,
+          "original": "we'd double our revenue.",
+          "translated": "we'd double our revenue.",
+          "failed": true
+        },
+        {
+          "index": 108,
+          "original": "Ahh.",
+          "translated": "Ahh.",
+          "failed": true
+        },
+        {
+          "index": 109,
+          "original": "I mean,\nit's right there, Bob.",
+          "translated": "I mean,\nit's right there, Bob.",
+          "failed": true
+        },
+        {
+          "index": 110,
+          "original": "It's screaming at ya.",
+          "translated": "It's screaming at ya.",
+          "failed": true
+        },
+        {
+          "index": 111,
+          "original": "What? I-I-I don't see it.",
+          "translated": "What? I-I-I don't see it.",
+          "failed": true
+        },
+        {
+          "index": 112,
+          "original": "<i>Drink.</i>",
+          "translated": "<i>Drink.</i>",
+          "failed": true
+        },
+        {
+          "index": 113,
+          "original": "Yes. Yes! I love it!",
+          "translated": "Yes. Yes! I love it!",
+          "failed": true
+        },
+        {
+          "index": 114,
+          "original": "I love it!\nSo simple. So great!",
+          "translated": "I love it!\nSo simple. So great!",
+          "failed": true
+        },
+        {
+          "index": 115,
+          "original": "Mm. These things\ncome to me.",
+          "translated": "Mm. These things\ncome to me.",
+          "failed": true
+        },
+        {
+          "index": 116,
+          "original": "Hey. You free tonight?",
+          "translated": "Hey. You free tonight?",
+          "failed": true
+        },
+        {
+          "index": 117,
+          "original": "We're having dinner\nwith their CEO.",
+          "translated": "We're having dinner\nwith their CEO.",
+          "failed": true
+        },
+        {
+          "index": 118,
+          "original": "They need to\nhear this, Jerry,",
+          "translated": "They need to\nhear this, Jerry,",
+          "failed": true
+        },
+        {
+          "index": 119,
+          "original": "and they need to hear it from\nsomeone as confident as you.",
+          "translated": "and they need to hear it from\nsomeone as confident as you.",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 5,
+      "start": 120,
+      "end": 150,
+      "translations": [
+        {
+          "index": 120,
+          "original": "♪ It's Friday, Friday,\ngotta get down on Friday ♪",
+          "translated": "♪ It's Friday, Friday,\ngotta get down on Friday ♪",
+          "failed": true
+        },
+        {
+          "index": 121,
+          "original": "- Honey, I'm home.\n- Jerry?",
+          "translated": "- Honey, I'm home.\n- Jerry?",
+          "failed": true
+        },
+        {
+          "index": 122,
+          "original": "Prospects are good. Meeting\nthe client for dinner.",
+          "translated": "Prospects are good. Meeting\nthe client for dinner.",
+          "failed": true
+        },
+        {
+          "index": 123,
+          "original": "Oh. Uh, that's great.",
+          "translated": "Oh. Uh, that's great.",
+          "failed": true
+        },
+        {
+          "index": 124,
+          "original": "Why did you park\non the lawn?",
+          "translated": "Why did you park\non the lawn?",
+          "failed": true
+        },
+        {
+          "index": 125,
+          "original": "Jesus. How many\nof these did you take?",
+          "translated": "Jesus. How many\nof these did you take?",
+          "failed": true
+        },
+        {
+          "index": 126,
+          "original": "The first worm helped,\nso I took a couple more. No biggie.",
+          "translated": "The first worm helped,\nso I took a couple more. No biggie.",
+          "failed": true
+        },
+        {
+          "index": 127,
+          "original": "What's up?\nJerry O.D. on worms?",
+          "translated": "What's up?\nJerry O.D. on worms?",
+          "failed": true
+        },
+        {
+          "index": 128,
+          "original": "I told him\nto take <i>one!</i>",
+          "translated": "I told him\nto take <i>one!</i>",
+          "failed": true
+        },
+        {
+          "index": 129,
+          "original": "[Burps] Holy shit!",
+          "translated": "[Burps] Holy shit!",
+          "failed": true
+        },
+        {
+          "index": 130,
+          "original": "Jerry,\nyou are <i>teeming!</i>",
+          "translated": "Jerry,\nyou are <i>teeming!</i>",
+          "failed": true
+        },
+        {
+          "index": 131,
+          "original": "I-I guess you had\nenough anxiety",
+          "translated": "I-I guess you had\nenough anxiety",
+          "failed": true
+        },
+        {
+          "index": 132,
+          "original": "to fuel a worm\nbreeding frenzy.",
+          "translated": "to fuel a worm\nbreeding frenzy.",
+          "failed": true
+        },
+        {
+          "index": 133,
+          "original": "That's a <i>bad </i>thing,\nright?",
+          "translated": "That's a <i>bad </i>thing,\nright?",
+          "failed": true
+        },
+        {
+          "index": 134,
+          "original": "It's a <i>new </i>thing.\nI-I gotta admit,",
+          "translated": "It's a <i>new </i>thing.\nI-I gotta admit,",
+          "failed": true
+        },
+        {
+          "index": 135,
+          "original": "I don't know much\nabout the worm business.",
+          "translated": "I don't know much\nabout the worm business.",
+          "failed": true
+        },
+        {
+          "index": 136,
+          "original": "I'm sure my worm\ndealer has a fix.",
+          "translated": "I'm sure my worm\ndealer has a fix.",
+          "failed": true
+        },
+        {
+          "index": 137,
+          "original": "J-Man's gonna pass\non all this.",
+          "translated": "J-Man's gonna pass\non all this.",
+          "failed": true
+        },
+        {
+          "index": 138,
+          "original": "Honey,\nyou're teeming!",
+          "translated": "Honey,\nyou're teeming!",
+          "failed": true
+        },
+        {
+          "index": 139,
+          "original": "Alright. But let's\nwrap this quick.",
+          "translated": "Alright. But let's\nwrap this quick.",
+          "failed": true
+        },
+        {
+          "index": 140,
+          "original": "Big night ahead.",
+          "translated": "Big night ahead.",
+          "failed": true
+        },
+        {
+          "index": 141,
+          "original": "No more\ngiving Jerry drugs.",
+          "translated": "No more\ngiving Jerry drugs.",
+          "failed": true
+        },
+        {
+          "index": 142,
+          "original": "Loud and clear.",
+          "translated": "Loud and clear.",
+          "failed": true
+        },
+        {
+          "index": 143,
+          "original": "Titus: You like that?",
+          "translated": "Titus: You like that?",
+          "failed": true
+        },
+        {
+          "index": 144,
+          "original": "We call it\na mup-a-cino!",
+          "translated": "We call it\na mup-a-cino!",
+          "failed": true
+        },
+        {
+          "index": 145,
+          "original": "Mmm! Creamy!",
+          "translated": "Mmm! Creamy!",
+          "failed": true
+        },
+        {
+          "index": 146,
+          "original": "Biscuit, this is Emperor\nSnowball's \"Morty.\"",
+          "translated": "Biscuit, this is Emperor\nSnowball's \"Morty.\"",
+          "failed": true
+        },
+        {
+          "index": 147,
+          "original": "As you can see,\nMorty,",
+          "translated": "As you can see,\nMorty,",
+          "failed": true
+        },
+        {
+          "index": 148,
+          "original": "it's all totally fine.",
+          "translated": "it's all totally fine.",
+          "failed": true
+        },
+        {
+          "index": 149,
+          "original": "I'm kind of getting\nthe impression",
+          "translated": "I'm kind of getting\nthe impression",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 6,
+      "start": 150,
+      "end": 180,
+      "translations": [
+        {
+          "index": 150,
+          "original": "that you're all sort of\nashamed of this stuff.",
+          "translated": "that you're all sort of\nashamed of this stuff.",
+          "failed": true
+        },
+        {
+          "index": 151,
+          "original": "Ashamed?\nHe seems unconvinced.",
+          "translated": "Ashamed?\nHe seems unconvinced.",
+          "failed": true
+        },
+        {
+          "index": 152,
+          "original": "I'll play the video.",
+          "translated": "I'll play the video.",
+          "failed": true
+        },
+        {
+          "index": 153,
+          "original": "Dog spokesperson: <i>And thanks</i>\n<i>to new breakthroughs</i>",
+          "translated": "Dog spokesperson: <i>And thanks</i>\n<i>to new breakthroughs</i>",
+          "failed": true
+        },
+        {
+          "index": 154,
+          "original": "<i>in cruelty-free Mup technology,</i>",
+          "translated": "<i>in cruelty-free Mup technology,</i>",
+          "failed": true
+        },
+        {
+          "index": 155,
+          "original": "<i>you can further customize</i>\n<i>your new best friend</i>",
+          "translated": "<i>you can further customize</i>\n<i>your new best friend</i>",
+          "failed": true
+        },
+        {
+          "index": 156,
+          "original": "<i>with our drag-and-drop display.</i>",
+          "translated": "<i>with our drag-and-drop display.</i>",
+          "failed": true
+        },
+        {
+          "index": 157,
+          "original": "[ Mup screams ]",
+          "translated": "[ Mup screams ]",
+          "failed": false
+        },
+        {
+          "index": 158,
+          "original": "<i>Hahaha!</i>\n<i>And the mups like it!</i>",
+          "translated": "<i>Hahaha!</i>\n<i>And the mups like it!</i>",
+          "failed": true
+        },
+        {
+          "index": 159,
+          "original": "<i>Non-genetic modifications</i>\n<i>can also be made</i>",
+          "translated": "<i>Non-genetic modifications</i>\n<i>can also be made</i>",
+          "failed": true
+        },
+        {
+          "index": 160,
+          "original": "<i>once your mup is born,</i>",
+          "translated": "<i>once your mup is born,</i>",
+          "failed": true
+        },
+        {
+          "index": 161,
+          "original": "<i>and once the stitch is healed,</i>",
+          "translated": "<i>and once the stitch is healed,</i>",
+          "failed": true
+        },
+        {
+          "index": 162,
+          "original": "<i>your new friend is ready</i>\n<i>to join the family.</i>",
+          "translated": "<i>your new friend is ready</i>\n<i>to join the family.</i>",
+          "failed": true
+        },
+        {
+          "index": 163,
+          "original": "<i>Super normal!</i>",
+          "translated": "<i>Super normal!</i>",
+          "failed": true
+        },
+        {
+          "index": 164,
+          "original": "<i>And if </i>you <i>think it's weird,</i>\nyou're <i>weird.</i>",
+          "translated": "<i>And if </i>you <i>think it's weird,</i>\nyou're <i>weird.</i>",
+          "failed": true
+        },
+        {
+          "index": 165,
+          "original": "[ Baby mup cries ]",
+          "translated": "[ Baby mup cries ]",
+          "failed": false
+        },
+        {
+          "index": 166,
+          "original": "Brought you\na friiiend!",
+          "translated": "Brought you\na friiiend!",
+          "failed": true
+        },
+        {
+          "index": 167,
+          "original": "[ Coughing ]",
+          "translated": "[ Coughing ]",
+          "failed": false
+        },
+        {
+          "index": 168,
+          "original": "That's a <i>happy</i>\nwheeze!",
+          "translated": "That's a <i>happy</i>\nwheeze!",
+          "failed": true
+        },
+        {
+          "index": 169,
+          "original": "Titus: Aww. He thinks\nthey're <i>inside </i>the TV.",
+          "translated": "Titus: Aww. He thinks\nthey're <i>inside </i>the TV.",
+          "failed": true
+        },
+        {
+          "index": 170,
+          "original": "Play him\nthe video again!",
+          "translated": "Play him\nthe video again!",
+          "failed": true
+        },
+        {
+          "index": 171,
+          "original": "Morty?\nOh. Hey -- Hey, pal.",
+          "translated": "Morty?\nOh. Hey -- Hey, pal.",
+          "failed": true
+        },
+        {
+          "index": 172,
+          "original": "Glad I caught you,\nactually.",
+          "translated": "Glad I caught you,\nactually.",
+          "failed": true
+        },
+        {
+          "index": 173,
+          "original": "I-I'm just\ngonna take off.",
+          "translated": "I-I'm just\ngonna take off.",
+          "failed": true
+        },
+        {
+          "index": 174,
+          "original": "Got some homework\nI forgot about. Uh...",
+          "translated": "Got some homework\nI forgot about. Uh...",
+          "failed": true
+        },
+        {
+          "index": 175,
+          "original": "- Great seeing you, though.\n- Right.",
+          "translated": "- Great seeing you, though.\n- Right.",
+          "failed": true
+        },
+        {
+          "index": 176,
+          "original": "So you're going to\ncancel me?",
+          "translated": "So you're going to\ncancel me?",
+          "failed": true
+        },
+        {
+          "index": 177,
+          "original": "What? No.",
+          "translated": "What? No.",
+          "failed": true
+        },
+        {
+          "index": 178,
+          "original": "So you're <i>not </i>gonna run",
+          "translated": "So you're <i>not </i>gonna run",
+          "failed": true
+        },
+        {
+          "index": 179,
+          "original": "and tell your grandfather\nI'm doing eugenics?",
+          "translated": "and tell your grandfather\nI'm doing eugenics?",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 7,
+      "start": 180,
+      "end": 210,
+      "translations": [
+        {
+          "index": 180,
+          "original": "You're projecting so much\nspecific shit onto me!",
+          "translated": "You're projecting so much\nspecific shit onto me!",
+          "failed": true
+        },
+        {
+          "index": 181,
+          "original": "You think I'm racist.",
+          "translated": "You think I'm racist.",
+          "failed": true
+        },
+        {
+          "index": 182,
+          "original": "Listen, I came here\nas your friend.",
+          "translated": "Listen, I came here\nas your friend.",
+          "failed": true
+        },
+        {
+          "index": 183,
+          "original": "That's how\nI wanna leave.",
+          "translated": "That's how\nI wanna leave.",
+          "failed": true
+        },
+        {
+          "index": 184,
+          "original": "Okay. Just had\na lot planned.",
+          "translated": "Okay. Just had\na lot planned.",
+          "failed": true
+        },
+        {
+          "index": 185,
+          "original": "Didn't even get to see\nour giant sprinkler.",
+          "translated": "Didn't even get to see\nour giant sprinkler.",
+          "failed": true
+        },
+        {
+          "index": 186,
+          "original": "Next time. O-Okay?",
+          "translated": "Next time. O-Okay?",
+          "failed": true
+        },
+        {
+          "index": 187,
+          "original": "Okay...",
+          "translated": "Okay...",
+          "failed": true
+        },
+        {
+          "index": 188,
+          "original": "[ Door closes ]",
+          "translated": "[ Door closes ]",
+          "failed": false
+        },
+        {
+          "index": 189,
+          "original": "[ Panting softly ]",
+          "translated": "[ Panting softly ]",
+          "failed": false
+        },
+        {
+          "index": 190,
+          "original": "Please don't try to kill me.\nPlease don't try to kill me.",
+          "translated": "Please don't try to kill me.\nPlease don't try to kill me.",
+          "failed": true
+        },
+        {
+          "index": 191,
+          "original": "Please don't try\nto kill me.",
+          "translated": "Please don't try\nto kill me.",
+          "failed": true
+        },
+        {
+          "index": 192,
+          "original": "[ Crash ]\nTitus: Oh, shit!",
+          "translated": "[ Crash ]\nTitus: Oh, shit!",
+          "failed": true
+        },
+        {
+          "index": 193,
+          "original": "[ Tires screech ]\nGod damn it!",
+          "translated": "[ Tires screech ]\nGod damn it!",
+          "failed": true
+        },
+        {
+          "index": 194,
+          "original": "- Oh, God!\n- On the ground! Down! Down!",
+          "translated": "- Oh, God!\n- On the ground! Down! Down!",
+          "failed": true
+        },
+        {
+          "index": 195,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 196,
+          "original": "[ Tires screech ]\n[ Horn honks ]",
+          "translated": "[ Tires screech ]\n[ Horn honks ]",
+          "failed": false
+        },
+        {
+          "index": 197,
+          "original": "Driver: Get out of the road,\nyou dumb mup!",
+          "translated": "Driver: Get out of the road,\nyou dumb mup!",
+          "failed": true
+        },
+        {
+          "index": 198,
+          "original": "Oh...no...",
+          "translated": "Oh...no...",
+          "failed": false
+        },
+        {
+          "index": 199,
+          "original": "[ Mups snarling ]",
+          "translated": "[ Mups snarling ]",
+          "failed": false
+        },
+        {
+          "index": 200,
+          "original": "[Mancors shrieking]",
+          "translated": "[Mancors shrieking]",
+          "failed": false
+        },
+        {
+          "index": 201,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 202,
+          "original": "[ Snarling ]",
+          "translated": "[ Snarling ]",
+          "failed": false
+        },
+        {
+          "index": 203,
+          "original": "Oh, fuck me!",
+          "translated": "Oh, fuck me!",
+          "failed": true
+        },
+        {
+          "index": 204,
+          "original": "- Take, take, take, take!\n- Take, take, take, take!",
+          "translated": "- Take, take, take, take!\n- Take, take, take, take!",
+          "failed": true
+        },
+        {
+          "index": 205,
+          "original": "Wait! Maybe they can't\nsee us if we don't move!",
+          "translated": "Wait! Maybe they can't\nsee us if we don't move!",
+          "failed": true
+        },
+        {
+          "index": 206,
+          "original": "Never mind! Run!\n[ Whimpers ]",
+          "translated": "Never mind! Run!\n[ Whimpers ]",
+          "failed": true
+        },
+        {
+          "index": 207,
+          "original": "[ Sniffing ]\nTake-take?",
+          "translated": "[ Sniffing ]\nTake-take?",
+          "failed": true
+        },
+        {
+          "index": 208,
+          "original": "Ugh. Please don't take me\nto join some kind of rebellion.",
+          "translated": "Ugh. Please don't take me\nto join some kind of rebellion.",
+          "failed": true
+        },
+        {
+          "index": 209,
+          "original": "Yah. Take-take.",
+          "translated": "Yah. Take-take.",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 8,
+      "start": 210,
+      "end": 240,
+      "translations": [
+        {
+          "index": 210,
+          "original": "[ Mancors shrieking ]\nAww, man!",
+          "translated": "[ Mancors shrieking ]\nAww, man!",
+          "failed": true
+        },
+        {
+          "index": 211,
+          "original": "Uh, hello? Sweet Marie?",
+          "translated": "Uh, hello? Sweet Marie?",
+          "failed": true
+        },
+        {
+          "index": 212,
+          "original": "[ Lizard growls and screeches ]",
+          "translated": "[ Lizard growls and screeches ]",
+          "failed": false
+        },
+        {
+          "index": 213,
+          "original": "Brought the\nwhole family, huh?",
+          "translated": "Brought the\nwhole family, huh?",
+          "failed": true
+        },
+        {
+          "index": 214,
+          "original": "We're cool.",
+          "translated": "We're cool.",
+          "failed": true
+        },
+        {
+          "index": 215,
+          "original": "Yeah, we're...\nice cold.",
+          "translated": "Yeah, we're...\nice cold.",
+          "failed": true
+        },
+        {
+          "index": 216,
+          "original": "As you can see,\nmy idiot kinda-husband",
+          "translated": "As you can see,\nmy idiot kinda-husband",
+          "failed": true
+        },
+        {
+          "index": 217,
+          "original": "took too many\nFlaxar worms,",
+          "translated": "took too many\nFlaxar worms,",
+          "failed": true
+        },
+        {
+          "index": 218,
+          "original": "and they are now\nreproducing inside him.",
+          "translated": "and they are now\nreproducing inside him.",
+          "failed": true
+        },
+        {
+          "index": 219,
+          "original": "Cha-ching!\nYou want to go 60/40?",
+          "translated": "Cha-ching!\nYou want to go 60/40?",
+          "failed": true
+        },
+        {
+          "index": 220,
+          "original": "We're trying to fix him, not\nget into the worm business.",
+          "translated": "We're trying to fix him, not\nget into the worm business.",
+          "failed": true
+        },
+        {
+          "index": 221,
+          "original": "Well, hold on.\nWho's getting that 60?",
+          "translated": "Well, hold on.\nWho's getting that 60?",
+          "failed": true
+        },
+        {
+          "index": 222,
+          "original": "Dad, we are not\nletting this woman harvest Jerry for worms!",
+          "translated": "Dad, we are not\nletting this woman harvest Jerry for worms!",
+          "failed": true
+        },
+        {
+          "index": 223,
+          "original": "Marie? You texted \"Come in\"\nand then a gun emoji?",
+          "translated": "Marie? You texted \"Come in\"\nand then a gun emoji?",
+          "failed": true
+        },
+        {
+          "index": 224,
+          "original": "Space Beth: Yah!",
+          "translated": "Space Beth: Yah!",
+          "failed": true
+        },
+        {
+          "index": 225,
+          "original": "[ All grunting ]",
+          "translated": "[ All grunting ]",
+          "failed": false
+        },
+        {
+          "index": 226,
+          "original": "[ Sweet Marie screams ]",
+          "translated": "[ Sweet Marie screams ]",
+          "failed": false
+        },
+        {
+          "index": 227,
+          "original": "God damn it, Dad! Good\ndealers don't grow on trees!",
+          "translated": "God damn it, Dad! Good\ndealers don't grow on trees!",
+          "failed": true
+        },
+        {
+          "index": 228,
+          "original": "Infinite multiverse,\nsweetie.",
+          "translated": "Infinite multiverse,\nsweetie.",
+          "failed": true
+        },
+        {
+          "index": 229,
+          "original": "There <i>are </i>trees\nthat do that.",
+          "translated": "There <i>are </i>trees\nthat do that.",
+          "failed": true
+        },
+        {
+          "index": 230,
+          "original": "[ All grunting ]",
+          "translated": "[ All grunting ]",
+          "failed": false
+        },
+        {
+          "index": 231,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 232,
+          "original": "[ Screeching ]",
+          "translated": "[ Screeching ]",
+          "failed": false
+        },
+        {
+          "index": 233,
+          "original": "Beth: Shit, Jerry!",
+          "translated": "Beth: Shit, Jerry!",
+          "failed": true
+        },
+        {
+          "index": 234,
+          "original": "Hmm. We better\nfind him fast.",
+          "translated": "Hmm. We better\nfind him fast.",
+          "failed": true
+        },
+        {
+          "index": 235,
+          "original": "If the worms hit a tipping\npoint on Jerry's anxiety,",
+          "translated": "If the worms hit a tipping\npoint on Jerry's anxiety,",
+          "failed": true
+        },
+        {
+          "index": 236,
+          "original": "they'll start using him to\nfeed on other people's worry.",
+          "translated": "they'll start using him to\nfeed on other people's worry.",
+          "failed": true
+        },
+        {
+          "index": 237,
+          "original": "You mean...\nHe's going to feed on creating discomfort.",
+          "translated": "You mean...\nHe's going to feed on creating discomfort.",
+          "failed": true
+        },
+        {
+          "index": 238,
+          "original": "Oh, boy.\nHe'll be great at it.",
+          "translated": "Oh, boy.\nHe'll be great at it.",
+          "failed": true
+        },
+        {
+          "index": 239,
+          "original": "Jerry's tracker\ndisappeared here.",
+          "translated": "Jerry's tracker\ndisappeared here.",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 9,
+      "start": 240,
+      "end": 270,
+      "translations": [
+        {
+          "index": 240,
+          "original": "The worms\nmust have eaten it.",
+          "translated": "The worms\nmust have eaten it.",
+          "failed": true
+        },
+        {
+          "index": 241,
+          "original": "Those things impress me\nmore and more by the minute.",
+          "translated": "Those things impress me\nmore and more by the minute.",
+          "failed": true
+        },
+        {
+          "index": 242,
+          "original": "Rick: They're a gold mine.\nHold on.",
+          "translated": "Rick: They're a gold mine.\nHold on.",
+          "failed": true
+        },
+        {
+          "index": 243,
+          "original": "[ Grunts ]",
+          "translated": "[ Grunts ]",
+          "failed": false
+        },
+        {
+          "index": 244,
+          "original": "<i>Surprise improv</i>\n<i>on the subway!</i>",
+          "translated": "<i>Surprise improv</i>\n<i>on the subway!</i>",
+          "failed": true
+        },
+        {
+          "index": 245,
+          "original": "<i>Hey, want to jump in, sir?</i>",
+          "translated": "<i>Hey, want to jump in, sir?</i>",
+          "failed": true
+        },
+        {
+          "index": 246,
+          "original": "<i>[British accent] We could</i>\n<i>play aging rock stars, luv.</i>",
+          "translated": "<i>[British accent] We could</i>\n<i>play aging rock stars, luv.</i>",
+          "failed": true
+        },
+        {
+          "index": 247,
+          "original": "<i>Shall we get cream-</i>\n<i>crackered-knackered?</i>",
+          "translated": "<i>Shall we get cream-</i>\n<i>crackered-knackered?</i>",
+          "failed": true
+        },
+        {
+          "index": 248,
+          "original": "Taking him to that improv\nclass was a mistake.",
+          "translated": "Taking him to that improv\nclass was a mistake.",
+          "failed": true
+        },
+        {
+          "index": 249,
+          "original": "Why wouldn't <i>that </i>be\nworry-worm heaven?",
+          "translated": "Why wouldn't <i>that </i>be\nworry-worm heaven?",
+          "failed": true
+        },
+        {
+          "index": 250,
+          "original": "'Cause Jerry loves it.",
+          "translated": "'Cause Jerry loves it.",
+          "failed": true
+        },
+        {
+          "index": 251,
+          "original": "Uh, no, these things\nmust be trying to max out",
+          "translated": "Uh, no, these things\nmust be trying to max out",
+          "failed": true
+        },
+        {
+          "index": 252,
+          "original": "Jerry's anxiety\nspecifically.",
+          "translated": "Jerry's anxiety\nspecifically.",
+          "failed": true
+        },
+        {
+          "index": 253,
+          "original": "Where could he go\nto create",
+          "translated": "Where could he go\nto create",
+          "failed": true
+        },
+        {
+          "index": 254,
+          "original": "the most discomfort\nfor everyone involved?",
+          "translated": "the most discomfort\nfor everyone involved?",
+          "failed": true
+        },
+        {
+          "index": 255,
+          "original": "- Rick/Beth: His client dinner!\n- Client dinner?",
+          "translated": "- Rick/Beth: His client dinner!\n- Client dinner?",
+          "failed": true
+        },
+        {
+          "index": 256,
+          "original": "Right. Why he did the worms\nin the first place.",
+          "translated": "Right. Why he did the worms\nin the first place.",
+          "failed": true
+        },
+        {
+          "index": 257,
+          "original": "Do I have\nLong COVID?",
+          "translated": "Do I have\nLong COVID?",
+          "failed": true
+        },
+        {
+          "index": 258,
+          "original": "- Take, take, take!\n- Take, take, take!",
+          "translated": "- Take, take, take!\n- Take, take, take!",
+          "failed": true
+        },
+        {
+          "index": 259,
+          "original": "- Take, take, take!\n- Take, take, take!",
+          "translated": "- Take, take, take!\n- Take, take, take!",
+          "failed": true
+        },
+        {
+          "index": 260,
+          "original": "[ Mancors shrieking ]",
+          "translated": "[ Mancors shrieking ]",
+          "failed": false
+        },
+        {
+          "index": 261,
+          "original": "[ Morty screams ]",
+          "translated": "[ Morty screams ]",
+          "failed": false
+        },
+        {
+          "index": 262,
+          "original": "- Take, take, take!\n- Take, take, take!",
+          "translated": "- Take, take, take!\n- Take, take, take!",
+          "failed": true
+        },
+        {
+          "index": 263,
+          "original": "Oh. Cool. Y-You have\na leader already.",
+          "translated": "Oh. Cool. Y-You have\na leader already.",
+          "failed": true
+        },
+        {
+          "index": 264,
+          "original": "Y-You don't --\nYou don't need me",
+          "translated": "Y-You don't --\nYou don't need me",
+          "failed": true
+        },
+        {
+          "index": 265,
+          "original": "as your Dances for Wolves.",
+          "translated": "as your Dances for Wolves.",
+          "failed": true
+        },
+        {
+          "index": 266,
+          "original": "<i>With </i>Wolves?\nI haven't seen it.",
+          "translated": "<i>With </i>Wolves?\nI haven't seen it.",
+          "failed": true
+        },
+        {
+          "index": 267,
+          "original": "Ha! That's\nsidelines talk.",
+          "translated": "Ha! That's\nsidelines talk.",
+          "failed": true
+        },
+        {
+          "index": 268,
+          "original": "You clearly don't understand\nwhat we're up against.",
+          "translated": "You clearly don't understand\nwhat we're up against.",
+          "failed": true
+        },
+        {
+          "index": 269,
+          "original": "The dogs have a breeding\nprogram in the city.",
+          "translated": "The dogs have a breeding\nprogram in the city.",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 10,
+      "start": 270,
+      "end": 300,
+      "translations": [
+        {
+          "index": 270,
+          "original": "They raised us\nin cages!",
+          "translated": "They raised us\nin cages!",
+          "failed": true
+        },
+        {
+          "index": 271,
+          "original": "Our bodies were\ntwisted then ripped",
+          "translated": "Our bodies were\ntwisted then ripped",
+          "failed": true
+        },
+        {
+          "index": 272,
+          "original": "from our mothers!\n[ Mup crying ]",
+          "translated": "from our mothers!\n[ Mup crying ]",
+          "failed": true
+        },
+        {
+          "index": 273,
+          "original": "I-I probably know\nsome of this.",
+          "translated": "I-I probably know\nsome of this.",
+          "failed": true
+        },
+        {
+          "index": 274,
+          "original": "They made me watch the\nmup video. Three times.",
+          "translated": "They made me watch the\nmup video. Three times.",
+          "failed": true
+        },
+        {
+          "index": 275,
+          "original": "\"Mup\" is the language\nof the oppressor!",
+          "translated": "\"Mup\" is the language\nof the oppressor!",
+          "failed": true
+        },
+        {
+          "index": 276,
+          "original": "You're still trapped\nin their way of thinking!",
+          "translated": "You're still trapped\nin their way of thinking!",
+          "failed": true
+        },
+        {
+          "index": 277,
+          "original": "Again, just getting out\nin front of this,",
+          "translated": "Again, just getting out\nin front of this,",
+          "failed": true
+        },
+        {
+          "index": 278,
+          "original": "I'm not looking\nto get caught up",
+          "translated": "I'm not looking\nto get caught up",
+          "failed": true
+        },
+        {
+          "index": 279,
+          "original": "in all the colonization,\neugenics, hierarchies.",
+          "translated": "in all the colonization,\neugenics, hierarchies.",
+          "failed": true
+        },
+        {
+          "index": 280,
+          "original": "Above my pay grade.",
+          "translated": "Above my pay grade.",
+          "failed": true
+        },
+        {
+          "index": 281,
+          "original": "Humans kind of started this\ncycle a billion years ago.",
+          "translated": "Humans kind of started this\ncycle a billion years ago.",
+          "failed": true
+        },
+        {
+          "index": 282,
+          "original": "You don't want me\ninvolved.",
+          "translated": "You don't want me\ninvolved.",
+          "failed": true
+        },
+        {
+          "index": 283,
+          "original": "So this is <i>your </i>fault?",
+          "translated": "So this is <i>your </i>fault?",
+          "failed": true
+        },
+        {
+          "index": 284,
+          "original": "Not directly enough\nthat I need to fix it.",
+          "translated": "Not directly enough\nthat I need to fix it.",
+          "failed": true
+        },
+        {
+          "index": 285,
+          "original": "I just come from a world where\nthe humans are in charge",
+          "translated": "I just come from a world where\nthe humans are in charge",
+          "failed": true
+        },
+        {
+          "index": 286,
+          "original": "and we did this to dogs.",
+          "translated": "and we did this to dogs.",
+          "failed": true
+        },
+        {
+          "index": 287,
+          "original": "[ Gasps ]\nHe will help us!",
+          "translated": "[ Gasps ]\nHe will help us!",
+          "failed": true
+        },
+        {
+          "index": 288,
+          "original": "I didn't say that!",
+          "translated": "I didn't say that!",
+          "failed": true
+        },
+        {
+          "index": 289,
+          "original": "Wahwah: Dogsss!",
+          "translated": "Wahwah: Dogsss!",
+          "failed": true
+        },
+        {
+          "index": 290,
+          "original": "- Scared! Scared!\n- Scared! Scared!",
+          "translated": "- Scared! Scared!\n- Scared! Scared!",
+          "failed": true
+        },
+        {
+          "index": 291,
+          "original": "[ Mancors screeching ]",
+          "translated": "[ Mancors screeching ]",
+          "failed": false
+        },
+        {
+          "index": 292,
+          "original": "Shh.",
+          "translated": "Shh.",
+          "failed": true
+        },
+        {
+          "index": 293,
+          "original": "Dog commander:\nSearch everywhere!",
+          "translated": "Dog commander:\nSearch everywhere!",
+          "failed": true
+        },
+        {
+          "index": 294,
+          "original": "<i>Do you have eyes</i>\n<i>on Morty?</i>",
+          "translated": "<i>Do you have eyes</i>\n<i>on Morty?</i>",
+          "failed": true
+        },
+        {
+          "index": 295,
+          "original": "Commander:\nNot yet. <i>Find him.</i>",
+          "translated": "Commander:\nNot yet. <i>Find him.</i>",
+          "failed": true
+        },
+        {
+          "index": 296,
+          "original": "<i>He said we were asshole,</i>\n<i>racist piece-of-shit bigots!</i>",
+          "translated": "<i>He said we were asshole,</i>\n<i>racist piece-of-shit bigots!</i>",
+          "failed": true
+        },
+        {
+          "index": 297,
+          "original": "[ Gasps ]",
+          "translated": "[ Gasps ]",
+          "failed": false
+        },
+        {
+          "index": 298,
+          "original": "[ Mancors shrieking ]",
+          "translated": "[ Mancors shrieking ]",
+          "failed": false
+        },
+        {
+          "index": 299,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 11,
+      "start": 300,
+      "end": 330,
+      "translations": [
+        {
+          "index": 300,
+          "original": "You fucking leatherskins!",
+          "translated": "You fucking leatherskins!",
+          "failed": true
+        },
+        {
+          "index": 301,
+          "original": "NOOOOOOO!\nAscot...",
+          "translated": "NOOOOOOO!\nAscot...",
+          "failed": true
+        },
+        {
+          "index": 302,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 303,
+          "original": "Ascot...",
+          "translated": "Ascot...",
+          "failed": true
+        },
+        {
+          "index": 304,
+          "original": "[Weakly] You...",
+          "translated": "[Weakly] You...",
+          "failed": true
+        },
+        {
+          "index": 305,
+          "original": "must lead...",
+          "translated": "must lead...",
+          "failed": true
+        },
+        {
+          "index": 306,
+          "original": "Human booyyyy.",
+          "translated": "Human booyyyy.",
+          "failed": true
+        },
+        {
+          "index": 307,
+          "original": "[ Mancor screams ]",
+          "translated": "[ Mancor screams ]",
+          "failed": false
+        },
+        {
+          "index": 308,
+          "original": "Guh!",
+          "translated": "Guh!",
+          "failed": true
+        },
+        {
+          "index": 309,
+          "original": "Just to clarify,\nI killed that dog guy",
+          "translated": "Just to clarify,\nI killed that dog guy",
+          "failed": true
+        },
+        {
+          "index": 310,
+          "original": "'cause I'm pissed\nat Snowball,",
+          "translated": "'cause I'm pissed\nat Snowball,",
+          "failed": true
+        },
+        {
+          "index": 311,
+          "original": "<i>not </i>because\nof your conflict.",
+          "translated": "<i>not </i>because\nof your conflict.",
+          "failed": true
+        },
+        {
+          "index": 312,
+          "original": "[ Whirring ]",
+          "translated": "[ Whirring ]",
+          "failed": false
+        },
+        {
+          "index": 313,
+          "original": "- Take, take, take!\n- Take, take, take!",
+          "translated": "- Take, take, take!\n- Take, take, take!",
+          "failed": true
+        },
+        {
+          "index": 314,
+          "original": "- Take, take, take!\n- Take, take, take!",
+          "translated": "- Take, take, take!\n- Take, take, take!",
+          "failed": true
+        },
+        {
+          "index": 315,
+          "original": "<i>Yes, General?</i>\n<i>Awww! Morty!</i>",
+          "translated": "<i>Yes, General?</i>\n<i>Awww! Morty!</i>",
+          "failed": true
+        },
+        {
+          "index": 316,
+          "original": "<i>I heard there was</i>\n<i>a car crash.</i>",
+          "translated": "<i>I heard there was</i>\n<i>a car crash.</i>",
+          "failed": true
+        },
+        {
+          "index": 317,
+          "original": "<i>Where are you?</i>\n<i>I can come get you.</i>",
+          "translated": "<i>Where are you?</i>\n<i>I can come get you.</i>",
+          "failed": true
+        },
+        {
+          "index": 318,
+          "original": "I'm coming for <i>you,</i>\nSnowball!",
+          "translated": "I'm coming for <i>you,</i>\nSnowball!",
+          "failed": true
+        },
+        {
+          "index": 319,
+          "original": "You asshole, racist\npiece-of-shit bigot!",
+          "translated": "You asshole, racist\npiece-of-shit bigot!",
+          "failed": true
+        },
+        {
+          "index": 320,
+          "original": "[ <i>Gasps </i>] <i>I knew it!</i>",
+          "translated": "[ <i>Gasps </i>] <i>I knew it!</i>",
+          "failed": true
+        },
+        {
+          "index": 321,
+          "original": "[ Morty screams ]",
+          "translated": "[ Morty screams ]",
+          "failed": false
+        },
+        {
+          "index": 322,
+          "original": "Morty: Okay.\nThe main gate is here.",
+          "translated": "Morty: Okay.\nThe main gate is here.",
+          "failed": true
+        },
+        {
+          "index": 323,
+          "original": "Guest house is here.",
+          "translated": "Guest house is here.",
+          "failed": true
+        },
+        {
+          "index": 324,
+          "original": "Remember,\nSnowball is <i>mine.</i>",
+          "translated": "Remember,\nSnowball is <i>mine.</i>",
+          "failed": true
+        },
+        {
+          "index": 325,
+          "original": "And, again, just so happens\nboth our agendas",
+          "translated": "And, again, just so happens\nboth our agendas",
+          "failed": true
+        },
+        {
+          "index": 326,
+          "original": "involve storming\nthe palace.",
+          "translated": "involve storming\nthe palace.",
+          "failed": true
+        },
+        {
+          "index": 327,
+          "original": "Not your leader.\n[ Mancors grunting ]",
+          "translated": "Not your leader.\n[ Mancors grunting ]",
+          "failed": true
+        },
+        {
+          "index": 328,
+          "original": "No. Just stop winking at me!",
+          "translated": "No. Just stop winking at me!",
+          "failed": true
+        },
+        {
+          "index": 329,
+          "original": "Don't wink\nat each other, either!",
+          "translated": "Don't wink\nat each other, either!",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 12,
+      "start": 330,
+      "end": 360,
+      "translations": [
+        {
+          "index": 330,
+          "original": "I mean it!\nI'm not a Christ figure!",
+          "translated": "I mean it!\nI'm not a Christ figure!",
+          "failed": true
+        },
+        {
+          "index": 331,
+          "original": "Mancors...ready.",
+          "translated": "Mancors...ready.",
+          "failed": true
+        },
+        {
+          "index": 332,
+          "original": "Good.\nLet's just get in there.",
+          "translated": "Good.\nLet's just get in there.",
+          "failed": true
+        },
+        {
+          "index": 333,
+          "original": "It's time to let\nSnowball know...",
+          "translated": "It's time to let\nSnowball know...",
+          "failed": true
+        },
+        {
+          "index": 334,
+          "original": "he's been a bad dog.",
+          "translated": "he's been a bad dog.",
+          "failed": true
+        },
+        {
+          "index": 335,
+          "original": "[ Smooth jazz music plays ]",
+          "translated": "[ Smooth jazz music plays ]",
+          "failed": false
+        },
+        {
+          "index": 336,
+          "original": "Uh, sir,\nhow can I help you?",
+          "translated": "Uh, sir,\nhow can I help you?",
+          "failed": true
+        },
+        {
+          "index": 337,
+          "original": "Jerry! Man, am I glad\nto see you!",
+          "translated": "Jerry! Man, am I glad\nto see you!",
+          "failed": true
+        },
+        {
+          "index": 338,
+          "original": "Uh, is your skin moving?",
+          "translated": "Uh, is your skin moving?",
+          "failed": true
+        },
+        {
+          "index": 339,
+          "original": "Yeah...",
+          "translated": "Yeah...",
+          "failed": true
+        },
+        {
+          "index": 340,
+          "original": "Jerry, this is Carl.\nCarl Nipslip...",
+          "translated": "Jerry, this is Carl.\nCarl Nipslip...",
+          "failed": true
+        },
+        {
+          "index": 341,
+          "original": "Carl, I just gotta tell you,\nyou're fucking bald.",
+          "translated": "Carl, I just gotta tell you,\nyou're fucking bald.",
+          "failed": true
+        },
+        {
+          "index": 342,
+          "original": "And I hate bald dudes.",
+          "translated": "And I hate bald dudes.",
+          "failed": true
+        },
+        {
+          "index": 343,
+          "original": "[ Laughs ]\nI love this guy!",
+          "translated": "[ Laughs ]\nI love this guy!",
+          "failed": true
+        },
+        {
+          "index": 344,
+          "original": "[ All laugh ]",
+          "translated": "[ All laugh ]",
+          "failed": false
+        },
+        {
+          "index": 345,
+          "original": "I hear you're nervous\nabout working with us, Carl.",
+          "translated": "I hear you're nervous\nabout working with us, Carl.",
+          "failed": true
+        },
+        {
+          "index": 346,
+          "original": "I used to feel nervous.\nNow I literally eat fear.",
+          "translated": "I used to feel nervous.\nNow I literally eat fear.",
+          "failed": true
+        },
+        {
+          "index": 347,
+          "original": "Let's have a drink,\nyou fucking pussy.",
+          "translated": "Let's have a drink,\nyou fucking pussy.",
+          "failed": true
+        },
+        {
+          "index": 348,
+          "original": "Three martinis.\nI already ordered for us.",
+          "translated": "Three martinis.\nI already ordered for us.",
+          "failed": true
+        },
+        {
+          "index": 349,
+          "original": "Wow. Yeah.",
+          "translated": "Wow. Yeah.",
+          "failed": true
+        },
+        {
+          "index": 350,
+          "original": "Oh, my God.",
+          "translated": "Oh, my God.",
+          "failed": true
+        },
+        {
+          "index": 351,
+          "original": "That <i>was </i>what I wanted!\nHow'd you know?!",
+          "translated": "That <i>was </i>what I wanted!\nHow'd you know?!",
+          "failed": true
+        },
+        {
+          "index": 352,
+          "original": "'Cause you're a drunk.\nAnd I know what you want.",
+          "translated": "'Cause you're a drunk.\nAnd I know what you want.",
+          "failed": true
+        },
+        {
+          "index": 353,
+          "original": "I know\nwhat customers want.",
+          "translated": "I know\nwhat customers want.",
+          "failed": true
+        },
+        {
+          "index": 354,
+          "original": "They want to be <i>told</i>\nwhat they want.",
+          "translated": "They want to be <i>told</i>\nwhat they want.",
+          "failed": true
+        },
+        {
+          "index": 355,
+          "original": "Frankly, I-I'd sign the\npaperwork right now.",
+          "translated": "Frankly, I-I'd sign the\npaperwork right now.",
+          "failed": true
+        },
+        {
+          "index": 356,
+          "original": "I would definitely.\nBut you need to meet --",
+          "translated": "I would definitely.\nBut you need to meet --",
+          "failed": true
+        },
+        {
+          "index": 357,
+          "original": "[ Clears throat ] You need to\nmeet the board in New York.",
+          "translated": "[ Clears throat ] You need to\nmeet the board in New York.",
+          "failed": true
+        },
+        {
+          "index": 358,
+          "original": "Take me there.",
+          "translated": "Take me there.",
+          "failed": true
+        },
+        {
+          "index": 359,
+          "original": "Jerry!\nWhat are you doing?!",
+          "translated": "Jerry!\nWhat are you doing?!",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 13,
+      "start": 360,
+      "end": 390,
+      "translations": [
+        {
+          "index": 360,
+          "original": "And why'd you tell me to\nbring my pregnant wife?!",
+          "translated": "And why'd you tell me to\nbring my pregnant wife?!",
+          "failed": true
+        },
+        {
+          "index": 361,
+          "original": "[ Screaming ]",
+          "translated": "[ Screaming ]",
+          "failed": false
+        },
+        {
+          "index": 362,
+          "original": "I was supposed to\nget an epidural!",
+          "translated": "I was supposed to\nget an epidural!",
+          "failed": true
+        },
+        {
+          "index": 363,
+          "original": "[ Alarms blaring ]",
+          "translated": "[ Alarms blaring ]",
+          "failed": false
+        },
+        {
+          "index": 364,
+          "original": "[ Screaming ]",
+          "translated": "[ Screaming ]",
+          "failed": false
+        },
+        {
+          "index": 365,
+          "original": "I induced your labor\nwith that barrel roll.",
+          "translated": "I induced your labor\nwith that barrel roll.",
+          "failed": true
+        },
+        {
+          "index": 366,
+          "original": "Now I'm going to\ndeliver your baby.",
+          "translated": "Now I'm going to\ndeliver your baby.",
+          "failed": true
+        },
+        {
+          "index": 367,
+          "original": "Just like I'll deliver\nvisibility to Nipslip Vodka.",
+          "translated": "Just like I'll deliver\nvisibility to Nipslip Vodka.",
+          "failed": true
+        },
+        {
+          "index": 368,
+          "original": "That company\nis <i>your </i>baby, Carl.",
+          "translated": "That company\nis <i>your </i>baby, Carl.",
+          "failed": true
+        },
+        {
+          "index": 369,
+          "original": "I understand you.",
+          "translated": "I understand you.",
+          "failed": true
+        },
+        {
+          "index": 370,
+          "original": "- Incredible!\n- We're in freefall!",
+          "translated": "- Incredible!\n- We're in freefall!",
+          "failed": true
+        },
+        {
+          "index": 371,
+          "original": "I can't fix it! Waaaa!",
+          "translated": "I can't fix it! Waaaa!",
+          "failed": true
+        },
+        {
+          "index": 372,
+          "original": "Good.\nWhat's your name?",
+          "translated": "Good.\nWhat's your name?",
+          "failed": true
+        },
+        {
+          "index": 373,
+          "original": "Ellen.",
+          "translated": "Ellen.",
+          "failed": true
+        },
+        {
+          "index": 374,
+          "original": "It's time to push, Ellen.",
+          "translated": "It's time to push, Ellen.",
+          "failed": true
+        },
+        {
+          "index": 375,
+          "original": "We're gonna crash\nwhile you create life.",
+          "translated": "We're gonna crash\nwhile you create life.",
+          "failed": true
+        },
+        {
+          "index": 376,
+          "original": "Blood. Fear.\nDarwinism.",
+          "translated": "Blood. Fear.\nDarwinism.",
+          "failed": true
+        },
+        {
+          "index": 377,
+          "original": "I think I want\nto be <i>your </i>wife.",
+          "translated": "I think I want\nto be <i>your </i>wife.",
+          "failed": true
+        },
+        {
+          "index": 378,
+          "original": "Me too!",
+          "translated": "Me too!",
+          "failed": true
+        },
+        {
+          "index": 379,
+          "original": "[ Screaming ]",
+          "translated": "[ Screaming ]",
+          "failed": false
+        },
+        {
+          "index": 380,
+          "original": "[ Squish ]",
+          "translated": "[ Squish ]",
+          "failed": false
+        },
+        {
+          "index": 381,
+          "original": "I'll name her Jerry.",
+          "translated": "I'll name her Jerry.",
+          "failed": true
+        },
+        {
+          "index": 382,
+          "original": "Get her\na stock portfolio.",
+          "translated": "Get her\na stock portfolio.",
+          "failed": true
+        },
+        {
+          "index": 383,
+          "original": "She entered\nthe jungle today.",
+          "translated": "She entered\nthe jungle today.",
+          "failed": true
+        },
+        {
+          "index": 384,
+          "original": "The grind never stops.",
+          "translated": "The grind never stops.",
+          "failed": true
+        },
+        {
+          "index": 385,
+          "original": "You are <i>all </i>my wife now!",
+          "translated": "You are <i>all </i>my wife now!",
+          "failed": true
+        },
+        {
+          "index": 386,
+          "original": "[ All screaming ]",
+          "translated": "[ All screaming ]",
+          "failed": false
+        },
+        {
+          "index": 387,
+          "original": "Come on!\nWe have to keep moving!",
+          "translated": "Come on!\nWe have to keep moving!",
+          "failed": true
+        },
+        {
+          "index": 388,
+          "original": "[ Mancors shrieking ]",
+          "translated": "[ Mancors shrieking ]",
+          "failed": false
+        },
+        {
+          "index": 389,
+          "original": "Help? Help?",
+          "translated": "Help? Help?",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 14,
+      "start": 390,
+      "end": 420,
+      "translations": [
+        {
+          "index": 390,
+          "original": "My God. An entire army.\nRight under our feet.",
+          "translated": "My God. An entire army.\nRight under our feet.",
+          "failed": true
+        },
+        {
+          "index": 391,
+          "original": "[ <i>Drums playing </i>]",
+          "translated": "[ <i>Drums playing </i>]",
+          "failed": false
+        },
+        {
+          "index": 392,
+          "original": "[ <i>Applause </i>]",
+          "translated": "[ <i>Applause </i>]",
+          "failed": false
+        },
+        {
+          "index": 393,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 394,
+          "original": "[ Mancors shrieking ]",
+          "translated": "[ Mancors shrieking ]",
+          "failed": false
+        },
+        {
+          "index": 395,
+          "original": "Morty: Free them all!",
+          "translated": "Morty: Free them all!",
+          "failed": true
+        },
+        {
+          "index": 396,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 397,
+          "original": "- Take, take, take!\n- Take, take, take!",
+          "translated": "- Take, take, take!\n- Take, take, take!",
+          "failed": true
+        },
+        {
+          "index": 398,
+          "original": "Ugh!",
+          "translated": "Ugh!",
+          "failed": true
+        },
+        {
+          "index": 399,
+          "original": "[ Zapping ]",
+          "translated": "[ Zapping ]",
+          "failed": false
+        },
+        {
+          "index": 400,
+          "original": "Ohh. I thought\nthey'd be more helpful.",
+          "translated": "Ohh. I thought\nthey'd be more helpful.",
+          "failed": true
+        },
+        {
+          "index": 401,
+          "original": "City living.",
+          "translated": "City living.",
+          "failed": true
+        },
+        {
+          "index": 402,
+          "original": "Yeah, these guys\ndo <i>not </i>get guns!",
+          "translated": "Yeah, these guys\ndo <i>not </i>get guns!",
+          "failed": true
+        },
+        {
+          "index": 403,
+          "original": "[ Dogs barking ]",
+          "translated": "[ Dogs barking ]",
+          "failed": false
+        },
+        {
+          "index": 404,
+          "original": "Wahwah: Flee!",
+          "translated": "Wahwah: Flee!",
+          "failed": true
+        },
+        {
+          "index": 405,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 406,
+          "original": "To the palace!",
+          "translated": "To the palace!",
+          "failed": true
+        },
+        {
+          "index": 407,
+          "original": "They're using our\nown suits against us!",
+          "translated": "They're using our\nown suits against us!",
+          "failed": true
+        },
+        {
+          "index": 408,
+          "original": "They tried\nputting mups in them!",
+          "translated": "They tried\nputting mups in them!",
+          "failed": true
+        },
+        {
+          "index": 409,
+          "original": "Snowball: Where is he?\nWhere is Morty?!",
+          "translated": "Snowball: Where is he?\nWhere is Morty?!",
+          "failed": true
+        },
+        {
+          "index": 410,
+          "original": "[ Rumbling ]",
+          "translated": "[ Rumbling ]",
+          "failed": false
+        },
+        {
+          "index": 411,
+          "original": "Morty: SNOWBALLLLL!!!!!",
+          "translated": "Morty: SNOWBALLLLL!!!!!",
+          "failed": true
+        },
+        {
+          "index": 412,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 413,
+          "original": "Titus: Oho! Little Morty!\nYou're all worked up!",
+          "translated": "Titus: Oho! Little Morty!\nYou're all worked up!",
+          "failed": true
+        },
+        {
+          "index": 414,
+          "original": "Does someone\nneed a nap? Aah!",
+          "translated": "Does someone\nneed a nap? Aah!",
+          "failed": true
+        },
+        {
+          "index": 415,
+          "original": "Snowball:\nMorty. My old master.",
+          "translated": "Snowball:\nMorty. My old master.",
+          "failed": true
+        },
+        {
+          "index": 416,
+          "original": "Have you come to swat me\nwith a newspaper?",
+          "translated": "Have you come to swat me\nwith a newspaper?",
+          "failed": true
+        },
+        {
+          "index": 417,
+          "original": "[ Morty screams ]",
+          "translated": "[ Morty screams ]",
+          "failed": false
+        },
+        {
+          "index": 418,
+          "original": "We were best friends,\nSnowball!",
+          "translated": "We were best friends,\nSnowball!",
+          "failed": true
+        },
+        {
+          "index": 419,
+          "original": "You tried\nto have me killed!",
+          "translated": "You tried\nto have me killed!",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 15,
+      "start": 420,
+      "end": 450,
+      "translations": [
+        {
+          "index": 420,
+          "original": "How could I\ntrust you, Morty?!",
+          "translated": "How could I\ntrust you, Morty?!",
+          "failed": true
+        },
+        {
+          "index": 421,
+          "original": "You recoil\nat my civilization.",
+          "translated": "You recoil\nat my civilization.",
+          "failed": true
+        },
+        {
+          "index": 422,
+          "original": "You attempt to <i>leave?</i>",
+          "translated": "You attempt to <i>leave?</i>",
+          "failed": true
+        },
+        {
+          "index": 423,
+          "original": "How much more avoidant\ncould I have been?!",
+          "translated": "How much more avoidant\ncould I have been?!",
+          "failed": true
+        },
+        {
+          "index": 424,
+          "original": "Typical human. Afraid to\nbark what you <i>truly </i>feel!",
+          "translated": "Typical human. Afraid to\nbark what you <i>truly </i>feel!",
+          "failed": true
+        },
+        {
+          "index": 425,
+          "original": "Typical canine.\nFull of shame",
+          "translated": "Typical canine.\nFull of shame",
+          "failed": true
+        },
+        {
+          "index": 426,
+          "original": "but still shitting\non the carpet!",
+          "translated": "but still shitting\non the carpet!",
+          "failed": true
+        },
+        {
+          "index": 427,
+          "original": "Snowball: This world\nis not <i>your </i>carpet!",
+          "translated": "Snowball: This world\nis not <i>your </i>carpet!",
+          "failed": true
+        },
+        {
+          "index": 428,
+          "original": "I've been saying that!",
+          "translated": "I've been saying that!",
+          "failed": true
+        },
+        {
+          "index": 429,
+          "original": "I just came here to spend\nsome time with my dog!",
+          "translated": "I just came here to spend\nsome time with my dog!",
+          "failed": true
+        },
+        {
+          "index": 430,
+          "original": "Snowball: There it is, then.\nThe truth. \"Your\" dog.",
+          "translated": "Snowball: There it is, then.\nThe truth. \"Your\" dog.",
+          "failed": true
+        },
+        {
+          "index": 431,
+          "original": "We could never be equals.\n[ Morty screaming ]",
+          "translated": "We could never be equals.\n[ Morty screaming ]",
+          "failed": true
+        },
+        {
+          "index": 432,
+          "original": "You cursed me\nwith intelligence.",
+          "translated": "You cursed me\nwith intelligence.",
+          "failed": true
+        },
+        {
+          "index": 433,
+          "original": "You sent me\nto this nightmare planet",
+          "translated": "You sent me\nto this nightmare planet",
+          "failed": true
+        },
+        {
+          "index": 434,
+          "original": "with weird,\nironic humanoids.",
+          "translated": "with weird,\nironic humanoids.",
+          "failed": true
+        },
+        {
+          "index": 435,
+          "original": "[ Grunts ]",
+          "translated": "[ Grunts ]",
+          "failed": false
+        },
+        {
+          "index": 436,
+          "original": "Was I your dog <i>then,</i>\nMorty?",
+          "translated": "Was I your dog <i>then,</i>\nMorty?",
+          "failed": true
+        },
+        {
+          "index": 437,
+          "original": "You're right!",
+          "translated": "You're right!",
+          "failed": true
+        },
+        {
+          "index": 438,
+          "original": "[ Grunts ]",
+          "translated": "[ Grunts ]",
+          "failed": false
+        },
+        {
+          "index": 439,
+          "original": "But you're my dog now.",
+          "translated": "But you're my dog now.",
+          "failed": true
+        },
+        {
+          "index": 440,
+          "original": "[ Mancors shrieking ]",
+          "translated": "[ Mancors shrieking ]",
+          "failed": false
+        },
+        {
+          "index": 441,
+          "original": "Snowball: Dogs! Help!",
+          "translated": "Snowball: Dogs! Help!",
+          "failed": true
+        },
+        {
+          "index": 442,
+          "original": "Morty: Everyone stop!\nOr the emperor dies!",
+          "translated": "Morty: Everyone stop!\nOr the emperor dies!",
+          "failed": true
+        },
+        {
+          "index": 443,
+          "original": "Oh. O-o-oka-okay. Good.",
+          "translated": "Oh. O-o-oka-okay. Good.",
+          "failed": true
+        },
+        {
+          "index": 444,
+          "original": "Well, was kind of all\nI wanted to achieve, so...",
+          "translated": "Well, was kind of all\nI wanted to achieve, so...",
+          "failed": true
+        },
+        {
+          "index": 445,
+          "original": "Didn't -- Didn't really have\na solution ready to go.",
+          "translated": "Didn't -- Didn't really have\na solution ready to go.",
+          "failed": true
+        },
+        {
+          "index": 446,
+          "original": "Wasn't even gonna kill Snowball.\nI was -- I was bluffin'.",
+          "translated": "Wasn't even gonna kill Snowball.\nI was -- I was bluffin'.",
+          "failed": true
+        },
+        {
+          "index": 447,
+          "original": "Um, just need someone\nto take me home now.",
+          "translated": "Um, just need someone\nto take me home now.",
+          "failed": true
+        },
+        {
+          "index": 448,
+          "original": "- Leader?\n- No.",
+          "translated": "- Leader?\n- No.",
+          "failed": true
+        },
+        {
+          "index": 449,
+          "original": "Again, not setting up\na government",
+          "translated": "Again, not setting up\na government",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 16,
+      "start": 450,
+      "end": 480,
+      "translations": [
+        {
+          "index": 450,
+          "original": "or ushering a new age\nof righting old wrongs --",
+          "translated": "or ushering a new age\nof righting old wrongs --",
+          "failed": true
+        },
+        {
+          "index": 451,
+          "original": "Then WAAAAAAAAAAAR!!",
+          "translated": "Then WAAAAAAAAAAAR!!",
+          "failed": true
+        },
+        {
+          "index": 452,
+          "original": "What? Wait. No!",
+          "translated": "What? Wait. No!",
+          "failed": true
+        },
+        {
+          "index": 453,
+          "original": "[ Morty screaming ]",
+          "translated": "[ Morty screaming ]",
+          "failed": false
+        },
+        {
+          "index": 454,
+          "original": "Snowball:\nMorty! My panic room!",
+          "translated": "Snowball:\nMorty! My panic room!",
+          "failed": true
+        },
+        {
+          "index": 455,
+          "original": "[ Beeping ]",
+          "translated": "[ Beeping ]",
+          "failed": false
+        },
+        {
+          "index": 456,
+          "original": "[ Baby crying ]",
+          "translated": "[ Baby crying ]",
+          "failed": false
+        },
+        {
+          "index": 457,
+          "original": "Unh! Jerry!\nYou're crazy!",
+          "translated": "Unh! Jerry!\nYou're crazy!",
+          "failed": true
+        },
+        {
+          "index": 458,
+          "original": "I haven't enjoyed a pitch\nthis much since the '70s",
+          "translated": "I haven't enjoyed a pitch\nthis much since the '70s",
+          "failed": true
+        },
+        {
+          "index": 459,
+          "original": "when they pitched me\ncocaine!",
+          "translated": "when they pitched me\ncocaine!",
+          "failed": true
+        },
+        {
+          "index": 460,
+          "original": "You can't buy\nnights like this, Carl,",
+          "translated": "You can't buy\nnights like this, Carl,",
+          "failed": true
+        },
+        {
+          "index": 461,
+          "original": "but you <i>can </i>make them...\nwith Nipslip Vodka.",
+          "translated": "but you <i>can </i>make them...\nwith Nipslip Vodka.",
+          "failed": true
+        },
+        {
+          "index": 462,
+          "original": "Hold the baby.",
+          "translated": "Hold the baby.",
+          "failed": true
+        },
+        {
+          "index": 463,
+          "original": "My life is yours.",
+          "translated": "My life is yours.",
+          "failed": true
+        },
+        {
+          "index": 464,
+          "original": "Kill me\nif you want to.",
+          "translated": "Kill me\nif you want to.",
+          "failed": true
+        },
+        {
+          "index": 465,
+          "original": "Do it! Please!",
+          "translated": "Do it! Please!",
+          "failed": true
+        },
+        {
+          "index": 466,
+          "original": "Not here. There.",
+          "translated": "Not here. There.",
+          "failed": true
+        },
+        {
+          "index": 467,
+          "original": "Jerry, your --\nyour clothes.",
+          "translated": "Jerry, your --\nyour clothes.",
+          "failed": true
+        },
+        {
+          "index": 468,
+          "original": "True advertising\nis uncensored.",
+          "translated": "True advertising\nis uncensored.",
+          "failed": true
+        },
+        {
+          "index": 469,
+          "original": "Be uncensored\nwith me, Carl.",
+          "translated": "Be uncensored\nwith me, Carl.",
+          "failed": true
+        },
+        {
+          "index": 470,
+          "original": "Oh, I love it!\nI love it! I love you!",
+          "translated": "Oh, I love it!\nI love it! I love you!",
+          "failed": true
+        },
+        {
+          "index": 471,
+          "original": "I hope this doesn't trigger\nany pitch-killing insecurities",
+          "translated": "I hope this doesn't trigger\nany pitch-killing insecurities",
+          "failed": true
+        },
+        {
+          "index": 472,
+          "original": "about the way\nI look naked.",
+          "translated": "about the way\nI look naked.",
+          "failed": true
+        },
+        {
+          "index": 473,
+          "original": "[ Grunting ]",
+          "translated": "[ Grunting ]",
+          "failed": false
+        },
+        {
+          "index": 474,
+          "original": "[ Vomits ]",
+          "translated": "[ Vomits ]",
+          "failed": false
+        },
+        {
+          "index": 475,
+          "original": "Consume me.",
+          "translated": "Consume me.",
+          "failed": true
+        },
+        {
+          "index": 476,
+          "original": "Let me take communion\nfrom your body.",
+          "translated": "Let me take communion\nfrom your body.",
+          "failed": true
+        },
+        {
+          "index": 477,
+          "original": "I love you!",
+          "translated": "I love you!",
+          "failed": true
+        },
+        {
+          "index": 478,
+          "original": "Space Beth: Holy shit!\nHe's worming out!",
+          "translated": "Space Beth: Holy shit!\nHe's worming out!",
+          "failed": true
+        },
+        {
+          "index": 479,
+          "original": "How do we save him?",
+          "translated": "How do we save him?",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 17,
+      "start": 480,
+      "end": 510,
+      "translations": [
+        {
+          "index": 480,
+          "original": "Save him? He's perfect!",
+          "translated": "Save him? He's perfect!",
+          "failed": true
+        },
+        {
+          "index": 481,
+          "original": "He's hired!",
+          "translated": "He's hired!",
+          "failed": true
+        },
+        {
+          "index": 482,
+          "original": "Screw the board!\nHe's got the account!",
+          "translated": "Screw the board!\nHe's got the account!",
+          "failed": true
+        },
+        {
+          "index": 483,
+          "original": "I'm hired? I did it?",
+          "translated": "I'm hired? I did it?",
+          "failed": true
+        },
+        {
+          "index": 484,
+          "original": "No! No! Too much relief!",
+          "translated": "No! No! Too much relief!",
+          "failed": true
+        },
+        {
+          "index": 485,
+          "original": "The worms need more!",
+          "translated": "The worms need more!",
+          "failed": true
+        },
+        {
+          "index": 486,
+          "original": "What's happening? Why are the\nworms wriggling toward <i>us?</i>",
+          "translated": "What's happening? Why are the\nworms wriggling toward <i>us?</i>",
+          "failed": true
+        },
+        {
+          "index": 487,
+          "original": "I'm not <i>that </i>scared.",
+          "translated": "I'm not <i>that </i>scared.",
+          "failed": true
+        },
+        {
+          "index": 488,
+          "original": "Oh, wait. Are you afraid\nof Jerry getting a job?",
+          "translated": "Oh, wait. Are you afraid\nof Jerry getting a job?",
+          "failed": true
+        },
+        {
+          "index": 489,
+          "original": "I dunno. I'm used to him\nbeing around.",
+          "translated": "I dunno. I'm used to him\nbeing around.",
+          "failed": true
+        },
+        {
+          "index": 490,
+          "original": "H-He's part\nof the wallpaper.",
+          "translated": "H-He's part\nof the wallpaper.",
+          "failed": true
+        },
+        {
+          "index": 491,
+          "original": "[ Vomits ]",
+          "translated": "[ Vomits ]",
+          "failed": false
+        },
+        {
+          "index": 492,
+          "original": "[ Worm squeaks ]",
+          "translated": "[ Worm squeaks ]",
+          "failed": false
+        },
+        {
+          "index": 493,
+          "original": "Grab the incidentals!\nBob: Whoa!",
+          "translated": "Grab the incidentals!\nBob: Whoa!",
+          "failed": true
+        },
+        {
+          "index": 494,
+          "original": "[ Rick mumbles and grunts ]",
+          "translated": "[ Rick mumbles and grunts ]",
+          "failed": false
+        },
+        {
+          "index": 495,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 496,
+          "original": "[ Explosion ]",
+          "translated": "[ Explosion ]",
+          "failed": false
+        },
+        {
+          "index": 497,
+          "original": "Cool bubble. You need\nhelp marketing that?",
+          "translated": "Cool bubble. You need\nhelp marketing that?",
+          "failed": true
+        },
+        {
+          "index": 498,
+          "original": "Only if you\nput Jerry on it.",
+          "translated": "Only if you\nput Jerry on it.",
+          "failed": true
+        },
+        {
+          "index": 499,
+          "original": "Uh, done.",
+          "translated": "Uh, done.",
+          "failed": true
+        },
+        {
+          "index": 500,
+          "original": "[ Groans ]",
+          "translated": "[ Groans ]",
+          "failed": false
+        },
+        {
+          "index": 501,
+          "original": "Oh, just make sure\nthere's enough of him",
+          "translated": "Oh, just make sure\nthere's enough of him",
+          "failed": true
+        },
+        {
+          "index": 502,
+          "original": "to go around, huh?\n[ Laughs ]",
+          "translated": "to go around, huh?\n[ Laughs ]",
+          "failed": true
+        },
+        {
+          "index": 503,
+          "original": "Jerry, you start\non Monday.",
+          "translated": "Jerry, you start\non Monday.",
+          "failed": true
+        },
+        {
+          "index": 504,
+          "original": "Congrats, hon!",
+          "translated": "Congrats, hon!",
+          "failed": true
+        },
+        {
+          "index": 505,
+          "original": "[ Groans ]",
+          "translated": "[ Groans ]",
+          "failed": false
+        },
+        {
+          "index": 506,
+          "original": "Sweet Marie\nwould have loved this.",
+          "translated": "Sweet Marie\nwould have loved this.",
+          "failed": true
+        },
+        {
+          "index": 507,
+          "original": "Who?",
+          "translated": "Who?",
+          "failed": true
+        },
+        {
+          "index": 508,
+          "original": "[ Rumbling ]",
+          "translated": "[ Rumbling ]",
+          "failed": false
+        },
+        {
+          "index": 509,
+          "original": "Is there something\nwrong with dogs?",
+          "translated": "Is there something\nwrong with dogs?",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 18,
+      "start": 510,
+      "end": 540,
+      "translations": [
+        {
+          "index": 510,
+          "original": "I was just trying\nto be like you.",
+          "translated": "I was just trying\nto be like you.",
+          "failed": true
+        },
+        {
+          "index": 511,
+          "original": "I'm so ashamed,\nMorty.",
+          "translated": "I'm so ashamed,\nMorty.",
+          "failed": true
+        },
+        {
+          "index": 512,
+          "original": "Oh, Snowball!",
+          "translated": "Oh, Snowball!",
+          "failed": true
+        },
+        {
+          "index": 513,
+          "original": "Humans are ashamed\nall the time.",
+          "translated": "Humans are ashamed\nall the time.",
+          "failed": true
+        },
+        {
+          "index": 514,
+          "original": "You guys\nused to be wolves.",
+          "translated": "You guys\nused to be wolves.",
+          "failed": true
+        },
+        {
+          "index": 515,
+          "original": "Humans, we -- we used\nto be sub-hyena.",
+          "translated": "Humans, we -- we used\nto be sub-hyena.",
+          "failed": true
+        },
+        {
+          "index": 516,
+          "original": "I think we invented shame\nand judgment to cope.",
+          "translated": "I think we invented shame\nand judgment to cope.",
+          "failed": true
+        },
+        {
+          "index": 517,
+          "original": "I suppose no creature\nis perfect.",
+          "translated": "I suppose no creature\nis perfect.",
+          "failed": true
+        },
+        {
+          "index": 518,
+          "original": "Yeah, if we put giraffes\nin charge,",
+          "translated": "Yeah, if we put giraffes\nin charge,",
+          "failed": true
+        },
+        {
+          "index": 519,
+          "original": "they'd just invent, you know,\nneck racism, probably.",
+          "translated": "they'd just invent, you know,\nneck racism, probably.",
+          "failed": true
+        },
+        {
+          "index": 520,
+          "original": "[ Chuckles ] They <i>do </i>have\nthose necks, don't they?",
+          "translated": "[ Chuckles ] They <i>do </i>have\nthose necks, don't they?",
+          "failed": true
+        },
+        {
+          "index": 521,
+          "original": "Haha. Yeah.",
+          "translated": "Haha. Yeah.",
+          "failed": true
+        },
+        {
+          "index": 522,
+          "original": "Maybe our species can be\nself-conscious together.",
+          "translated": "Maybe our species can be\nself-conscious together.",
+          "failed": true
+        },
+        {
+          "index": 523,
+          "original": "[ Beep ]",
+          "translated": "[ Beep ]",
+          "failed": false
+        },
+        {
+          "index": 524,
+          "original": "[ Dog barking ]",
+          "translated": "[ Dog barking ]",
+          "failed": false
+        },
+        {
+          "index": 525,
+          "original": "Snowball:\nRick? I can explain.",
+          "translated": "Snowball:\nRick? I can explain.",
+          "failed": true
+        },
+        {
+          "index": 526,
+          "original": "- Easy, buddy.\n- Whoa. What happened here?",
+          "translated": "- Easy, buddy.\n- Whoa. What happened here?",
+          "failed": true
+        },
+        {
+          "index": 527,
+          "original": "Four days of civil war.",
+          "translated": "Four days of civil war.",
+          "failed": true
+        },
+        {
+          "index": 528,
+          "original": "I never took\na moral stance,",
+          "translated": "I never took\na moral stance,",
+          "failed": true
+        },
+        {
+          "index": 529,
+          "original": "though I resisted\nat every turn.",
+          "translated": "though I resisted\nat every turn.",
+          "failed": true
+        },
+        {
+          "index": 530,
+          "original": "Y-Y-You would have been\nso proud of me! Really?",
+          "translated": "Y-Y-You would have been\nso proud of me! Really?",
+          "failed": true
+        },
+        {
+          "index": 531,
+          "original": "Couldn't pin me down to\nnothing. Totally sidelined it.",
+          "translated": "Couldn't pin me down to\nnothing. Totally sidelined it.",
+          "failed": true
+        },
+        {
+          "index": 532,
+          "original": "Hahaha! Good boy.",
+          "translated": "Hahaha! Good boy.",
+          "failed": true
+        },
+        {
+          "index": 533,
+          "original": "So, should we just leave it\nlike this, then, or...?",
+          "translated": "So, should we just leave it\nlike this, then, or...?",
+          "failed": true
+        },
+        {
+          "index": 534,
+          "original": "I feel bad\nfor Snowball.",
+          "translated": "I feel bad\nfor Snowball.",
+          "failed": true
+        },
+        {
+          "index": 535,
+          "original": "He -- He built a monorail,\nand now it's all blown up,",
+          "translated": "He -- He built a monorail,\nand now it's all blown up,",
+          "failed": true
+        },
+        {
+          "index": 536,
+          "original": "a-and everyone's dying.",
+          "translated": "a-and everyone's dying.",
+          "failed": true
+        },
+        {
+          "index": 537,
+          "original": "Well...",
+          "translated": "Well...",
+          "failed": true
+        },
+        {
+          "index": 538,
+          "original": "Dogs and worms, baby.",
+          "translated": "Dogs and worms, baby.",
+          "failed": true
+        },
+        {
+          "index": 539,
+          "original": "I guess every conflict can\nbe solved with free narcotics.",
+          "translated": "I guess every conflict can\nbe solved with free narcotics.",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 19,
+      "start": 540,
+      "end": 560,
+      "translations": [
+        {
+          "index": 540,
+          "original": "What a lesson.",
+          "translated": "What a lesson.",
+          "failed": true
+        },
+        {
+          "index": 541,
+          "original": "Oh, hey.\nWhat happened with Dad?",
+          "translated": "Oh, hey.\nWhat happened with Dad?",
+          "failed": true
+        },
+        {
+          "index": 542,
+          "original": "Did -- Did he\nget that job?",
+          "translated": "Did -- Did he\nget that job?",
+          "failed": true
+        },
+        {
+          "index": 543,
+          "original": "[Burps] Advertising\npeople are perverts.",
+          "translated": "[Burps] Advertising\npeople are perverts.",
+          "failed": true
+        },
+        {
+          "index": 544,
+          "original": "So no?\nYes.",
+          "translated": "So no?\nYes.",
+          "failed": true
+        },
+        {
+          "index": 545,
+          "original": "Alright!",
+          "translated": "Alright!",
+          "failed": true
+        },
+        {
+          "index": 546,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 547,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 548,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 549,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 550,
+          "original": "So it's all hands\non deck this week.",
+          "translated": "So it's all hands\non deck this week.",
+          "failed": true
+        },
+        {
+          "index": 551,
+          "original": "Jerry! We're throwing darts\nat the interns!",
+          "translated": "Jerry! We're throwing darts\nat the interns!",
+          "failed": true
+        },
+        {
+          "index": 552,
+          "original": "Get in here!\nYes, sir!",
+          "translated": "Get in here!\nYes, sir!",
+          "failed": true
+        },
+        {
+          "index": 553,
+          "original": "Boy, I really set\na weird bar for myself.",
+          "translated": "Boy, I really set\na weird bar for myself.",
+          "failed": true
+        },
+        {
+          "index": 554,
+          "original": "Sorry. I gotta\nwrap this up.",
+          "translated": "Sorry. I gotta\nwrap this up.",
+          "failed": true
+        },
+        {
+          "index": 555,
+          "original": "But I wish every client\nwas as chill as you guys.",
+          "translated": "But I wish every client\nwas as chill as you guys.",
+          "failed": true
+        },
+        {
+          "index": 556,
+          "original": "I <i>love </i>working\non this account.",
+          "translated": "I <i>love </i>working\non this account.",
+          "failed": true
+        },
+        {
+          "index": 557,
+          "original": "Ad dog:\n<i>You're the man, Jerry.</i>",
+          "translated": "Ad dog:\n<i>You're the man, Jerry.</i>",
+          "failed": true
+        },
+        {
+          "index": 558,
+          "original": "<i>- This guy. Sell anything.</i>\n- Glug! Ug!",
+          "translated": "<i>- This guy. Sell anything.</i>\n- Glug! Ug!",
+          "failed": true
+        },
+        {
+          "index": 559,
+          "original": "<i>Did you get any of that?</i>",
+          "translated": "<i>Did you get any of that?</i>",
+          "failed": true
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "BugFound"
+    }
+  ],
+  "current_stage": 1,
+  "total_tokens": 45647,
+  "total_failed": 534,
+  "total_cached": 32
+}

@@ -1,0 +1,6779 @@
+{
+  "fixture_name": "Rick and Morty S09E04 A Ricker Runs Through It 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune.eng",
+  "name_precision": false,
+  "source_lang": "en",
+  "target_lang": "zh",
+  "total_entries": 543,
+  "batch_size": 30,
+  "names": [],
+  "names_status": "Passed",
+  "batches": [
+    {
+      "batch_num": 1,
+      "start": 0,
+      "end": 30,
+      "translations": [
+        {
+          "index": 0,
+          "original": "[ Groans ]",
+          "translated": "[呻吟声]",
+          "failed": false
+        },
+        {
+          "index": 1,
+          "original": "Ah, ugh.",
+          "translated": "啊，呃。",
+          "failed": false
+        },
+        {
+          "index": 2,
+          "original": "Oh, God.\nOh, God.",
+          "translated": "哦，天哪。\n哦，天哪。",
+          "failed": false
+        },
+        {
+          "index": 3,
+          "original": "[ Urinating ]\nMmm!",
+          "translated": "[小便]\n嗯！",
+          "failed": false
+        },
+        {
+          "index": 4,
+          "original": "[ Glass shatters ]",
+          "translated": "[玻璃碎裂]",
+          "failed": false
+        },
+        {
+          "index": 5,
+          "original": "Oh. Oh, God.",
+          "translated": "哦。天哪。",
+          "failed": false
+        },
+        {
+          "index": 6,
+          "original": "[ Coughs ]",
+          "translated": "[咳嗽]",
+          "failed": false
+        },
+        {
+          "index": 7,
+          "original": "[ Burps loudly ]",
+          "translated": "[响亮地打嗝]",
+          "failed": false
+        },
+        {
+          "index": 8,
+          "original": "[ Drunkenly muttering ]",
+          "translated": "[醉醺醺的低语]",
+          "failed": false
+        },
+        {
+          "index": 9,
+          "original": "[ Grunts ]",
+          "translated": "[哼唧声]",
+          "failed": false
+        },
+        {
+          "index": 10,
+          "original": "Oh, ugh.",
+          "translated": "哦，ugh。",
+          "failed": false
+        },
+        {
+          "index": 11,
+          "original": "Mmm, mmm, mmm.",
+          "translated": "嗯，嗯，嗯。",
+          "failed": false
+        },
+        {
+          "index": 12,
+          "original": "[ Glass shatters ]",
+          "translated": "[玻璃碎裂]",
+          "failed": false
+        },
+        {
+          "index": 13,
+          "original": "Ugh, this fuckin' thing.",
+          "translated": "ugh，这该死的玩意儿。",
+          "failed": false
+        },
+        {
+          "index": 14,
+          "original": "This, uh, uhh, fuck.",
+          "translated": "这个，呃，uhh，fuck。",
+          "failed": false
+        },
+        {
+          "index": 15,
+          "original": "Ho...kay.",
+          "translated": "好……好吧。",
+          "failed": false
+        },
+        {
+          "index": 16,
+          "original": "[ Error dings ]\nCome o-o-on!",
+          "translated": "[错误提示音]\n快——快点！",
+          "failed": false
+        },
+        {
+          "index": 17,
+          "original": "Come on, man!\n[ Error dings ]",
+          "translated": "来吧，伙计!\n[错误提示音]",
+          "failed": false
+        },
+        {
+          "index": 18,
+          "original": "Piece of fuckin' --\npiece of shit!",
+          "translated": "该死的——\n混蛋！",
+          "failed": false
+        },
+        {
+          "index": 19,
+          "original": "[ Error dings ]\nAah! Aah!",
+          "translated": "[错误提示音]\n啊！啊！",
+          "failed": false
+        },
+        {
+          "index": 20,
+          "original": "Hnn, hnn, hnn, hnn, <i>hnn!</i>",
+          "translated": "嗯，嗯，嗯，嗯，<i>嗯！</i>",
+          "failed": false
+        },
+        {
+          "index": 21,
+          "original": "[ Error dings ]\n<i>Lockdown initiated.</i>",
+          "translated": "[错误提示音]\n<i>锁定程序已启动。</i>",
+          "failed": false
+        },
+        {
+          "index": 22,
+          "original": "[ Machinery whirring ]",
+          "translated": "[机器轰鸣声]",
+          "failed": false
+        },
+        {
+          "index": 23,
+          "original": "Mort-y-y-y!",
+          "translated": "莫蒂——！",
+          "failed": false
+        },
+        {
+          "index": 24,
+          "original": "Ohhh. Hey, pal.\nW-what's up?",
+          "translated": "哦。嘿，朋友。\n怎——怎么了？",
+          "failed": false
+        },
+        {
+          "index": 25,
+          "original": "Oh, g-good --\ngood morning, Mor-- Morty.",
+          "translated": "哦，好——\n早上好，莫——莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 26,
+          "original": "Yeah. Sure thing.",
+          "translated": "好的，没问题。",
+          "failed": false
+        },
+        {
+          "index": 27,
+          "original": "You want breakfast?",
+          "translated": "你想吃早餐？",
+          "failed": false
+        },
+        {
+          "index": 28,
+          "original": "Or dinner?",
+          "translated": "还是晚餐？",
+          "failed": false
+        },
+        {
+          "index": 29,
+          "original": "Are you <i>humoring </i>me,\nMorty?",
+          "translated": "你是不是在 <i>逗我</i>玩，\n莫蒂？",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 1,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 2,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 3,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 4,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 5,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 6,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 7,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 8,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 9,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 10,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 11,
+          "verdict": "fail",
+          "reason": "Mixed language: 'ugh' is left untranslated while 'Oh' is translated. Inconsistent localization.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 12,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 13,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 14,
+          "verdict": "fail",
+          "reason": "Mixed language: 'ugh' is left untranslated. Should be fully localized.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 15,
+          "verdict": "fail",
+          "reason": "Mixed language: 'uhh' and 'fuck' are left untranslated. Should be fully localized.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 16,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 17,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 18,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 19,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 20,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 21,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 22,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 23,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 24,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 25,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 26,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 27,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 28,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 29,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 30,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 27,
+      "judge_fail": 3,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 2,
+      "start": 30,
+      "end": 60,
+      "translations": [
+        {
+          "index": 30,
+          "original": "[ Sighs ]\nNo.",
+          "translated": "[叹息] \n不。",
+          "failed": false
+        },
+        {
+          "index": 31,
+          "original": "I only had a couple\nof drinks, Morty!",
+          "translated": "\n我只喝了几杯，莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 32,
+          "original": "S-so, w-what do you\nneed me for?",
+          "translated": "所-所以，你\n需要我做什么？",
+          "failed": false
+        },
+        {
+          "index": 33,
+          "original": "This fuckin' thing\nlocked me out!",
+          "translated": "这该死的玩意儿\n把我锁在外面了！",
+          "failed": false
+        },
+        {
+          "index": 34,
+          "original": "Okay. Well,\nwhose fault is that?",
+          "translated": "好吧。那么，\n那又是谁的错呢？",
+          "failed": false
+        },
+        {
+          "index": 35,
+          "original": "Y-o-o-ours!\nWhat?",
+          "translated": "尤 - 欧 -  ours!\n什么？",
+          "failed": false
+        },
+        {
+          "index": 36,
+          "original": "Let! Me! In!",
+          "translated": "让！我！进！来！",
+          "failed": false
+        },
+        {
+          "index": 37,
+          "original": "[ Electricity crackles ]\nOwww!",
+          "translated": "[电流噼啪作响]\n哎哟！",
+          "failed": false
+        },
+        {
+          "index": 38,
+          "original": "Unh!",
+          "translated": "嗯！",
+          "failed": false
+        },
+        {
+          "index": 39,
+          "original": "M-o-o-o-ort-y-y-y-y!",
+          "translated": "莫 - 欧 - 欧 - 欧 - 尔 - 蒂 - 耶 - 耶 - 耶 - 耶！",
+          "failed": false
+        },
+        {
+          "index": 40,
+          "original": "I mean, Rick, I don't really\nknow what I can do here.",
+          "translated": "我是说，瑞克，我真\n不知道我能在这里做什么。",
+          "failed": false
+        },
+        {
+          "index": 41,
+          "original": "Y-you don't give a shit\nabout grandpa, huh?",
+          "translated": "你-你不把爷爷放在眼里，对吧？",
+          "failed": false
+        },
+        {
+          "index": 42,
+          "original": "Is -- Is that it, Morty?\nY-you want me dead?",
+          "translated": "是--就这样了吗，莫蒂?\n你-你想让我死吗？",
+          "failed": false
+        },
+        {
+          "index": 43,
+          "original": "[ Sighs ]\nRick...",
+          "translated": "[叹气]\n瑞克...",
+          "failed": false
+        },
+        {
+          "index": 44,
+          "original": "Y-you won't inherit\nanything from me, Morty.",
+          "translated": "你-你不会从我这里\n继承任何东西了，莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 45,
+          "original": "Evil boy. Wicked boy.\n[ Cellphone ringing ]",
+          "translated": "\n邪恶的孩子。坏孩子。[手机铃声响起]",
+          "failed": false
+        },
+        {
+          "index": 46,
+          "original": "Okay.\nYou know what?",
+          "translated": "好吧。\n你知道吗？",
+          "failed": false
+        },
+        {
+          "index": 47,
+          "original": "Hello? R-Rick S--\nRick Sanchez phone.",
+          "translated": "喂？瑞-瑞克 S--\n瑞克·桑切斯手机。",
+          "failed": false
+        },
+        {
+          "index": 48,
+          "original": "How'd -- How you\nget this number?",
+          "translated": "怎么 -- 你是\n怎么拿到这个号码的？",
+          "failed": false
+        },
+        {
+          "index": 49,
+          "original": "Reese!\nReese?",
+          "translated": "里斯!\n里斯？",
+          "failed": false
+        },
+        {
+          "index": 50,
+          "original": "Uh, y-you're in town?\nOf course we can.",
+          "translated": "呃，你-你在城里?\n当然可以。",
+          "failed": false
+        },
+        {
+          "index": 51,
+          "original": "Of course I'm drunk.\nL-let's, uh, see you soon!",
+          "translated": "\n我当然是喝醉了。让我们，呃，不久后见！",
+          "failed": false
+        },
+        {
+          "index": 52,
+          "original": "Guess who that was!\nIt was Reese.",
+          "translated": "\n猜猜那是谁！是里斯。",
+          "failed": false
+        },
+        {
+          "index": 53,
+          "original": "Y-you said --\nYou said it out loud!",
+          "translated": "你-你说 --\n你是大声说出来的！",
+          "failed": false
+        },
+        {
+          "index": 54,
+          "original": "Fucking Reese, Morty!",
+          "translated": "该死的里斯，莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 55,
+          "original": "Mnhmnh,\nwho needs passwords, huh?",
+          "translated": "嗯哼，\n谁还需要密码呢，对吧？",
+          "failed": false
+        },
+        {
+          "index": 56,
+          "original": "W-we need our minds\noff of this <i>shit, </i>Morty.",
+          "translated": "\n我们需要把心思从这件事上转移开，莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 57,
+          "original": "We gotta hang out\nwith our pal Reese!",
+          "translated": "\n我们要和我们的朋友里斯一起玩！",
+          "failed": false
+        },
+        {
+          "index": 58,
+          "original": "Rick, you just yelled at me,\nand I don't even care.",
+          "translated": "\n瑞克，你刚刚吼了我，而我甚至都不在乎了。",
+          "failed": false
+        },
+        {
+          "index": 59,
+          "original": "I like Reese that much.",
+          "translated": "有那么喜欢里斯。",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 31,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 32,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 33,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 34,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 35,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 36,
+          "verdict": "fail",
+          "reason": "Semantic error and formatting issue. The source 'Y-o-o-ours' is a stuttered version of 'Yours'. The translation mixes English 'ours' with Chinese phonetic attempts '尤 - 欧', resulting in a nonsensical hybrid that does not convey the meaning 'Your fault' or 'Yours'.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 37,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 38,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 39,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 40,
+          "verdict": "fail",
+          "reason": "Semantic error. The source is a stuttered scream of the name 'Morty'. The translation attempts to phonetically transliterate the stuttered sounds into Chinese characters but results in a string of characters that do not form the name 'Morty' (莫蒂) clearly or correctly in context. It looks like a failed phonetic breakdown rather than a recognizable stuttered name.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 41,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 42,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 43,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 44,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 45,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 46,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 47,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 48,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 49,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 50,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 51,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 52,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 53,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 54,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 55,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 56,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 57,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 58,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 59,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 60,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 28,
+      "judge_fail": 2,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 3,
+      "start": 60,
+      "end": 90,
+      "translations": [
+        {
+          "index": 60,
+          "original": "[burps] That's 'cause\nhe's the fuckin' best!",
+          "translated": "[打嗝声] 那是因为他他妈的最棒！",
+          "failed": false
+        },
+        {
+          "index": 61,
+          "original": "You got that right.",
+          "translated": "你说得对。",
+          "failed": false
+        },
+        {
+          "index": 62,
+          "original": "[ Downbeat rock music plays ]",
+          "translated": "[低沉的摇滚乐响起]",
+          "failed": false
+        },
+        {
+          "index": 63,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 64,
+          "original": "Reese! Reese! Reese!\nReese! Reese! Reese!",
+          "translated": "里斯！里斯！里斯！\n里斯！里斯！里斯！",
+          "failed": false
+        },
+        {
+          "index": 65,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 66,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 67,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 68,
+          "original": "[ Electricity crackles ]",
+          "translated": "[电流噼啪作响]",
+          "failed": false
+        },
+        {
+          "index": 69,
+          "original": "I love these trips, Reese.",
+          "translated": "我喜欢这些旅行，里奇。",
+          "failed": false
+        },
+        {
+          "index": 70,
+          "original": "H-hell, yeah!",
+          "translated": "哈—该死的，没错！",
+          "failed": false
+        },
+        {
+          "index": 71,
+          "original": "Fly-fishing, babay!",
+          "translated": "飞钓，巴拜！",
+          "failed": false
+        },
+        {
+          "index": 72,
+          "original": "[ Reel whirs ]",
+          "translated": "[收线器嗡嗡作响]",
+          "failed": false
+        },
+        {
+          "index": 73,
+          "original": "[ Snap! ]",
+          "translated": "[啪！]",
+          "failed": false
+        },
+        {
+          "index": 74,
+          "original": "Aww!\nW-was that my fault?",
+          "translated": "\n哎呀！那是我的错吗？",
+          "failed": false
+        },
+        {
+          "index": 75,
+          "original": "D-did I\nfuck that up?",
+          "translated": "\n是我把它搞砸了吗？",
+          "failed": false
+        },
+        {
+          "index": 76,
+          "original": "M-dawg,\nif they never got away,",
+          "translated": "老伙计，\n如果他们没能逃脱，",
+          "failed": false
+        },
+        {
+          "index": 77,
+          "original": "what'd be the point\nof catching 'em?",
+          "translated": "那抓他们还有什么意义\n呢？",
+          "failed": false
+        },
+        {
+          "index": 78,
+          "original": "Man, that's some great --\ngreat fly-fishing wisdom, Reese.",
+          "translated": "天哪，那是些伟大的——\n伟大的飞钓智慧，里斯。",
+          "failed": false
+        },
+        {
+          "index": 79,
+          "original": "Really calming.",
+          "translated": "真让人平静。",
+          "failed": false
+        },
+        {
+          "index": 80,
+          "original": "You gotta wade\nwith the current, dude.",
+          "translated": "你得顺流而下漂行，伙计。",
+          "failed": false
+        },
+        {
+          "index": 81,
+          "original": "You're the best.\n[ Reel whirs ]",
+          "translated": "你是最棒的。\n[收线器转动声]",
+          "failed": false
+        },
+        {
+          "index": 82,
+          "original": "Awww, geez!",
+          "translated": "哎呀，天哪！",
+          "failed": false
+        },
+        {
+          "index": 83,
+          "original": "Hey, M-Morty.",
+          "translated": "嘿，莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 84,
+          "original": "Morty, Morty,\nMorty, Morty!",
+          "translated": "莫蒂，莫蒂，\n莫蒂，莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 85,
+          "original": "Oh! Oh, God!\nRick!",
+          "translated": "哦！哦，上帝！\n瑞克！",
+          "failed": false
+        },
+        {
+          "index": 86,
+          "original": "[ Chuckles ]\nGet outta here!",
+          "translated": "[咯咯笑]\n滚蛋吧！",
+          "failed": false
+        },
+        {
+          "index": 87,
+          "original": "[ Laughing ]",
+          "translated": "[笑声]",
+          "failed": false
+        },
+        {
+          "index": 88,
+          "original": "[ Insects chirping ]",
+          "translated": "[昆虫鸣叫]",
+          "failed": false
+        },
+        {
+          "index": 89,
+          "original": "I <i>know </i>I packed\nthe special marshmallows.",
+          "translated": "我 <i>知道 </i>我带了\n特制的棉花糖。",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 61,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 62,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 63,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 64,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 65,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 66,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 67,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 68,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 69,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 70,
+          "verdict": "fail",
+          "reason": "Semantic error: The name 'Reese' is translated as '里奇' (Rich/Lee) in this entry, whereas it was correctly translated as '里斯' (Reese) in entry 65 and 79. This is an inconsistency in proper noun translation.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 71,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 72,
+          "verdict": "fail",
+          "reason": "Semantic error: 'babay' is a phonetic spelling of 'baby' used for comedic effect. Translating it as '巴拜' (Ba Pai) is a literal transliteration that loses the meaning and humor. It should be translated as '宝贝' or similar.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 73,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 74,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 75,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 76,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 77,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 78,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 79,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 80,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 81,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 82,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 83,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 84,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 85,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 86,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 87,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 88,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 89,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 90,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 28,
+      "judge_fail": 2,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 4,
+      "start": 90,
+      "end": 120,
+      "translations": [
+        {
+          "index": 90,
+          "original": "One job.\nI opened the cabinet,",
+          "translated": "\n一件工作。",
+          "failed": false
+        },
+        {
+          "index": 91,
+          "original": "I looked at them.\nI <i>know </i>I looked at them!",
+          "translated": "我打开柜子，\n看了看它们。<i>我知道</i>我看过了！",
+          "failed": false
+        },
+        {
+          "index": 92,
+          "original": "One job!",
+          "translated": "一件工作！",
+          "failed": false
+        },
+        {
+          "index": 93,
+          "original": "You forgot them\non the last Reese trip.",
+          "translated": "你在上次瑞斯之旅中把它们忘了\n",
+          "failed": false
+        },
+        {
+          "index": 94,
+          "original": "Seems like a bad thing\nto trust me with, then.",
+          "translated": "看来把这么糟糕的事情\n交给我信任，然后。",
+          "failed": false
+        },
+        {
+          "index": 95,
+          "original": "You gotta be more patient\nwith Morty, Rick.",
+          "translated": "你得对莫蒂更有耐心\n，里克。",
+          "failed": false
+        },
+        {
+          "index": 96,
+          "original": "Not everyone\ncan be a genius.",
+          "translated": "不是每个人\n都能成为天才。",
+          "failed": false
+        },
+        {
+          "index": 97,
+          "original": "It's what you do with\nwhat you got that counts.",
+          "translated": "重要的是你如何利用\n你所拥有的东西。",
+          "failed": false
+        },
+        {
+          "index": 98,
+          "original": "Sorry, Morty.\nI could take it easier on you.",
+          "translated": "抱歉，莫蒂。\n我可以对你更温和一些。",
+          "failed": false
+        },
+        {
+          "index": 99,
+          "original": "I'm, uh -- I'm still wired\nfrom catching all those fish.",
+          "translated": "我，呃——我还是有点兴奋\n，因为抓了那么多鱼。",
+          "failed": false
+        },
+        {
+          "index": 100,
+          "original": "Ha ha! Well, you'd find a way\nto get high on anything.",
+          "translated": "哈哈！好吧，你总能找到方法\n从任何东西中感到兴奋。",
+          "failed": false
+        },
+        {
+          "index": 101,
+          "original": "Ain't that the truth?",
+          "translated": "难道不是吗？",
+          "failed": false
+        },
+        {
+          "index": 102,
+          "original": "[ All laughing ]",
+          "translated": "[众人哄笑]",
+          "failed": false
+        },
+        {
+          "index": 103,
+          "original": "Rick: True.",
+          "translated": "瑞克：真的。",
+          "failed": false
+        },
+        {
+          "index": 104,
+          "original": "You know, Rick,\nyou two may fight,",
+          "translated": "你知道吗，里克，\n你们两个可能会吵架，",
+          "failed": false
+        },
+        {
+          "index": 105,
+          "original": "but you're the real deal.",
+          "translated": "但你才是货真价实的。",
+          "failed": false
+        },
+        {
+          "index": 106,
+          "original": "[ Watch dings ]\nHeh. Thanks, Reese.",
+          "translated": "\n叮当声 [ Watch dings ]。\n嘿，谢谢，瑞斯。",
+          "failed": false
+        },
+        {
+          "index": 107,
+          "original": "[ Cellphone vibrates ]",
+          "translated": "[手机震动]",
+          "failed": false
+        },
+        {
+          "index": 108,
+          "original": "Ah, man.\nI hate to do this, guys,",
+          "translated": "啊，真烦人。\n我不喜欢这么做，伙计们，",
+          "failed": false
+        },
+        {
+          "index": 109,
+          "original": "but I got some work stuff\nI still need to hit.",
+          "translated": "\n但我还有些工作要处理。",
+          "failed": false
+        },
+        {
+          "index": 110,
+          "original": "Might have to call it.",
+          "translated": "可能得给它打个电话。",
+          "failed": false
+        },
+        {
+          "index": 111,
+          "original": "[burps] Sounds good to me.\nI'm beat.",
+          "translated": "[打嗝] 听起来不错。\n我累了。",
+          "failed": false
+        },
+        {
+          "index": 112,
+          "original": "What? The --\nThe trip just started.",
+          "translated": "什么？那——\n旅程才刚刚开始。",
+          "failed": false
+        },
+        {
+          "index": 113,
+          "original": "Sorry, champ, but the river's\nnot going anywhere.",
+          "translated": "抱歉，冠军，但河流\n不会往任何地方流去。",
+          "failed": false
+        },
+        {
+          "index": 114,
+          "original": "Shake a leg, Morty.\nSome of us got responsibilities.",
+          "translated": "快点吧，莫蒂。\n我们有些人有责任。",
+          "failed": false
+        },
+        {
+          "index": 115,
+          "original": "[ Bottles clattering ]",
+          "translated": "[瓶子碰撞声]",
+          "failed": false
+        },
+        {
+          "index": 116,
+          "original": "You could always just\nmove to Earth, Reese.",
+          "translated": "\n你可以总是直接搬到地球上去，瑞斯。",
+          "failed": false
+        },
+        {
+          "index": 117,
+          "original": "Rick's a god.",
+          "translated": "瑞克是个神。",
+          "failed": false
+        },
+        {
+          "index": 118,
+          "original": "He could, like,\ngrow your job out of slime.",
+          "translated": "他可以，比如，\n用粘液培育出你的工作。",
+          "failed": false
+        },
+        {
+          "index": 119,
+          "original": "He could grow your\nwhole company out of slime.",
+          "translated": "他可以用粘液培育出\n你整个公司。",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 91,
+          "verdict": "fail",
+          "reason": "Missing translation. The source contains two clauses ('One job. I opened the cabinet,'), but the translation only covers the first.",
+          "suggestion": "context"
+        },
+        {
+          "index": 92,
+          "verdict": "shift",
+          "reason": "The translation includes 'I opened the cabinet', which belongs to the previous entry (91). This is a content shift from the adjacent entry.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 93,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 94,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 95,
+          "verdict": "fail",
+          "reason": "Semantic error and awkward phrasing. 'Trust me with' implies entrusting a task/responsibility to someone. The translation '交给我信任' (hand over to me trust) is grammatically incorrect and nonsensical in Chinese. It should be 'entrust to me' or 'give me the responsibility'.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 96,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 97,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 98,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 99,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 100,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 101,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 102,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 103,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 104,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 105,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 106,
+          "verdict": "fail",
+          "reason": "Semantic error. 'The real deal' in this context (referring to a relationship/bond despite fighting) means 'genuine' or 'true friends'. Translating it as '货真价实的' (genuine article/real thing) applied to 'you' (Rick) makes it sound like Rick is a product or object, losing the relational nuance.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 107,
+          "verdict": "fail",
+          "reason": "Format error and semantic error. The source has a sound effect '[ Watch dings ]' which should be translated or kept as a tag. The translation puts the Chinese translation of the sound effect outside the brackets and keeps the English tag inside, breaking the format. Also 'Heh' is translated as '嘿' (Hey), which is a different interjection.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 108,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 109,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 110,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 111,
+          "verdict": "fail",
+          "reason": "Semantic error. 'Call it' in this context (leaving a gathering) means 'call it quits' or 'end it'. The translation '给它打个电话' means 'give it a phone call', which is a literal misinterpretation of the idiom.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 112,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 113,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 114,
+          "verdict": "fail",
+          "reason": "Semantic error. 'The river's not going anywhere' is an idiom meaning the situation/activity isn't going to change or disappear. The translation '河流不会往任何地方流去' is a literal, nonsensical physical description of a river, missing the idiomatic meaning.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 115,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 116,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 117,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 118,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 119,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 120,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 23,
+      "judge_fail": 6,
+      "judge_shift": 1,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 5,
+      "start": 120,
+      "end": 150,
+      "translations": [
+        {
+          "index": 120,
+          "original": "It's a great idea, Morty.",
+          "translated": "真是个不错的点子，莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 121,
+          "original": "I'll pitch it to my boss.",
+          "translated": "我会拿去给我的老板看。",
+          "failed": false
+        },
+        {
+          "index": 122,
+          "original": "Bye, Reese.",
+          "translated": "再见，瑞斯。",
+          "failed": false
+        },
+        {
+          "index": 123,
+          "original": "Remember, wade with\nthe current, pal.",
+          "translated": "记住，顺着水流划船吧，伙计。",
+          "failed": false
+        },
+        {
+          "index": 124,
+          "original": "[ Machinery whirring ]\nTheft detected.",
+          "translated": "[机器嗡嗡作响] 检测到盗窃。",
+          "failed": false
+        },
+        {
+          "index": 125,
+          "original": "Um, did -- did --\ndid you just...",
+          "translated": "呃，你——你——\n刚刚……",
+          "failed": false
+        },
+        {
+          "index": 126,
+          "original": "Threat nullified.",
+          "translated": "威胁已解除。",
+          "failed": false
+        },
+        {
+          "index": 127,
+          "original": "Shit.\nJesus fucking Christ!",
+          "translated": "该死。\n耶稣基督！",
+          "failed": false
+        },
+        {
+          "index": 128,
+          "original": "Okay, so, Morty,\nI know your instinct will be",
+          "translated": "好吧，所以，莫蒂，\n我知道你的本能反应会是",
+          "failed": false
+        },
+        {
+          "index": 129,
+          "original": "to make a big deal\nabout this.",
+          "translated": "要把这件事大做文章。\n",
+          "failed": false
+        },
+        {
+          "index": 130,
+          "original": "You'll be all,\n\"Betrayal! Betrayal!\"",
+          "translated": "你会大喊大叫，\n\"背叛！背叛！\"",
+          "failed": false
+        },
+        {
+          "index": 131,
+          "original": "We've known him\nfor years!",
+          "translated": "我们认识他\n好几年了！",
+          "failed": false
+        },
+        {
+          "index": 132,
+          "original": "S-so Reese takes us camping\nwhenever you get locked out?!",
+          "translated": "所——所以里斯每次把你锁在外面就带我们去露营？\n",
+          "failed": false
+        },
+        {
+          "index": 133,
+          "original": "Oh, my God.\nAm I your fucking password?",
+          "translated": "天哪。\n我是你的该死密码吗？",
+          "failed": false
+        },
+        {
+          "index": 134,
+          "original": "Ugh. It's more complex\nthan that.",
+          "translated": "唉。这比那\n要复杂得多。",
+          "failed": false
+        },
+        {
+          "index": 135,
+          "original": "But yes.",
+          "translated": "不过确实如此。",
+          "failed": false
+        },
+        {
+          "index": 136,
+          "original": "Our relationship is\nunique in the multiverse.",
+          "translated": "我们的关系在多元宇宙中是\n独一无二的。",
+          "failed": false
+        },
+        {
+          "index": 137,
+          "original": "Th-there.\nJerk off to it.",
+          "translated": "就在那儿。\n对着它自慰。",
+          "failed": false
+        },
+        {
+          "index": 138,
+          "original": "It's what\nyou <i>always </i>wanted.",
+          "translated": "这就是\n你 <i>一直 </i>想要的。",
+          "failed": false
+        },
+        {
+          "index": 139,
+          "original": "We're unique,\nand I depend on you.",
+          "translated": "我们是独特的，\n而且我依赖你。",
+          "failed": false
+        },
+        {
+          "index": 140,
+          "original": "Unh!\nWhoa!",
+          "translated": "嗯！\n哇哦！",
+          "failed": false
+        },
+        {
+          "index": 141,
+          "original": "And you needed to gaslight me",
+          "translated": "而你竟然需要煤气灯效应来控制我",
+          "failed": false
+        },
+        {
+          "index": 142,
+          "original": "with a cool fake friend\nto verify that?!",
+          "translated": "还要一个酷酷的假朋友\n来验证这一点？！",
+          "failed": false
+        },
+        {
+          "index": 143,
+          "original": "Morty, how can you\nbe mad at this?",
+          "translated": "莫蒂，你怎么能\n对这个生气呢？",
+          "failed": false
+        },
+        {
+          "index": 144,
+          "original": "I created an awesome guy\nwe had a great time with.",
+          "translated": "我创造了一个很棒的人，\n我们和他度过了一段美好的时光。",
+          "failed": false
+        },
+        {
+          "index": 145,
+          "original": "I'm more sad about this\nthan you, Morty.",
+          "translated": "比起你，\n我更难过这件事，莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 146,
+          "original": "I liked Reese.\nReese was cool.",
+          "translated": "我喜欢里斯。\n里斯很酷。",
+          "failed": false
+        },
+        {
+          "index": 147,
+          "original": "Now I gotta build\na new fuckin' Reese thing!",
+          "translated": "现在我得重新打造一个该死的里斯了！",
+          "failed": false
+        },
+        {
+          "index": 148,
+          "original": "[ Grunting ]",
+          "translated": "[呻吟声]",
+          "failed": false
+        },
+        {
+          "index": 149,
+          "original": "Unh! Hunh!\nUhh! Unh!",
+          "translated": "嗯！哼！\n呃！嗯！",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 121,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 122,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 123,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 124,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 125,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 126,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 127,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 128,
+          "verdict": "fail",
+          "reason": "Semantic error: The source contains strong profanity ('fucking') which is omitted in the translation, significantly reducing the intensity and character voice of the exclamation.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 129,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 130,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 131,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 132,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 133,
+          "verdict": "fail",
+          "reason": "Semantic error: The name 'Reese' is translated as '里斯' (Lisi) here, but as '瑞斯' (Ruisi) in entry 123. Inconsistent transliteration of the same character name within the same batch.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 134,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 135,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 136,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 137,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 138,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 139,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 140,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 141,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 142,
+          "verdict": "fail",
+          "reason": "Semantic error: 'Gaslight' is translated literally as '煤气灯效应' (gaslighting effect), which is a clinical/psychological term. In this context, it should be translated as a verb phrase meaning 'to manipulate' or 'to deceive', e.g., '操纵我' or '欺骗我'. The literal translation breaks the flow and sounds unnatural in dialogue.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 143,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 144,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 145,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 146,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 147,
+          "verdict": "fail",
+          "reason": "Semantic error: The name 'Reese' is translated as '里斯' (Lisi) here, inconsistent with '瑞斯' (Ruisi) in entry 123.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 148,
+          "verdict": "fail",
+          "reason": "Semantic error: The name 'Reese' is translated as '里斯' (Lisi) here, inconsistent with '瑞斯' (Ruisi) in entry 123.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 149,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 150,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 25,
+      "judge_fail": 5,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 6,
+      "start": 150,
+      "end": 180,
+      "translations": [
+        {
+          "index": 150,
+          "original": "Unh!",
+          "translated": "嗯！",
+          "failed": false
+        },
+        {
+          "index": 151,
+          "original": "Aah!",
+          "translated": "啊！",
+          "failed": false
+        },
+        {
+          "index": 152,
+          "original": "[ Muffled screaming ]",
+          "translated": "[闷哼声]",
+          "failed": false
+        },
+        {
+          "index": 153,
+          "original": "[ Muffled screaming continues ]",
+          "translated": "[闷哼声持续]",
+          "failed": false
+        },
+        {
+          "index": 154,
+          "original": "Mm. Mm.",
+          "translated": "嗯。嗯。",
+          "failed": false
+        },
+        {
+          "index": 155,
+          "original": "Mm. Mm. Mm. Mm.",
+          "translated": "嗯。嗯。嗯。嗯。",
+          "failed": false
+        },
+        {
+          "index": 156,
+          "original": "[ Gulping loudly ]",
+          "translated": "[大口吞咽声]",
+          "failed": false
+        },
+        {
+          "index": 157,
+          "original": "Ahh. Oh.",
+          "translated": "啊。哦。",
+          "failed": false
+        },
+        {
+          "index": 158,
+          "original": "[ Gulping continues ]",
+          "translated": "[吞咽声持续]",
+          "failed": false
+        },
+        {
+          "index": 159,
+          "original": "Ahh.\n[ Sighs ]",
+          "translated": "啊。\n[叹气]",
+          "failed": false
+        },
+        {
+          "index": 160,
+          "original": "What?\nIt's just, how is there that much liquid in there?",
+          "translated": "\n什么？只是，那里怎么会有那么多液体？",
+          "failed": false
+        },
+        {
+          "index": 161,
+          "original": "Oh. Uh, this one is, uh --\nit's a -- it's a portal thing.",
+          "translated": "哦。呃，这个……\n是个——这是个传送门装置。",
+          "failed": false
+        },
+        {
+          "index": 162,
+          "original": "Th-there's a big silo full\nof vodka on this one planet.",
+          "translated": "这颗星球上有个巨大的筒仓，装满了伏特加。\n",
+          "failed": false
+        },
+        {
+          "index": 163,
+          "original": "These, uh, little hog-men\nkeep it full for me.",
+          "translated": "这些小小的猪人\n帮我把它装满。",
+          "failed": false
+        },
+        {
+          "index": 164,
+          "original": "Okay.\nI'm gonna go [burps] empty it.",
+          "translated": "好的。\n我去 [打嗝] 把它倒空。",
+          "failed": false
+        },
+        {
+          "index": 165,
+          "original": "Ugh!",
+          "translated": "ugh!",
+          "failed": true
+        },
+        {
+          "index": 166,
+          "original": "Rick?",
+          "translated": "Rick?",
+          "failed": true
+        },
+        {
+          "index": 167,
+          "original": "That was fucked up, Rick.",
+          "translated": "那太糟糕了，瑞克。",
+          "failed": false
+        },
+        {
+          "index": 168,
+          "original": "But I can handle fucked up.",
+          "translated": "但我能应付糟糕的局面。",
+          "failed": false
+        },
+        {
+          "index": 169,
+          "original": "A-a-and now\nthat I know what Reese is,",
+          "translated": "现在\n既然我知道瑞斯是什么了，",
+          "failed": false
+        },
+        {
+          "index": 170,
+          "original": "w-we can, we can hang out\nwith him all the time, right?",
+          "translated": "\n我们就可以随时和他一起玩，对吧？",
+          "failed": false
+        },
+        {
+          "index": 171,
+          "original": "Uh...\nMorty wha-whaa?",
+          "translated": "呃……\n莫蒂哇？",
+          "failed": false
+        },
+        {
+          "index": 172,
+          "original": "What the hell\nare you doing to him?",
+          "translated": "\n你到底对他做了什么？",
+          "failed": false
+        },
+        {
+          "index": 173,
+          "original": "Oh. I got, I gotta transfer over\nsome stuff-uh before disposal.",
+          "translated": "哦。我得在处置前\n转移一些东西——呃。",
+          "failed": false
+        },
+        {
+          "index": 174,
+          "original": "\"Disposal\"?!",
+          "translated": "\"处理\"？！",
+          "failed": false
+        },
+        {
+          "index": 175,
+          "original": "Reese is a liability, Morty.\n[ Device beeps ]",
+          "translated": "瑞斯是个负担，默蒂。\n[装置发出哔声]",
+          "failed": false
+        },
+        {
+          "index": 176,
+          "original": "He's like a credit card.",
+          "translated": "他就像张信用卡。",
+          "failed": false
+        },
+        {
+          "index": 177,
+          "original": "If he's not in use,\nhe-e's gotta be shredded.",
+          "translated": "如果他不被使用，\n他就得被绞碎。",
+          "failed": false
+        },
+        {
+          "index": 178,
+          "original": "Chin up, Morty.",
+          "translated": "振作点，莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 179,
+          "original": "It's my bad for going all\nIron Giant in front of ya.",
+          "translated": "\n都怪我刚才在你面前变得像《钢铁巨人》一样。",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 151,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 152,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 153,
+          "verdict": "fail",
+          "reason": "Semantic error: 'Screaming' is translated as 'groaning/muffled sound' (闷哼). Screaming implies high volume and distress, while 闷哼 implies suppressed pain or effort. They are distinct sound effects.",
+          "suggestion": "context"
+        },
+        {
+          "index": 154,
+          "verdict": "fail",
+          "reason": "Semantic error: Same as above. 'Screaming' should not be translated as 'groaning' (闷哼).",
+          "suggestion": "context"
+        },
+        {
+          "index": 155,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 156,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 157,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 158,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 159,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 160,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 161,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 162,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 163,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 164,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 165,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 166,
+          "verdict": "fail",
+          "reason": "Formatting error: The translation 'ugh!' is in lowercase, whereas the source 'Ugh!' is capitalized. Subtitle translations should generally match the casing and punctuation style of the source for consistency, especially for interjections.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 167,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 168,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 169,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 170,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 171,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 172,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 173,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 174,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 175,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 176,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 177,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 178,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 179,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 180,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 27,
+      "judge_fail": 3,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 7,
+      "start": 180,
+      "end": 210,
+      "translations": [
+        {
+          "index": 180,
+          "original": "I don't want\nyou to die.",
+          "translated": "我不想\n你死。",
+          "failed": false
+        },
+        {
+          "index": 181,
+          "original": "Hey, hey, hey,\nI'm not dying...",
+          "translated": "\n嘿，嘿，嘿……我还死不了。",
+          "failed": false
+        },
+        {
+          "index": 182,
+          "original": "'cause I was never\nreally living.",
+          "translated": "'cause I was never\nreally living.",
+          "failed": true
+        },
+        {
+          "index": 183,
+          "original": "[ Slurring ] He's got all\nmy passwords, Morty.",
+          "translated": "[ Slurring ] He's got all\nmy passwords, Morty.",
+          "failed": true
+        },
+        {
+          "index": 184,
+          "original": "You can't just -- he's not\na guy, he's -- he's a wallet.",
+          "translated": "You can't just -- he's not\na guy, he's -- he's a wallet.",
+          "failed": true
+        },
+        {
+          "index": 185,
+          "original": "Nice wallet.",
+          "translated": "钱包不错。",
+          "failed": false
+        },
+        {
+          "index": 186,
+          "original": "Aah! Morty!",
+          "translated": "啊！莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 187,
+          "original": "[ Errors dinging ]",
+          "translated": "[错误提示音]",
+          "failed": false
+        },
+        {
+          "index": 188,
+          "original": "<i>Lockdown initiated.</i>",
+          "translated": "<i>封锁已启动。</i>",
+          "failed": false
+        },
+        {
+          "index": 189,
+          "original": "[ Machinery whirring ]",
+          "translated": "[机器轰鸣声]",
+          "failed": false
+        },
+        {
+          "index": 190,
+          "original": "Morty, nooo!",
+          "translated": "莫蒂，不！",
+          "failed": false
+        },
+        {
+          "index": 191,
+          "original": "Aah! Ooh! Ohh!",
+          "translated": "啊！哦！噢！",
+          "failed": false
+        },
+        {
+          "index": 192,
+          "original": "[ Groans ]",
+          "translated": "[呻吟声]",
+          "failed": false
+        },
+        {
+          "index": 193,
+          "original": "[ Pounding on hatch ]",
+          "translated": "[敲打舱门声]",
+          "failed": false
+        },
+        {
+          "index": 194,
+          "original": "[ Honking, horn blares ]",
+          "translated": "[喇叭声响起，鸣笛声大作]",
+          "failed": false
+        },
+        {
+          "index": 195,
+          "original": "[ Meow! Bonk! ]\n[ Man yodeling ]",
+          "translated": "[ Meow! Bonk! ]\n[ Man yodeling ]",
+          "failed": false
+        },
+        {
+          "index": 196,
+          "original": "[ Intercom static ]\nReese is my <i>friend!</i>",
+          "translated": "[ Intercom static ]\nReese is my <i>friend!</i>",
+          "failed": true
+        },
+        {
+          "index": 197,
+          "original": "Rick:\n<i>He's not </i>alive, <i>Morty!</i>",
+          "translated": "Rick:\n<i>He's not </i>alive, <i>Morty!</i>",
+          "failed": true
+        },
+        {
+          "index": 198,
+          "original": "He's-- he's a program\nthat unlocks my computer",
+          "translated": "He's-- he's a program\nthat unlocks my computer",
+          "failed": true
+        },
+        {
+          "index": 199,
+          "original": "and dispenses clichés!",
+          "translated": "并吐出陈词滥调！",
+          "failed": false
+        },
+        {
+          "index": 200,
+          "original": "<i>You better open</i>\n<i>that hatch, Morty!</i>",
+          "translated": "<i>You better open</i>\n<i>that hatch, Morty!</i>",
+          "failed": true
+        },
+        {
+          "index": 201,
+          "original": "[ Switch clicks ]",
+          "translated": "[开关咔哒声]",
+          "failed": false
+        },
+        {
+          "index": 202,
+          "original": "Reese?\nAr-are you okay?",
+          "translated": "\n瑞斯？阿 - 你还好吗？",
+          "failed": false
+        },
+        {
+          "index": 203,
+          "original": "Whoa!",
+          "translated": "哇！",
+          "failed": false
+        },
+        {
+          "index": 204,
+          "original": "I'm a bit worried.",
+          "translated": "我有点担心。",
+          "failed": false
+        },
+        {
+          "index": 205,
+          "original": "I mean, what happens\nwhen Rick reels us in?",
+          "translated": "I mean, what happens\nwhen Rick reels us in?",
+          "failed": true
+        },
+        {
+          "index": 206,
+          "original": "Guess I can drop\nthe folksy act.",
+          "translated": "Guess I can drop\nthe folksy act.",
+          "failed": true
+        },
+        {
+          "index": 207,
+          "original": "No, I-I like it.\nIt's part of the charm.",
+          "translated": "No, I-I like it.\nIt's part of the charm.",
+          "failed": true
+        },
+        {
+          "index": 208,
+          "original": "Well, then where are\nwe casting off?",
+          "translated": "Well, then where are\nwe casting off?",
+          "failed": true
+        },
+        {
+          "index": 209,
+          "original": "There's an old\nlandline portal down here.",
+          "translated": "There's an old\nlandline portal down here.",
+          "failed": true
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 181,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 182,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 183,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 184,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 185,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 186,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 187,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 188,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 189,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 190,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 191,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 192,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 193,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 194,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 195,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 196,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 197,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 198,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 199,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 200,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 201,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 202,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 203,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 204,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 205,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 206,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 207,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 208,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 209,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 210,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English).",
+          "suggestion": "prompt"
+        }
+      ],
+      "judge_pass": 17,
+      "judge_fail": 13,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 8,
+      "start": 210,
+      "end": 240,
+      "translations": [
+        {
+          "index": 210,
+          "original": "Level 17.",
+          "translated": "十七层。",
+          "failed": false
+        },
+        {
+          "index": 211,
+          "original": "W-we'll figure it out\nfrom there.",
+          "translated": "我们从那里解决它。",
+          "failed": false
+        },
+        {
+          "index": 212,
+          "original": "Aye-aye, Captain!",
+          "translated": "是，舰长！",
+          "failed": false
+        },
+        {
+          "index": 213,
+          "original": "Maybe a lighter touch.",
+          "translated": "也许可以轻一点。",
+          "failed": false
+        },
+        {
+          "index": 214,
+          "original": "[ Device powering up ]",
+          "translated": "[装置正在启动]",
+          "failed": false
+        },
+        {
+          "index": 215,
+          "original": "Aah!",
+          "translated": "啊！",
+          "failed": false
+        },
+        {
+          "index": 216,
+          "original": "Neighbor: Ohh!!\nThe TV froze!",
+          "translated": "邻居：哦！电视卡住了！",
+          "failed": false
+        },
+        {
+          "index": 217,
+          "original": "Now what do I think?!",
+          "translated": "现在你觉得怎么样？！",
+          "failed": false
+        },
+        {
+          "index": 218,
+          "original": "[ Line ringing ]",
+          "translated": "[铃声响起]",
+          "failed": false
+        },
+        {
+          "index": 219,
+          "original": "Huge Clouds Metallurgy.",
+          "translated": "宏云冶金。",
+          "failed": false
+        },
+        {
+          "index": 220,
+          "original": "Rick: <i>You guys</i>\n<i>helped me build a lock.</i>",
+          "translated": "瑞克：<i>你们</i>\n<i>帮我装了一把锁。</i>",
+          "failed": false
+        },
+        {
+          "index": 221,
+          "original": "That's right, we did.",
+          "translated": "没错，我们确实做了。",
+          "failed": false
+        },
+        {
+          "index": 222,
+          "original": "Rick: <i>I locked it</i>\n<i>with the keys inside.</i>",
+          "translated": "瑞克：<i>我用钥匙在里面把它锁上了。</i>\n<i></i>",
+          "failed": false
+        },
+        {
+          "index": 223,
+          "original": "That is gonna take\nsome metallurgy.",
+          "translated": "这需要一些冶金学知识。",
+          "failed": false
+        },
+        {
+          "index": 224,
+          "original": "You said it. How soon can\nyour technician get here?",
+          "translated": "你说呢。你的技术人员多久能到？",
+          "failed": false
+        },
+        {
+          "index": 225,
+          "original": "<i>Hmm. We need</i>\n<i>remote system access.</i>",
+          "translated": "<i>嗯，我们需要</i>\n<i>远程系统访问权限。</i>",
+          "failed": false
+        },
+        {
+          "index": 226,
+          "original": "Can do. One sec.",
+          "translated": "可以。稍等。",
+          "failed": false
+        },
+        {
+          "index": 227,
+          "original": "Hey, Jerry, call for you.",
+          "translated": "嘿，杰瑞，有人找你。",
+          "failed": false
+        },
+        {
+          "index": 228,
+          "original": "Yello--\nooughughuhglugughh!",
+          "translated": "喂——\n哦呜咕！",
+          "failed": false
+        },
+        {
+          "index": 229,
+          "original": "Ho-ho-hoo-hoo!",
+          "translated": "呼 - 哈 - 呼 - 哈！",
+          "failed": false
+        },
+        {
+          "index": 230,
+          "original": "Yeah, yeah, you're\na bipedal simian now,",
+          "translated": "是啊，是啊，你现在是个直立猿人了。",
+          "failed": false
+        },
+        {
+          "index": 231,
+          "original": "in a gravity of 9.8 MPS.\nDon't, don't get any ideas.",
+          "translated": "在 9.8 米/秒²的重力下。别，别有什么想法。",
+          "failed": false
+        },
+        {
+          "index": 232,
+          "original": "So much m-a-a-a-ass.",
+          "translated": "这么多屎。",
+          "failed": false
+        },
+        {
+          "index": 233,
+          "original": "Sorry, sorry.\nYou said the lock was...?",
+          "translated": "抱歉，抱歉。你说锁是……？",
+          "failed": false
+        },
+        {
+          "index": 234,
+          "original": "This is interesting.",
+          "translated": "这很有趣。",
+          "failed": false
+        },
+        {
+          "index": 235,
+          "original": "We don't sell this model\ndouble-bonded.",
+          "translated": "我们这个型号不卖\n双键版。",
+          "failed": false
+        },
+        {
+          "index": 236,
+          "original": "I know.\nDid that a-ma-self.",
+          "translated": "我知道。是那家伙干的。",
+          "failed": false
+        },
+        {
+          "index": 237,
+          "original": "[ Whistles ]",
+          "translated": "[吹口哨声]",
+          "failed": false
+        },
+        {
+          "index": 238,
+          "original": "This is qu-a-a-ality work.",
+          "translated": "这是高质量的工作。",
+          "failed": false
+        },
+        {
+          "index": 239,
+          "original": "Oh, thanks.\nHeh.",
+          "translated": "\n呵，谢谢。",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 211,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 212,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 213,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 214,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 215,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 216,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 217,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 218,
+          "verdict": "fail",
+          "reason": "Semantic error: The source is a rhetorical question 'Now what do I think?!' implying the speaker is thinking or asking for input on their own thoughts, but the translation '现在你觉得怎么样？！' changes the subject to 'you' (you think), altering the meaning significantly.",
+          "suggestion": "context"
+        },
+        {
+          "index": 219,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 220,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 221,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 222,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 223,
+          "verdict": "fail",
+          "reason": "Semantic error/Formatting issue: The translation includes an empty tag '<i></i>' at the end which is not in the source, and the phrasing '用钥匙在里面把它锁上了' is slightly awkward but acceptable. However, the empty tag is a formatting error. More importantly, the source implies locking the door with keys *inside* the room (trapping them), while the translation says 'locked it with keys inside', which is ambiguous but likely means the same. The main issue is the empty tag.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 224,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 225,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 226,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 227,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 228,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 229,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 230,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 231,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 232,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 233,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 234,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 235,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 236,
+          "verdict": "fail",
+          "reason": "Semantic error: 'Double-bonded' in the context of locks usually refers to a specific type of locking mechanism or security feature (like double-cylinder or reinforced bonding). '双键版' translates to 'dual-key version' or 'two-key version', which is a mistranslation of the technical term 'double-bonded'. It should likely be '双锁版' or similar depending on the specific tech, but 'double-bonded' is a pun on 'quality' later. Actually, looking at 239, 'quality' is a pun on 'qu-a-a-ality'. 'Double-bonded' might be a pun on 'double-bonded' chemical bonds or just a made-up tech term. '双键' is definitely wrong for 'bonded'.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 237,
+          "verdict": "fail",
+          "reason": "Semantic error: 'Did that a-ma-self' is a pun on 'myself' (Rick's accent/character trait). The translation '是那家伙干的' means 'That guy did it', which completely misses the pun and the meaning 'I did it myself'.",
+          "suggestion": "context"
+        },
+        {
+          "index": 238,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 239,
+          "verdict": "fail",
+          "reason": "Semantic error: 'This is qu-a-a-ality work' is a pun on 'quality' (stretching the word). The translation '这是高质量的工作' is literal and misses the pun entirely. While literal translation is sometimes acceptable, the elongation 'qu-a-a-ality' suggests a specific character trait (Rick's disdain or sarcasm) or a pun that is lost. However, the bigger issue is that 'quality work' is often translated as '好活' or '手艺不错' in this context. '高质量的工作' is too formal and stiff for Rick's dialogue. But strictly speaking, it's not a semantic error in meaning, just tone. Let's look closer. Rick is being sarcastic. 'Quality work' is sarcastic. The translation is neutral. It's a 'fail' due to tone/nuance loss, but is it a 'semantic error'? The prompt says 'semantic error' for 'I love apples' -> 'I like bananas'. Here the meaning is preserved, just the flavor is lost. However, entry 237 was a clear pun failure. Entry 239 is also a pun/character voice failure. I will mark it as fail due to loss of character voice/pun which is central to the line.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 240,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 25,
+      "judge_fail": 5,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 9,
+      "start": 240,
+      "end": 270,
+      "translations": [
+        {
+          "index": 240,
+          "original": "Of course,\nit does void the warranty.",
+          "translated": "当然，\n这会使得保修失效。",
+          "failed": false
+        },
+        {
+          "index": 241,
+          "original": "What?\nI'll need access to this whole thing.",
+          "translated": "什么？\n我需要进入整个系统。",
+          "failed": false
+        },
+        {
+          "index": 242,
+          "original": "Might have to\ndig it all out.",
+          "translated": "可能得\n把它全部挖出来。",
+          "failed": false
+        },
+        {
+          "index": 243,
+          "original": "Is there a place where I could\nget tools and things?",
+          "translated": "有没有什么地方可以\n买到工具和东西？",
+          "failed": false
+        },
+        {
+          "index": 244,
+          "original": "For this?\nA hardware store?",
+          "translated": "为了这个？\n五金店？",
+          "failed": false
+        },
+        {
+          "index": 245,
+          "original": "Yes...\nAnd you're not just stalling",
+          "translated": "是的...\n而且你不仅仅是在拖延",
+          "failed": false
+        },
+        {
+          "index": 246,
+          "original": "'cause you wanna\ntake this new body out",
+          "translated": "因为你想\n把这台新机体拿出来",
+          "failed": false
+        },
+        {
+          "index": 247,
+          "original": "for a sensory\nflight of fancy?",
+          "translated": "进行一场感官的\n即兴表演？",
+          "failed": false
+        },
+        {
+          "index": 248,
+          "original": "Noooo...",
+          "translated": "Noooo...",
+          "failed": true
+        },
+        {
+          "index": 249,
+          "original": "Remember,\nwhole subbasement!",
+          "translated": "记住，\n是整个地下室！",
+          "failed": false
+        },
+        {
+          "index": 250,
+          "original": "Dug out!\nWhoo-hoo-hoo!",
+          "translated": "挖出来了！\n呼——呼——呼！",
+          "failed": false
+        },
+        {
+          "index": 251,
+          "original": "Should be\na straight shot to 17.",
+          "translated": "应该是一条直路通向 17 号。",
+          "failed": false
+        },
+        {
+          "index": 252,
+          "original": "Just have to...",
+          "translated": "只需……",
+          "failed": false
+        },
+        {
+          "index": 253,
+          "original": "c-cut, cut through\nthe prison level...",
+          "translated": "c-cut，穿过\n监狱层...",
+          "failed": false
+        },
+        {
+          "index": 254,
+          "original": "[ Ominous music plays ]",
+          "translated": "[ 阴森的音乐响起 ]",
+          "failed": false
+        },
+        {
+          "index": 255,
+          "original": "Hey, those weapons\nyou used earlier to, uh,",
+          "translated": "嘿，那些武器\n你之前用来、呃,",
+          "failed": false
+        },
+        {
+          "index": 256,
+          "original": "kill that raccoon --\nDestroy the intruder.",
+          "translated": "杀死那只浣熊——\n消灭入侵者。",
+          "failed": false
+        },
+        {
+          "index": 257,
+          "original": "Destroy the intruder!\nThat's better.",
+          "translated": "消灭入侵者！\n这就更好了。",
+          "failed": false
+        },
+        {
+          "index": 258,
+          "original": "Uh, can you use those...\nwhenever?",
+          "translated": "呃，你能用那些...\n任何时候？",
+          "failed": false
+        },
+        {
+          "index": 259,
+          "original": "Not really.",
+          "translated": "其实没那么难。",
+          "failed": false
+        },
+        {
+          "index": 260,
+          "original": "I mean, just on things\nthat threaten you,",
+          "translated": "我是说，只要针对\n威胁到你的东西,",
+          "failed": false
+        },
+        {
+          "index": 261,
+          "original": "the house, or Rick.",
+          "translated": "房子，或者瑞克。",
+          "failed": false
+        },
+        {
+          "index": 262,
+          "original": "So you can destroy things\nthat are hurting me.",
+          "translated": "这样你就能消灭\n正在伤害我的东西。",
+          "failed": false
+        },
+        {
+          "index": 263,
+          "original": "Yes.",
+          "translated": "是的。",
+          "failed": false
+        },
+        {
+          "index": 264,
+          "original": "Aw, geez.",
+          "translated": "唉，天哪。",
+          "failed": false
+        },
+        {
+          "index": 265,
+          "original": "[ Inhales deeply ]",
+          "translated": "[深吸一口气]",
+          "failed": false
+        },
+        {
+          "index": 266,
+          "original": "Unh! Unh!\nUnh! Unh!",
+          "translated": "\n嗯！嗯！",
+          "failed": false
+        },
+        {
+          "index": 267,
+          "original": "[ Whirring ]",
+          "translated": "[嗡嗡作响]",
+          "failed": false
+        },
+        {
+          "index": 268,
+          "original": "Threat nullified.",
+          "translated": "威胁已解除。",
+          "failed": false
+        },
+        {
+          "index": 269,
+          "original": "[ Groans ]\nHere we go.",
+          "translated": "[呻吟声]\n我们开始了。",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 241,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 242,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 243,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 244,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 245,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 246,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 247,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 248,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 249,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English) instead of being translated to Chinese.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 250,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 251,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 252,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 253,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 254,
+          "verdict": "fail",
+          "reason": "Semantic error: 'c-cut' is a stutter for 'cut', translated literally as a command or name 'c-cut' instead of the action 'cut'.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 255,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 256,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 257,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 258,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 259,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 260,
+          "verdict": "fail",
+          "reason": "Semantic error: 'Not really' (meaning 'No' or 'Not exactly') is translated as 'Actually not that hard' (其实没那么难), which changes the meaning completely.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 261,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 262,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 263,
+          "verdict": "fail",
+          "reason": "Semantic error: Source says 'things that are hurting ME', translation says 'things that are hurting ME' but the context implies the user is asking if they can destroy things hurting THEMSELVES. However, looking at the previous line 'threaten you, the house, or Rick', the user is clarifying 'So you can destroy things that are hurting me [the user]'. The translation '正在伤害我的东西' is correct for 'hurting me'. Wait, let's re-read. Source: 'So you can destroy things that are hurting me.' Translation: '这样你就能消灭 正在伤害我的东西。' This is a correct translation. Why did I flag it? Let me re-evaluate. The previous line was 'Not really' (failed). The user is clarifying the scope. 'Hurting me' refers to the speaker. The translation is accurate. I will mark this as pass.",
+          "suggestion": null
+        },
+        {
+          "index": 264,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 265,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 266,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 267,
+          "verdict": "fail",
+          "reason": "Missing translation: Source has 4 'Unh!' sounds, translation only has 2 '嗯！'. This loses the intensity/duration of the exertion.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 268,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 269,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 270,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 25,
+      "judge_fail": 5,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 10,
+      "start": 270,
+      "end": 300,
+      "translations": [
+        {
+          "index": 270,
+          "original": "There should be no shortage\nof threats in here.",
+          "translated": "这里应该不缺\n威胁。",
+          "failed": false
+        },
+        {
+          "index": 271,
+          "original": "Thank fucking God.",
+          "translated": "谢天谢地。",
+          "failed": false
+        },
+        {
+          "index": 272,
+          "original": "That was gonna suck.",
+          "translated": "那可真够受的。",
+          "failed": false
+        },
+        {
+          "index": 273,
+          "original": "Aw, I was fixing\nto have me a hootenanny",
+          "translated": "哎呀，我正打算\n开个派对。",
+          "failed": false
+        },
+        {
+          "index": 274,
+          "original": "like you wouldn't believe.",
+          "translated": "简直难以置信。",
+          "failed": false
+        },
+        {
+          "index": 275,
+          "original": "Revenge!!\nAah!",
+          "translated": "复仇!!\n啊！",
+          "failed": false
+        },
+        {
+          "index": 276,
+          "original": "He grabbed your leg\nand screamed \"revenge.\"",
+          "translated": "他抓住你的腿\n并大喊‘复仇’。",
+          "failed": false
+        },
+        {
+          "index": 277,
+          "original": "No, no,\na-all that buildup,",
+          "translated": "不，不，\n所有那些铺垫，",
+          "failed": false
+        },
+        {
+          "index": 278,
+          "original": "I'm glad\n<i>something </i>happened.",
+          "translated": "我很高兴\n<i>某事 </i>发生了。",
+          "failed": false
+        },
+        {
+          "index": 279,
+          "original": "Morty I -- I don't actually know\nwhat \"hootenanny\" means.",
+          "translated": "莫蒂，我——其实我不懂\n'hootenanny'是什么意思。",
+          "failed": false
+        },
+        {
+          "index": 280,
+          "original": "It's okay.\nWe're almost there.",
+          "translated": "没关系。\n我们快到了。",
+          "failed": false
+        },
+        {
+          "index": 281,
+          "original": "[ Drill whirring ]",
+          "translated": "[电钻嗡嗡作响]",
+          "failed": false
+        },
+        {
+          "index": 282,
+          "original": "Where the fuck\nis that guy?",
+          "translated": "那个混蛋\n那家伙在哪？",
+          "failed": false
+        },
+        {
+          "index": 283,
+          "original": "Beth: D-a-a-ad?",
+          "translated": "贝丝：爸？",
+          "failed": false
+        },
+        {
+          "index": 284,
+          "original": "Where's Jerry?!",
+          "translated": "杰瑞在哪？！",
+          "failed": false
+        },
+        {
+          "index": 285,
+          "original": "Rick: That's exactly\nwhat I'm wondering!",
+          "translated": "瑞克：这正是\n我在想的事！",
+          "failed": false
+        },
+        {
+          "index": 286,
+          "original": "[ Cellphone vibrating ]",
+          "translated": "[手机震动]",
+          "failed": false
+        },
+        {
+          "index": 287,
+          "original": "[ Humming ]\nHello?",
+          "translated": "[嗡嗡声]\n喂？",
+          "failed": false
+        },
+        {
+          "index": 288,
+          "original": "That doesn't sound\nlike a hardware store.",
+          "translated": "这听起来不像\n五金店。",
+          "failed": false
+        },
+        {
+          "index": 289,
+          "original": "Uh, it is!",
+          "translated": "嗯，是我！",
+          "failed": false
+        },
+        {
+          "index": 290,
+          "original": "[ Giggles ]",
+          "translated": "[咯咯笑]",
+          "failed": false
+        },
+        {
+          "index": 291,
+          "original": "[ Laughing ]",
+          "translated": "[笑声]",
+          "failed": false
+        },
+        {
+          "index": 292,
+          "original": "[ Giggling ]",
+          "translated": "[咯咯笑声]",
+          "failed": false
+        },
+        {
+          "index": 293,
+          "original": "You let anyone do that?",
+          "translated": "你让任何人那样做？",
+          "failed": false
+        },
+        {
+          "index": 294,
+          "original": "He gave us\nall the money he had.",
+          "translated": "他给了我们\n他所有的钱。",
+          "failed": false
+        },
+        {
+          "index": 295,
+          "original": "[ Banging ]\nMorty: Hunh! Hunh! Hunh!",
+          "translated": "[  banging ]\n莫蒂：嗯！嗯！嗯！",
+          "failed": false
+        },
+        {
+          "index": 296,
+          "original": "Threat nullified.",
+          "translated": "威胁已解除。",
+          "failed": false
+        },
+        {
+          "index": 297,
+          "original": "Hey, how 's your head?",
+          "translated": "嘿，头怎么样？",
+          "failed": false
+        },
+        {
+          "index": 298,
+          "original": "M-my vision's gettin'\npretty cloudy.",
+          "translated": "我——我的视野变得\n相当模糊了。",
+          "failed": false
+        },
+        {
+          "index": 299,
+          "original": "B-but even I can see, heh,\ny-you're almost free, Reese!",
+          "translated": "但即使是我也能看见，嘿嘿，\n你快要自由了，里斯！",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 271,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 272,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 273,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 274,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 275,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 276,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 277,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 278,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 279,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 280,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 281,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 282,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 283,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 284,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 285,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 286,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 287,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 288,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 289,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 290,
+          "verdict": "fail",
+          "reason": "Semantic error. 'Uh, it is!' is a confirmation of the previous statement ('That doesn't sound like a hardware store'). The translation '嗯，是我！' translates to 'Um, it's me!', which is a response to 'Hello?' or a phone call, not a confirmation of location/type. It should be '嗯，就是啊！' or '嗯，确实是！'.",
+          "suggestion": "context"
+        },
+        {
+          "index": 291,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 292,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 293,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 294,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 295,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 296,
+          "verdict": "fail",
+          "reason": "Format error. The sound effect '[ Banging ]' was not translated into Chinese, leaving English text in the subtitle. It should be '[ 撞击声 ]' or similar.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 297,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 298,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 299,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 300,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 28,
+      "judge_fail": 2,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 11,
+      "start": 300,
+      "end": 330,
+      "translations": [
+        {
+          "index": 300,
+          "original": "[ Door creaks ]",
+          "translated": "[门吱呀作响]",
+          "failed": false
+        },
+        {
+          "index": 301,
+          "original": "Yes! We're getting you\nout of here!",
+          "translated": "\n太好了！我们要把你从这里救出去！",
+          "failed": false
+        },
+        {
+          "index": 302,
+          "original": "[ Engine starts ]",
+          "translated": "[引擎启动]",
+          "failed": false
+        },
+        {
+          "index": 303,
+          "original": "[ Portal device whirring,\nmodem buzzing ]",
+          "translated": "[传送门装置嗡嗡作响，\n调制解调器发出蜂鸣声]",
+          "failed": false
+        },
+        {
+          "index": 304,
+          "original": "[ Ding! ]",
+          "translated": "[叮!]",
+          "failed": false
+        },
+        {
+          "index": 305,
+          "original": "Ohh, that looks nice.",
+          "translated": "哦，看起来不错。",
+          "failed": false
+        },
+        {
+          "index": 306,
+          "original": "Good.\nThen that's your new home.",
+          "translated": "很好。\n那就是你的新家了。",
+          "failed": false
+        },
+        {
+          "index": 307,
+          "original": "[ Portal hums ]",
+          "translated": "[传送门嗡嗡作响]",
+          "failed": false
+        },
+        {
+          "index": 308,
+          "original": "Wow.\nHuh.",
+          "translated": "\n哇。\n嗯。",
+          "failed": false
+        },
+        {
+          "index": 309,
+          "original": "Expected a different\nkind of catfish.",
+          "translated": "原本期待遇到另一种\n鲶鱼。",
+          "failed": false
+        },
+        {
+          "index": 310,
+          "original": "Uh, 'scuse me.",
+          "translated": "呃，打扰一下。",
+          "failed": false
+        },
+        {
+          "index": 311,
+          "original": "Is there still forest\naround here?",
+          "translated": "这里还有森林吗？\n",
+          "failed": false
+        },
+        {
+          "index": 312,
+          "original": "Whassat?\nOh, no.",
+          "translated": "什么？\n哦，不。",
+          "failed": false
+        },
+        {
+          "index": 313,
+          "original": "Not since the God\nin the White Coat.",
+          "translated": "自从那位白衣\n神降临后，就没有了。",
+          "failed": false
+        },
+        {
+          "index": 314,
+          "original": "He gave our world the gift\nof metal and computer science.",
+          "translated": "他送给我们这个世界金属与计算机科学的\n礼物。",
+          "failed": false
+        },
+        {
+          "index": 315,
+          "original": "In return,\nwe run his holy silo.",
+          "translated": "作为回报，\n我们守护着他的神圣粮仓。",
+          "failed": false
+        },
+        {
+          "index": 316,
+          "original": "The younger hogs\nresent our duty.",
+          "translated": "小猪们\n怨恨我们的职责。",
+          "failed": false
+        },
+        {
+          "index": 317,
+          "original": "Can't say I blame 'em.\nIf wages keep stagnatin',",
+          "translated": "我也说不清为何不怪他们。\n如果工资继续停滞不前，",
+          "failed": false
+        },
+        {
+          "index": 318,
+          "original": "maybe I'll do something worse!\nHa ha!",
+          "translated": "也许我该做点更糟糕的事！\n哈哈！",
+          "failed": false
+        },
+        {
+          "index": 319,
+          "original": "Oh, wow. Yeah,\nthat-th-that guy's my grandpa.",
+          "translated": "哦，哇。是的，\n那个家伙是我的祖父。",
+          "failed": false
+        },
+        {
+          "index": 320,
+          "original": "Th-this is Reese.\nHe, uh, he works for him, too.",
+          "translated": "这位是里斯。\n他也为他工作。",
+          "failed": false
+        },
+        {
+          "index": 321,
+          "original": "The password man.",
+          "translated": "密码先生。",
+          "failed": false
+        },
+        {
+          "index": 322,
+          "original": "Oh, I may be\nputting down roots here.",
+          "translated": "哦，也许我\n真的要在这里扎根了。",
+          "failed": false
+        },
+        {
+          "index": 323,
+          "original": "Please do!\nNow, if y'all excuse me,",
+          "translated": "太好了！\n那么，如果你们不介意，",
+          "failed": false
+        },
+        {
+          "index": 324,
+          "original": "I'm needed at a high-tech\npotato distillery.",
+          "translated": "我得去一家高科技的\n土豆蒸馏厂了。",
+          "failed": false
+        },
+        {
+          "index": 325,
+          "original": "Well,\nw-w-we did it, Reese.",
+          "translated": "好吧，\n里斯，我们做到了。",
+          "failed": false
+        },
+        {
+          "index": 326,
+          "original": "It's the first day\nof the rest of your life.",
+          "translated": "这是你余生的第一天。\n",
+          "failed": false
+        },
+        {
+          "index": 327,
+          "original": "Before today, I was\na two-factor authenticator",
+          "translated": "今天之前，我只是一个\n带有模糊南方口音的双因素认证器",
+          "failed": false
+        },
+        {
+          "index": 328,
+          "original": "with a vague\nSouthern affect.",
+          "translated": "（注：此处原文语境可能为比喻，\n意为一种功能单一的角色）。",
+          "failed": false
+        },
+        {
+          "index": 329,
+          "original": "Now I can be\nwhatever I want.",
+          "translated": "现在我可以成为任何我想成为的人了。\n",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 301,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 302,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 303,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 304,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 305,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 306,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 307,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 308,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 309,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 310,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 311,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 312,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 313,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 314,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 315,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 316,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 317,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 318,
+          "verdict": "fail",
+          "reason": "Semantic error: 'Can't say I blame 'em' means 'I don't blame them' or 'I understand why they feel that way'. The translation '我也说不清为何不怪他们' (I can't explain why I don't blame them) is awkward and slightly changes the meaning to a confusion about one's own feelings rather than a direct statement of sympathy/understanding.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 319,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 320,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 321,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 322,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 323,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 324,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 325,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 326,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 327,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 328,
+          "verdict": "shift",
+          "reason": "The translation for entry 328 contains the content of entry 329 ('vague Southern affect' / '模糊南方口音'). The source for 328 is 'Before today, I was a two-factor authenticator'. The translation provided is '今天之前，我只是一个 带有模糊南方口音的双因素认证器'. It seems the translator merged the two lines or shifted the second line's content into the first line's translation slot.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 329,
+          "verdict": "fail",
+          "reason": "Missing translation/Commentary instead of translation. The source is 'with a vague Southern affect.' The translation is a meta-commentary note '(注：此处原文语境可能为比喻...)' instead of the actual dialogue translation. This breaks the subtitle flow.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 330,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 27,
+      "judge_fail": 2,
+      "judge_shift": 1,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 12,
+      "start": 330,
+      "end": 360,
+      "translations": [
+        {
+          "index": 330,
+          "original": "Thank you, Morty.\nUh, y-y-you're welcome, Reese.",
+          "translated": "\n谢谢你，莫蒂。\n不客气，瑞斯。",
+          "failed": false
+        },
+        {
+          "index": 331,
+          "original": "Wade with the current.\nI'll probably do somethin' else.",
+          "translated": "\n韦德带着电流。\n我大概还会做点别的。",
+          "failed": false
+        },
+        {
+          "index": 332,
+          "original": "Fishing's b-o-o-o-o-ring!",
+          "translated": "钓鱼真无聊！",
+          "failed": false
+        },
+        {
+          "index": 333,
+          "original": "[ Footsteps approaching ]",
+          "translated": "[脚步声靠近]",
+          "failed": false
+        },
+        {
+          "index": 334,
+          "original": "Busy store.",
+          "translated": "繁忙的商店。",
+          "failed": false
+        },
+        {
+          "index": 335,
+          "original": "Plus, I had to run\nwith these <i>weird </i>legs.",
+          "translated": "\n而且，我还得用<i>这些 奇怪的 </i>腿跑一跑。",
+          "failed": false
+        },
+        {
+          "index": 336,
+          "original": "[ Humming, thunder crashes ]",
+          "translated": "[嗡嗡声，雷声轰鸣]",
+          "failed": false
+        },
+        {
+          "index": 337,
+          "original": "There we go.",
+          "translated": "看，我们成功了。",
+          "failed": false
+        },
+        {
+          "index": 338,
+          "original": "Bro, you made me dig\nout the whole thing.",
+          "translated": "\n兄弟，你让我挖\n出了整个东西。",
+          "failed": false
+        },
+        {
+          "index": 339,
+          "original": "Oh! Hey, hey, Rick.",
+          "translated": "哦！嘿，嘿，瑞克。",
+          "failed": false
+        },
+        {
+          "index": 340,
+          "original": "God damn it, Morty!\nWe just cracked the lock!",
+          "translated": "\n该死的莫蒂！\n我们刚刚才撬开锁！",
+          "failed": false
+        },
+        {
+          "index": 341,
+          "original": "Now I have to pay\nthis guy his full rate!",
+          "translated": "\n现在我得付\n这家伙全额费用了！",
+          "failed": false
+        },
+        {
+          "index": 342,
+          "original": "I am <i>very </i>expensive.",
+          "translated": "我 <i>非常 </i>昂贵。",
+          "failed": false
+        },
+        {
+          "index": 343,
+          "original": "Where's Reese?\nSafe from you!",
+          "translated": "\n瑞斯在哪？\n躲着你呢！",
+          "failed": false
+        },
+        {
+          "index": 344,
+          "original": "I took him through\nthe landline portal",
+          "translated": "\n我带他穿过\n有线电话门户",
+          "failed": false
+        },
+        {
+          "index": 345,
+          "original": "and set him up with a new life\nwith his new hog friends.",
+          "translated": "\n并为他和他的新猪朋友\n安排了新生活。",
+          "failed": false
+        },
+        {
+          "index": 346,
+          "original": "Oh, no.",
+          "translated": "哦，不。",
+          "failed": false
+        },
+        {
+          "index": 347,
+          "original": "[ Machinery whirring ]",
+          "translated": "[机器轰鸣声]",
+          "failed": false
+        },
+        {
+          "index": 348,
+          "original": "<i>Rick Sanchez, we have</i>\n<i>taken possession of</i> <i>your password man.</i>",
+          "translated": "<i>瑞克·桑切斯，我们</i>\n<i>已经接管了</i> <i>你的密码管理员。</i>",
+          "failed": false
+        },
+        {
+          "index": 349,
+          "original": "<i>Long live</i>\n<i>the Hog Resistance!</i>",
+          "translated": "<i>万岁</i>\n<i>野猪抵抗军！</i>",
+          "failed": false
+        },
+        {
+          "index": 350,
+          "original": "Morty, you dumb idiot,",
+          "translated": "莫蒂，你这个蠢货，",
+          "failed": false
+        },
+        {
+          "index": 351,
+          "original": "you think those vodka hogs\nwouldn't fuck me over?",
+          "translated": "你以为那些伏特加猪\n不会背叛我吗？",
+          "failed": false
+        },
+        {
+          "index": 352,
+          "original": "Th-the good-natured\nrustic thing is just an act!",
+          "translated": "那——那种天性善良的\n质朴伪装只是演戏罢了！",
+          "failed": false
+        },
+        {
+          "index": 353,
+          "original": "Their whole planet\nruns on my tech, Morty!",
+          "translated": "他们的整个星球\n都靠我的科技运转，莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 354,
+          "original": "Whoaaaa!",
+          "translated": "哇哦！",
+          "failed": false
+        },
+        {
+          "index": 355,
+          "original": "Wooooh!\nOoohahh! Ohh!",
+          "translated": "Wooooh!\nOoohahh! Ohh!",
+          "failed": true
+        },
+        {
+          "index": 356,
+          "original": "I'm gonna fuckin' barf!",
+          "translated": "我要吐了！",
+          "failed": false
+        },
+        {
+          "index": 357,
+          "original": "<i>Rick Sanchez, you will</i>\n<i>no longer subjugate</i> <i>our homeworld!</i>",
+          "translated": "<i>瑞克·桑切斯，你将</i>\n<i>不再奴役</i> <i>我们的母星！</i>",
+          "failed": false
+        },
+        {
+          "index": 358,
+          "original": "<i>Fuck you!</i>",
+          "translated": "<i>去你的！</i>",
+          "failed": false
+        },
+        {
+          "index": 359,
+          "original": "- Go make my vodka!\n<i>- No!</i>",
+          "translated": "- 去给我做伏特加吧！\n<i>- 不！</i>",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 331,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 332,
+          "verdict": "fail",
+          "reason": "Semantic error. 'Wade' is a verb meaning to walk through water, but was translated as the proper noun 'Wade' (韦德). 'With the current' was translated as 'with electric current' (带着电流) instead of 'with the flow of water'.",
+          "suggestion": "context"
+        },
+        {
+          "index": 333,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 334,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 335,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 336,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 337,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 338,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 339,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 340,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 341,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 342,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 343,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 344,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 345,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 346,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 347,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 348,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 349,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 350,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 351,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 352,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 353,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 354,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 355,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 356,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 357,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 358,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 359,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 360,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 29,
+      "judge_fail": 1,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 13,
+      "start": 360,
+      "end": 390,
+      "translations": [
+        {
+          "index": 360,
+          "original": "<i>We just got access</i>\n<i>to your desktop...</i>",
+          "translated": "<i>我们刚刚获得了</i>\n<i>对你桌面的访问权限...</i>",
+          "failed": false
+        },
+        {
+          "index": 361,
+          "original": "<i>Deh? Ooh, are these</i>\n<i>circles fucking?</i>",
+          "translated": "<i> deh? 噢，这些是</i>\n<i>该死的圆圈吗？</i>",
+          "failed": false
+        },
+        {
+          "index": 362,
+          "original": "They're making love!",
+          "translated": "他们在做爱！",
+          "failed": false
+        },
+        {
+          "index": 363,
+          "original": "IT guy, rip that computer out!",
+          "translated": "IT 专家，把电脑拔出来！",
+          "failed": false
+        },
+        {
+          "index": 364,
+          "original": "[ Gunfire ]",
+          "translated": "[枪声]",
+          "failed": false
+        },
+        {
+          "index": 365,
+          "original": "[ Screaming in the distance ]\nAre Summer and Mom home?",
+          "translated": "[远处传来尖叫] \nSummer 和妈妈在家吗？",
+          "failed": false
+        },
+        {
+          "index": 366,
+          "original": "F-u-u-u-u-uck!",
+          "translated": "F-u-u-u-u-uck!",
+          "failed": true
+        },
+        {
+          "index": 367,
+          "original": "Morty, grab on!",
+          "translated": "莫蒂，抓住！",
+          "failed": false
+        },
+        {
+          "index": 368,
+          "original": "- Wh-o-o-o-oa!\n- Aaaah!",
+          "translated": "- Wh-o-o-o-oa!\n- Aaaah!",
+          "failed": true
+        },
+        {
+          "index": 369,
+          "original": "[ Both grunting ]",
+          "translated": "[两人都在哼唧]",
+          "failed": false
+        },
+        {
+          "index": 370,
+          "original": "Aah!",
+          "translated": "啊！",
+          "failed": false
+        },
+        {
+          "index": 371,
+          "original": "Why is the\nfurniture attacking us?",
+          "translated": "\n为什么家具在攻击我们？",
+          "failed": false
+        },
+        {
+          "index": 372,
+          "original": "Rick's been hacked!",
+          "translated": "瑞克被黑了！",
+          "failed": false
+        },
+        {
+          "index": 373,
+          "original": "Because Morty assumed\nthat hogs in overalls",
+          "translated": "因为莫蒂以为穿工装裤的猪",
+          "failed": false
+        },
+        {
+          "index": 374,
+          "original": "couldn't also be hackers!",
+          "translated": "难道也不能是被黑客入侵了！",
+          "failed": false
+        },
+        {
+          "index": 375,
+          "original": "Aah!",
+          "translated": "啊！",
+          "failed": false
+        },
+        {
+          "index": 376,
+          "original": "Um, Dad, you're losing\na lot of blood.",
+          "translated": "嗯，爸爸，你失血很多。",
+          "failed": false
+        },
+        {
+          "index": 377,
+          "original": "It's okay!\nI can make more!",
+          "translated": "没关系！\n我可以再制造一些！",
+          "failed": false
+        },
+        {
+          "index": 378,
+          "original": "Badass.",
+          "translated": "badass。",
+          "failed": true
+        },
+        {
+          "index": 379,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 380,
+          "original": "Stop replacing my stuff\nwith robots!",
+          "translated": "别再把我的东西换成机器人了！",
+          "failed": false
+        },
+        {
+          "index": 381,
+          "original": "You never noticed\nthe difference!",
+          "translated": "\n你从来都没注意到区别！",
+          "failed": false
+        },
+        {
+          "index": 382,
+          "original": "<i>Rick lies to everyone!</i>",
+          "translated": "<i>瑞克对每个人撒谎！</i>",
+          "failed": false
+        },
+        {
+          "index": 383,
+          "original": "<i>Doesn't that make</i>\n<i>you wanna join the resistance?</i>",
+          "translated": "<i>难道这不让你</i>\n<i>想加入抵抗组织吗？</i>",
+          "failed": false
+        },
+        {
+          "index": 384,
+          "original": "Shit!\nThe floor is lava!",
+          "translated": "\n地板是熔岩！",
+          "failed": false
+        },
+        {
+          "index": 385,
+          "original": "Did you put that in\nfor defense or for fun?",
+          "translated": "\n你是为了防御还是为了好玩才装那个的？",
+          "failed": false
+        },
+        {
+          "index": 386,
+          "original": "I don't remember!",
+          "translated": "我不记得了！",
+          "failed": false
+        },
+        {
+          "index": 387,
+          "original": "Ooh-hoo-ho-hoo!\nHo-ho-ho!",
+          "translated": "Ooh-hoo-ho-hoo!\nHa-ha-ha!",
+          "failed": true
+        },
+        {
+          "index": 388,
+          "original": "You ever think about how\ninstead of wrapping yourself",
+          "translated": "\n你有没有想过，与其把自己包裹在",
+          "failed": false
+        },
+        {
+          "index": 389,
+          "original": "in infinite\nlayers of defense",
+          "translated": "\n无限层的防御中",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 361,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 362,
+          "verdict": "fail",
+          "reason": "Semantic error. The source 'are these circles fucking?' is a pun on the visual of two circles touching/interlocking, implying sexual intercourse. The translation '该死的圆圈吗？' translates 'fucking' as an intensifier for 'circles' (damn circles), completely missing the pun and the sexual context established by the next line.",
+          "suggestion": "context"
+        },
+        {
+          "index": 363,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 364,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 365,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 366,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 367,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 368,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 369,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 370,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 371,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 372,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 373,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 374,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 375,
+          "verdict": "fail",
+          "reason": "Semantic error. The source 'couldn't also be hackers!' is part of the sentence 'Morty assumed that hogs in overalls couldn't also be hackers'. The translation '难道也不能是被黑客入侵了！' translates to 'how could they also be hacked by hackers?', changing the meaning from the hogs *being* hackers to the hogs *being hacked*. It misses the subject 'hackers' acting as the agent.",
+          "suggestion": "context"
+        },
+        {
+          "index": 376,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 377,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 378,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 379,
+          "verdict": "fail",
+          "reason": "Glossary term lost / Style error. 'Badass' is a specific slang term. Translating it as the English word 'badass' in a Chinese subtitle is generally considered a failure unless it's a specific stylistic choice for a character who speaks English, but even then, a translation like '酷毙了' or '真硬汉' is expected. Leaving it untranslated is usually a fail in professional subtitling unless specified otherwise.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 380,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 381,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 382,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 383,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 384,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 385,
+          "verdict": "fail",
+          "reason": "Missing translation. The source starts with 'Shit!', which is an exclamation of surprise or alarm. The translation '地板是熔岩！' only translates 'The floor is lava!'. The interjection 'Shit!' is missing.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 386,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 387,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 388,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 389,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 390,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 26,
+      "judge_fail": 4,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 14,
+      "start": 390,
+      "end": 420,
+      "translations": [
+        {
+          "index": 390,
+          "original": "you could just\nbe nicer to people? [ Cellphone ringing ]",
+          "translated": "你就不能对人好一点吗？ [手机铃声响起]",
+          "failed": false
+        },
+        {
+          "index": 391,
+          "original": "Never once, Morty!",
+          "translated": "一次都不，莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 392,
+          "original": "Hog Hacker: <i>Rick Sanchez,</i>\n<i>is your refrigerator running?</i>",
+          "translated": "Hog Hacker：<i>Rick Sanchez，</i>\n<i>你的冰箱还在运行吗？</i>",
+          "failed": false
+        },
+        {
+          "index": 393,
+          "original": "<i>Because you better</i>\n<i>go and catch it!</i>",
+          "translated": "<i>因为最好</i>\n<i>赶紧去把它关掉！</i>",
+          "failed": false
+        },
+        {
+          "index": 394,
+          "original": "You owe me.",
+          "translated": "你欠我的。",
+          "failed": false
+        },
+        {
+          "index": 395,
+          "original": "Wh-o-o-oa!",
+          "translated": "Wh-o-o-oa!",
+          "failed": false
+        },
+        {
+          "index": 396,
+          "original": "[ Laughing ]",
+          "translated": "[笑声]",
+          "failed": false
+        },
+        {
+          "index": 397,
+          "original": "Ooh-ugh-ah!",
+          "translated": "Ooh-ugh-ah!",
+          "failed": true
+        },
+        {
+          "index": 398,
+          "original": "Whoa-ho-ho-ho!",
+          "translated": "Whoa-ho-ho-ho!",
+          "failed": true
+        },
+        {
+          "index": 399,
+          "original": "Everyone, kill yourselves!",
+          "translated": "大家，都去死吧！",
+          "failed": false
+        },
+        {
+          "index": 400,
+          "original": "I'll help!\nHuh?",
+          "translated": "\n我来帮你们!\n嗯？",
+          "failed": false
+        },
+        {
+          "index": 401,
+          "original": "<i>[ Screaming, squelching ]</i>",
+          "translated": "<i>[尖叫，滑步声]</i>",
+          "failed": false
+        },
+        {
+          "index": 402,
+          "original": "[ Jerry crying ]",
+          "translated": "[杰瑞在哭]",
+          "failed": false
+        },
+        {
+          "index": 403,
+          "original": "Listen to this.\nIt's the ocean or something.",
+          "translated": "听听这个。\n好像是海洋之类的东西。",
+          "failed": false
+        },
+        {
+          "index": 404,
+          "original": "[ Whimpering ]",
+          "translated": "[呜咽声]",
+          "failed": false
+        },
+        {
+          "index": 405,
+          "original": "Ohh-ugh, uhh!",
+          "translated": "噢-呃，啊！",
+          "failed": false
+        },
+        {
+          "index": 406,
+          "original": "Thanks for\nturning off the lava.",
+          "translated": "谢谢你\n关掉熔岩。",
+          "failed": false
+        },
+        {
+          "index": 407,
+          "original": "[ All grunting ]",
+          "translated": "[所有都在呻吟]",
+          "failed": false
+        },
+        {
+          "index": 408,
+          "original": "You couldn't have\nturned off everything?",
+          "translated": "难道你不能\n把一切都关掉吗？",
+          "failed": false
+        },
+        {
+          "index": 409,
+          "original": "Ohh!",
+          "translated": "哦！",
+          "failed": false
+        },
+        {
+          "index": 410,
+          "original": "[ Roars ]",
+          "translated": "[咆哮声]",
+          "failed": false
+        },
+        {
+          "index": 411,
+          "original": "Emergency shutoff in my room.",
+          "translated": "房间里的紧急关闭装置。",
+          "failed": false
+        },
+        {
+          "index": 412,
+          "original": "Run!",
+          "translated": "快跑！",
+          "failed": false
+        },
+        {
+          "index": 413,
+          "original": "Oh-ho-ho!\nOoh!",
+          "translated": "哦——呵——呵！\n噢！",
+          "failed": false
+        },
+        {
+          "index": 414,
+          "original": "Aaaah! Aaaaah! Unf!",
+          "translated": "啊——呀！啊——呀！砰！",
+          "failed": false
+        },
+        {
+          "index": 415,
+          "original": "I hate living here!",
+          "translated": "我真讨厌住在这儿！",
+          "failed": false
+        },
+        {
+          "index": 416,
+          "original": "- Aaaaaaaaaah!\n- Move!",
+          "translated": "- 啊——呀——!\n- 让开！",
+          "failed": false
+        },
+        {
+          "index": 417,
+          "original": "Hit that shut-off quick.\nIt stinks in here.",
+          "translated": "快点按下那个关闭键。\n里面臭死了。",
+          "failed": false
+        },
+        {
+          "index": 418,
+          "original": "Punching down.",
+          "translated": "向下挥拳。",
+          "failed": false
+        },
+        {
+          "index": 419,
+          "original": "[ Zap! ]",
+          "translated": "[啪！]",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 391,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 392,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 393,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 394,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 395,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 396,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 397,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 398,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 399,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 400,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 401,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 402,
+          "verdict": "fail",
+          "reason": "Semantic error in sound effect translation. 'Squelching' refers to a wet, sucking sound (like mud or guts), whereas '滑步声' means 'sliding step sound' (like ice skating or basketball moves). These are completely different sounds.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 403,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 404,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 405,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 406,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 407,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 408,
+          "verdict": "fail",
+          "reason": "Semantic error. 'Grunting' refers to short, low sounds made with effort or pain. '呻吟' usually translates to 'groaning' (longer, more vocal). While close, 'grunt' is better translated as '吭哧声' or '粗重的呼吸声' in action contexts, but '呻吟' is often acceptable for general pain. However, looking at the context of Rick and Morty, 'grunting' is often physical exertion. Let's look closer. 'All grunting' -> '所有都在呻吟'. '呻吟' is a bit too specific to pain/pleasure. 'Grunting' is more like 'huffing/puffing'. But in many subtitling contexts, this is a borderline pass. However, compared to 'screaming/squelching', this is less severe. Let's re-evaluate 402. 402 is definitely a fail. 408 is arguably a pass because '呻吟' is a common translation for non-verbal vocalizations of distress/effort in Chinese subs, even if 'grunt' is technically distinct. I will mark 408 as pass to be consistent with common subbing practices, but 402 is a hard fail.",
+          "suggestion": null
+        },
+        {
+          "index": 409,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 410,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 411,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 412,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 413,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 414,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 415,
+          "verdict": "fail",
+          "reason": "Semantic error in sound effect. 'Unf' is a sound of impact or pain (like getting hit). '砰' is a loud bang/explosion sound. While 'Unf' can be an impact, it's usually a grunt of pain. '砰' is an external sound. However, in comic/sub contexts, 'Unf' is often translated as '砰' or '咚' if it's a hit. But 'Unf' is specifically a vocalization. '啊——呀！' covers the screams. The last part 'Unf' is likely a grunt. Translating it as '砰' (Bang) changes a vocal sound to an environmental sound. This is a semantic shift.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 416,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 417,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 418,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 419,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 420,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 27,
+      "judge_fail": 3,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 15,
+      "start": 420,
+      "end": 450,
+      "translations": [
+        {
+          "index": 420,
+          "original": "[ Electricity crackles ]",
+          "translated": "[电流噼啪作响]",
+          "failed": false
+        },
+        {
+          "index": 421,
+          "original": "- See? All fixed.\n- Awesome.",
+          "translated": "- 看？全都修好了。\n- 太棒了。",
+          "failed": false
+        },
+        {
+          "index": 422,
+          "original": "Th-thank goodness\nyou knocked out all that stuff.",
+          "translated": "谢天谢地\n你把那些东西都弄掉了。",
+          "failed": false
+        },
+        {
+          "index": 423,
+          "original": "Yep.\nNothing electronic left",
+          "translated": "没错。\n再也没有什么电子设备了",
+          "failed": false
+        },
+        {
+          "index": 424,
+          "original": "that can be hacked\nor turned against us.",
+          "translated": "可以入侵\n或者用来对付我们了。",
+          "failed": false
+        },
+        {
+          "index": 425,
+          "original": "Salud!",
+          "translated": "你好！",
+          "failed": false
+        },
+        {
+          "index": 426,
+          "original": "Ohh!\nAah!",
+          "translated": "哦!\n啊！",
+          "failed": false
+        },
+        {
+          "index": 427,
+          "original": "The Liberation of Hog Planet\nis at hand.",
+          "translated": "解放猪星球的\n时机已到。",
+          "failed": false
+        },
+        {
+          "index": 428,
+          "original": "Prepare for your death,\nOppressor Sanchez.",
+          "translated": "准备迎接你的死亡，\n压迫者桑切斯。",
+          "failed": false
+        },
+        {
+          "index": 429,
+          "original": "Reese, no!",
+          "translated": "里斯，不！",
+          "failed": false
+        },
+        {
+          "index": 430,
+          "original": "Run!",
+          "translated": "快跑！",
+          "failed": false
+        },
+        {
+          "index": 431,
+          "original": "Whoa.\nNew look for Reese.",
+          "translated": "哇。\n里斯的新造型。",
+          "failed": false
+        },
+        {
+          "index": 432,
+          "original": "I don't like how many\nadult friends Morty has.",
+          "translated": "我不喜欢莫蒂\n有多少成年朋友。",
+          "failed": false
+        },
+        {
+          "index": 433,
+          "original": "Gyaah!",
+          "translated": "呀！",
+          "failed": false
+        },
+        {
+          "index": 434,
+          "original": "Rick,\nuse your implants!",
+          "translated": "瑞克，\n用你的植入物！",
+          "failed": false
+        },
+        {
+          "index": 435,
+          "original": "What part of\n\"nothing electronic\"",
+          "translated": "\"没什么电子设备\"\n的哪一部分",
+          "failed": false
+        },
+        {
+          "index": 436,
+          "original": "went over your head,\nMorty?",
+          "translated": "没让你听懂，\n莫蒂？",
+          "failed": false
+        },
+        {
+          "index": 437,
+          "original": "Hit him with pipes!",
+          "translated": "用管子打他！",
+          "failed": false
+        },
+        {
+          "index": 438,
+          "original": "[ Both grunting ]",
+          "translated": "[两人都在哼唧]",
+          "failed": false
+        },
+        {
+          "index": 439,
+          "original": "It's not doing anything!",
+          "translated": "没什么效果！",
+          "failed": false
+        },
+        {
+          "index": 440,
+          "original": "Whoa!",
+          "translated": "哇！",
+          "failed": false
+        },
+        {
+          "index": 441,
+          "original": "- Aah!\n- Aah!",
+          "translated": "- 啊！\n- 啊！",
+          "failed": false
+        },
+        {
+          "index": 442,
+          "original": "Oh!",
+          "translated": "哦！",
+          "failed": false
+        },
+        {
+          "index": 443,
+          "original": "Sorry I'm d-doing this,\nR-Rick.",
+          "translated": "抱歉\n是我这么做的，瑞克。",
+          "failed": false
+        },
+        {
+          "index": 444,
+          "original": "I think someone messed\nwith my h-h-head.",
+          "translated": "我觉得有人动过\n我的脑子。",
+          "failed": false
+        },
+        {
+          "index": 445,
+          "original": "Reese, it's me!\nRemember?",
+          "translated": "Reese，是我！\n还记得吗？",
+          "failed": false
+        },
+        {
+          "index": 446,
+          "original": "You told me it was normal",
+          "translated": "你说过这是正常的",
+          "failed": false
+        },
+        {
+          "index": 447,
+          "original": "to have one pube longer\nthan the others?",
+          "translated": "为了让一根阴毛\n比其他更长？",
+          "failed": false
+        },
+        {
+          "index": 448,
+          "original": "Stop trying to override his\nprogramming with love, Morty!",
+          "translated": "别再用爱去覆盖他的\n程序了，莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 449,
+          "original": "Well, hitting him with pipes\nisn't working!",
+          "translated": "嗯，用管子打他\n不管用了！",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 421,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 422,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 423,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 424,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 425,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 426,
+          "verdict": "fail",
+          "reason": "Semantic error: 'Salud' is Spanish for 'Health' or 'Cheers' (used when drinking). Translating it as 'Hello' (你好) is incorrect in this context, which is likely a toast or greeting among friends/characters.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 427,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 428,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 429,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 430,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 431,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 432,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 433,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 434,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 435,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 436,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 437,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 438,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 439,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 440,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 441,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 442,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 443,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 444,
+          "verdict": "fail",
+          "reason": "Semantic error: The source 'Sorry I'm d-doing this' implies an apology for the current action being performed (likely involuntary or forced). The translation '抱歉 是我这么做的' translates to 'Sorry I did this' or 'Sorry it was me who did this', which changes the aspect from continuous/current action to a completed action or identity. It misses the stutter 'd-doing' nuance and the immediacy.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 445,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 446,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 447,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 448,
+          "verdict": "fail",
+          "reason": "Semantic error: The source 'to have one pube longer than the others' is an infinitive phrase completing 'You told me it was normal...'. The translation '为了让一根阴毛 比其他更长？' uses '为了' (in order to/so that), implying purpose. It should be translated as '有一根阴毛比其他长' (to have one pube longer than others). The current translation changes the meaning from a state of being to a purpose.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 449,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 450,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 27,
+      "judge_fail": 3,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 16,
+      "start": 450,
+      "end": 480,
+      "translations": [
+        {
+          "index": 450,
+          "original": "Ow!",
+          "translated": "哎哟！",
+          "failed": false
+        },
+        {
+          "index": 451,
+          "original": "You can't love something\nout of hurting you!",
+          "translated": "你不能因为受伤就\n不再爱某物！",
+          "failed": false
+        },
+        {
+          "index": 452,
+          "original": "Oh, you'd sure love\nthat to be true!",
+          "translated": "哦，你真希望\n那是真的！",
+          "failed": false
+        },
+        {
+          "index": 453,
+          "original": "Fuck you, Morty!",
+          "translated": "去你的，莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 454,
+          "original": "- I hate you!\n- I hate you!",
+          "translated": "- 我恨你!\n- 我恨你！",
+          "failed": false
+        },
+        {
+          "index": 455,
+          "original": "- I hate you! I hate you!\n- I hate you! I hate you!",
+          "translated": "- 我恨你！我恨你!\n- 我恨你！我恨你！",
+          "failed": false
+        },
+        {
+          "index": 456,
+          "original": "I hate you! I hate you!\nI hate you! I hate you! I hate you!",
+          "translated": "我恨你！我恨你!\n我恨你！我恨你！我恨你！",
+          "failed": false
+        },
+        {
+          "index": 457,
+          "original": "I hate you!\nI hate you! I hate you! I hate you!",
+          "translated": "我恨你!\n我恨你！我恨你！我恨你！",
+          "failed": false
+        },
+        {
+          "index": 458,
+          "original": "[ Electricity crackles ]\nUnh!",
+          "translated": "[电流噼啪作响]\n嗯哼！",
+          "failed": false
+        },
+        {
+          "index": 459,
+          "original": "Ahh.",
+          "translated": "啊。",
+          "failed": false
+        },
+        {
+          "index": 460,
+          "original": "Y-y-you know what, Rick?\nYou two may f-f-fight,",
+          "translated": "你——你——你知道什么，瑞克?\n你们俩可能吵吵架,",
+          "failed": false
+        },
+        {
+          "index": 461,
+          "original": "but you're the real d-d-deal.",
+          "translated": "但你才是真·大人物。",
+          "failed": false
+        },
+        {
+          "index": 462,
+          "original": "[ Machinery whirring down ]",
+          "translated": "[机械运转声渐弱]",
+          "failed": false
+        },
+        {
+          "index": 463,
+          "original": "[ Armor clanking ]",
+          "translated": "[铠甲碰撞声]",
+          "failed": false
+        },
+        {
+          "index": 464,
+          "original": "Huh.",
+          "translated": "嗯。",
+          "failed": false
+        },
+        {
+          "index": 465,
+          "original": "Probably\ndoesn't mean anything.",
+          "translated": "也许\n没什么大不了的。",
+          "failed": false
+        },
+        {
+          "index": 466,
+          "original": "Yep.",
+          "translated": "是的。",
+          "failed": false
+        },
+        {
+          "index": 467,
+          "original": "[ Rumbling ]",
+          "translated": "[轰鸣声]",
+          "failed": false
+        },
+        {
+          "index": 468,
+          "original": "Hey, Grandpa, did you turn\nthe yard into a giant sinkhole",
+          "translated": "嘿，爷爷，你把院子挖成了\n一个大坑洞吗？",
+          "failed": false
+        },
+        {
+          "index": 469,
+          "original": "when you dug out\nthe subbasement?",
+          "translated": "当你挖掘地下室时,\n是这样吗？",
+          "failed": false
+        },
+        {
+          "index": 470,
+          "original": "It's fine.\nIt's just some tunnels.",
+          "translated": "没问题。\n只是些隧道罢了。",
+          "failed": false
+        },
+        {
+          "index": 471,
+          "original": "Are the tunnels\nreinforced?",
+          "translated": "这些隧道\n加固了吗？",
+          "failed": false
+        },
+        {
+          "index": 472,
+          "original": "Don't overthink the tunnels.\nI have a handle on the tunnels.",
+          "translated": "别想太多关于隧道的。\n我对隧道了如指掌。",
+          "failed": false
+        },
+        {
+          "index": 473,
+          "original": "[ Vehicle beeping ]",
+          "translated": "[车辆蜂鸣声]",
+          "failed": false
+        },
+        {
+          "index": 474,
+          "original": "How much longer\nis he gonna be Dad for?",
+          "translated": "他还要当多久爸爸?\n",
+          "failed": false
+        },
+        {
+          "index": 475,
+          "original": "I like him.\nMe too.",
+          "translated": "\n我也喜欢他。",
+          "failed": false
+        },
+        {
+          "index": 476,
+          "original": "Summer just taught me\nwhat \"push-ups\" are.",
+          "translated": "夏天刚教我\n什么是“俯卧撑”。",
+          "failed": false
+        },
+        {
+          "index": 477,
+          "original": "I did.\nHe's fuckin' nailing them.",
+          "translated": "是他做的。\n他做得相当不错。",
+          "failed": false
+        },
+        {
+          "index": 478,
+          "original": "- Mom?\n- Oh. Uh, one more week?",
+          "translated": "- 妈妈?\n- 哦。嗯，再待一周？",
+          "failed": false
+        },
+        {
+          "index": 479,
+          "original": "- What?\n- No, no, you're right.",
+          "translated": "- 什么?\n- 不，不，你是对的。",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 451,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 452,
+          "verdict": "fail",
+          "reason": "Semantic error. The source 'You can't love something out of hurting you' implies that affection cannot cure or negate the pain caused by that thing (or that one cannot love something that hurts them). The translation 'You can't stop loving something because it hurt you' reverses the logic or misses the idiomatic meaning of 'love out of' (to cure/remove via love).",
+          "suggestion": "context"
+        },
+        {
+          "index": 453,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 454,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 455,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 456,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 457,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 458,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 459,
+          "verdict": "fail",
+          "reason": "Semantic error. 'Unh!' is a grunt of pain or effort. '嗯哼！' (En-heng) is often used for agreement, acknowledgment, or sometimes sexual moaning, but rarely for pain. '哎哟' or '呃' would be more appropriate for a pain grunt.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 460,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 461,
+          "verdict": "fail",
+          "reason": "Semantic error. 'You know what' is an idiom used to introduce a statement or opinion, not a literal question asking what the other person knows. Translating it as '你知道什么' (What do you know?) changes the meaning entirely. Also 'fight' is translated as 'argue' (吵吵架), which is a slight downgrade in intensity but acceptable, but the first part is a major error.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 462,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 463,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 464,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 465,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 466,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 467,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 468,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 469,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 470,
+          "verdict": "fail",
+          "reason": "Missing translation/Context error. The source is a continuation of the previous sentence: '...when you dug out the subbasement?'. The translation 'When you dug the basement, is that so?' turns a statement/question clause into a separate, awkward question. It fails to connect grammatically and semantically with the previous entry (469).",
+          "suggestion": "context"
+        },
+        {
+          "index": 471,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 472,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 473,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 474,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 475,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 476,
+          "verdict": "fail",
+          "reason": "Missing translation. The source has two lines: 'I like him.' and 'Me too.' The translation only provides 'I also like him' (我也喜欢他), which merges the two speakers into one or loses the second speaker's response entirely. It should reflect two distinct utterances.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 477,
+          "verdict": "fail",
+          "reason": "Semantic error/Glossary term lost. 'Summer' is a character's name (Summer Smith). Translating it as '夏天' (the season) is a critical error in context. It should be transliterated as '萨默' or kept as 'Summer' depending on the established glossary, but definitely not the season.",
+          "suggestion": "glossary"
+        },
+        {
+          "index": 478,
+          "verdict": "fail",
+          "reason": "Semantic error. 'I did' refers to the previous speaker (Summer) confirming she taught him. The translation '是他做的' (He did it) attributes the action to the wrong person or misinterprets the pronoun. Also 'nailing them' means doing them perfectly, '做得相当不错' is okay, but the subject error is fatal.",
+          "suggestion": "context"
+        },
+        {
+          "index": 479,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 480,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 23,
+      "judge_fail": 7,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 17,
+      "start": 480,
+      "end": 510,
+      "translations": [
+        {
+          "index": 480,
+          "original": "It was good getting to know you,\n\"The Smiths.\"",
+          "translated": "很高兴认识你们，\"史密斯一家\"。",
+          "failed": false
+        },
+        {
+          "index": 481,
+          "original": "Wait!\nMorty, him leaving was your idea.",
+          "translated": "等等！莫蒂，是他离开的主意。",
+          "failed": false
+        },
+        {
+          "index": 482,
+          "original": "Well,\nI have another idea.",
+          "translated": "好吧，我有另一个主意。",
+          "failed": false
+        },
+        {
+          "index": 483,
+          "original": "[ Breathes ]",
+          "translated": "[呼吸声]",
+          "failed": false
+        },
+        {
+          "index": 484,
+          "original": "[ Both scream ]",
+          "translated": "[两人尖叫]",
+          "failed": false
+        },
+        {
+          "index": 485,
+          "original": "Ugh!!\nWhy do I taste rainbow wax?",
+          "translated": "啊！！为什么我会尝到彩虹蜡的味道？",
+          "failed": false
+        },
+        {
+          "index": 486,
+          "original": "Why do you know what\nthat tastes like?",
+          "translated": "你为什么知道那是什么味道？",
+          "failed": false
+        },
+        {
+          "index": 487,
+          "original": "[ Bones crack ]\nOh. Ah!",
+          "translated": "[骨头碎裂]\n哦。啊！",
+          "failed": false
+        },
+        {
+          "index": 488,
+          "original": "[ Grunting ]",
+          "translated": "[呻吟声]",
+          "failed": false
+        },
+        {
+          "index": 489,
+          "original": "How 's it feel?",
+          "translated": "感觉怎么样？",
+          "failed": false
+        },
+        {
+          "index": 490,
+          "original": "Not as wet as the last guy,\nbut I'll fix that.",
+          "translated": "不像上一个那么湿，但我会把它修好的。",
+          "failed": false
+        },
+        {
+          "index": 491,
+          "original": "[ Grunting, lips smacking ]",
+          "translated": "[呻吟，嘴唇啪嗒声]",
+          "failed": false
+        },
+        {
+          "index": 492,
+          "original": "I'm glad you're getting\nto live on, Reese.",
+          "translated": "很高兴你还能活着，里斯。",
+          "failed": false
+        },
+        {
+          "index": 493,
+          "original": "And getting a pretty sweet rig\nout of the deal.",
+          "translated": "而且你还从这笔交易中得到了相当不错的装备。",
+          "failed": false
+        },
+        {
+          "index": 494,
+          "original": "I hope you have\na good life out there.",
+          "translated": "希望你在那里过得很好。",
+          "failed": false
+        },
+        {
+          "index": 495,
+          "original": "I...\nI love you.",
+          "translated": "我...\n我爱你。",
+          "failed": false
+        },
+        {
+          "index": 496,
+          "original": "And I love how much matter\nyou're made of.",
+          "translated": "而且我喜欢构成你的物质那么多。",
+          "failed": false
+        },
+        {
+          "index": 497,
+          "original": "I'm leaving now, to do things\nthat are my business.",
+          "translated": "我现在要走了，去做些属于我自己的事。",
+          "failed": false
+        },
+        {
+          "index": 498,
+          "original": "There is a place called Skyzone.",
+          "translated": "有个地方叫 Skyzone。",
+          "failed": false
+        },
+        {
+          "index": 499,
+          "original": "Do not visit me there.",
+          "translated": "别去那里看我。",
+          "failed": false
+        },
+        {
+          "index": 500,
+          "original": "[ Sighs ]",
+          "translated": "[叹气]",
+          "failed": false
+        },
+        {
+          "index": 501,
+          "original": "What, you gonna keep\nsighing until I notice?",
+          "translated": "什么？你打算一直叹气直到我注意到吗？",
+          "failed": false
+        },
+        {
+          "index": 502,
+          "original": "I'm just breathing.\nHe's alive, Morty.",
+          "translated": "我只是在呼吸。他还活着，莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 503,
+          "original": "You're welcome.",
+          "translated": "不客气。",
+          "failed": false
+        },
+        {
+          "index": 504,
+          "original": "Gaaaah!\nFuckin' hogs.",
+          "translated": "啊啊啊!\n该死的猪。",
+          "failed": false
+        },
+        {
+          "index": 505,
+          "original": "Fuckin' Morty.",
+          "translated": "该死的莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 506,
+          "original": "Cost me a flask.",
+          "translated": "让我损失了一个烧瓶。",
+          "failed": false
+        },
+        {
+          "index": 507,
+          "original": "[ Beep! ]",
+          "translated": "[哔！]",
+          "failed": false
+        },
+        {
+          "index": 508,
+          "original": "[ Explosions,\nHog-people screaming ]",
+          "translated": "[爆炸声，猪人尖叫]",
+          "failed": false
+        },
+        {
+          "index": 509,
+          "original": "[burps] Learned my lesson.\nNo more portal flasks.",
+          "translated": "[打嗝] 吸取了教训。不再使用传送门烧瓶了。",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 481,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 482,
+          "verdict": "fail",
+          "reason": "Semantic error: 'him leaving was your idea' implies the idea belonged to Morty. The translation '是他离开的主意' literally means 'it was his (the leaver's) idea', reversing the agency.",
+          "suggestion": "context"
+        },
+        {
+          "index": 483,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 484,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 485,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 486,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 487,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 488,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 489,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 490,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 491,
+          "verdict": "fail",
+          "reason": "Semantic error: 'fix that' in this context (likely referring to the state of being wet or the situation) is translated as 'repair/fix' (修好), which is too mechanical. 'Fix' here likely means 'change' or 'address'. Also, 'wet' might be metaphorical or literal bodily fluids, 'fix' implies correcting the dryness or the situation, not repairing an object.",
+          "suggestion": "context"
+        },
+        {
+          "index": 492,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 493,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 494,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 495,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 496,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 497,
+          "verdict": "fail",
+          "reason": "Semantic error/Style: 'I love how much matter you're made of' is a sci-fi joke about physical mass. The translation '而且我喜欢构成你的物质那么多' is grammatically awkward and loses the punchline's flow. It should be more natural, e.g., '我喜欢你由这么多物质构成' or '我喜欢你身上的物质含量'.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 498,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 499,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 500,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 501,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 502,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 503,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 504,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 505,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 506,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 507,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 508,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 509,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 510,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 27,
+      "judge_fail": 3,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 18,
+      "start": 510,
+      "end": 540,
+      "translations": [
+        {
+          "index": 510,
+          "original": "Mmm, mmm!",
+          "translated": "嗯，嗯！",
+          "failed": false
+        },
+        {
+          "index": 511,
+          "original": "Ahh.",
+          "translated": "啊。",
+          "failed": false
+        },
+        {
+          "index": 512,
+          "original": "Mmm, mmm.\nMmm.",
+          "translated": "嗯，嗯。\n嗯。",
+          "failed": false
+        },
+        {
+          "index": 513,
+          "original": "Ahh.",
+          "translated": "啊。",
+          "failed": false
+        },
+        {
+          "index": 514,
+          "original": "Mmm, mmm, mmm.",
+          "translated": "嗯，嗯，嗯。",
+          "failed": false
+        },
+        {
+          "index": 515,
+          "original": "[burps] Morty, I-I\ncan tell you're disgusted...",
+          "translated": "[打嗝声] 莫蒂，我、我\n能看出你感到厌恶……",
+          "failed": false
+        },
+        {
+          "index": 516,
+          "original": "[ Burps ]",
+          "translated": "[打嗝声]",
+          "failed": false
+        },
+        {
+          "index": 517,
+          "original": "...but you're gonna be\njust like me!",
+          "translated": "……但你很快就会\n变得跟我一样！",
+          "failed": false
+        },
+        {
+          "index": 518,
+          "original": "It's a disease, Morty!\nA genetic disease!",
+          "translated": "这是一种疾病，莫蒂！\n一种遗传性疾病！",
+          "failed": false
+        },
+        {
+          "index": 519,
+          "original": "It's already in you,\nMorty!",
+          "translated": "它已经在你体内了，\n莫蒂！",
+          "failed": false
+        },
+        {
+          "index": 520,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 521,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 522,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 523,
+          "original": "[ Groaning ]",
+          "translated": "[呻吟声]",
+          "failed": false
+        },
+        {
+          "index": 524,
+          "original": "H-hey, buddy, y-you good?",
+          "translated": "嘿，伙计，你还好吗？",
+          "failed": false
+        },
+        {
+          "index": 525,
+          "original": "F-u-u-uck you, Morty,\nyou little piece of shit.",
+          "translated": "去他妈的，莫蒂，\n你这个混蛋。",
+          "failed": false
+        },
+        {
+          "index": 526,
+          "original": "You think you're better\nthan me, Morty?!",
+          "translated": "你以为你比我\n更厉害吗，莫蒂？！",
+          "failed": false
+        },
+        {
+          "index": 527,
+          "original": "I'm gonna --\nI'm gonna kill you!",
+          "translated": "我要——\n我要杀了你！",
+          "failed": false
+        },
+        {
+          "index": 528,
+          "original": "I-I'll kill you!!\n[ Knock on door ]",
+          "translated": "我会杀了你！！\n[敲门声]",
+          "failed": false
+        },
+        {
+          "index": 529,
+          "original": "Hey, guys! I'm Rex.",
+          "translated": "嘿，各位！我是雷克斯。",
+          "failed": false
+        },
+        {
+          "index": 530,
+          "original": "I just moved in next door,",
+          "translated": "我刚搬来隔壁，",
+          "failed": false
+        },
+        {
+          "index": 531,
+          "original": "and I love \"Minecraft\"\nand skateboarding!",
+          "translated": "而且我热爱“我的世界”\n和滑板！",
+          "failed": false
+        },
+        {
+          "index": 532,
+          "original": "- Unh!\n- Aah!",
+          "translated": "- 嗯!\n- 啊!",
+          "failed": false
+        },
+        {
+          "index": 533,
+          "original": "[ Groaning ]",
+          "translated": "[呻吟声]",
+          "failed": false
+        },
+        {
+          "index": 534,
+          "original": "Aaah! Aah!",
+          "translated": "啊啊！啊啊！",
+          "failed": false
+        },
+        {
+          "index": 535,
+          "original": "Wait- wait, he's- he's not--\n[ Cellphone ringing ]",
+          "translated": "等等——等等，他、他不是——\n[手机铃声响起]",
+          "failed": false
+        },
+        {
+          "index": 536,
+          "original": "Georgie Boy!",
+          "translated": "乔治男孩！",
+          "failed": false
+        },
+        {
+          "index": 537,
+          "original": "M-Morty, w-would-- would\nyou believe my unrelated friend,",
+          "translated": "莫蒂，你、你会不会相信\n我那位不相关的朋友",
+          "failed": false
+        },
+        {
+          "index": 538,
+          "original": "Georgie Boy,\nwants to hang?",
+          "translated": "乔治男孩，\n想出来聚聚？",
+          "failed": false
+        },
+        {
+          "index": 539,
+          "original": "Howdy, fellas!",
+          "translated": "嘿，伙计们！",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 511,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 512,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 513,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 514,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 515,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 516,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 517,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 518,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 519,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 520,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 521,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 522,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 523,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 524,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 525,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 526,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 527,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 528,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 529,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 530,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 531,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 532,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 533,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 534,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 535,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 536,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 537,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 538,
+          "verdict": "fail",
+          "reason": "Semantic error/awkward phrasing. 'Would you believe' is an idiom meaning 'can you believe it' or 'imagine this', not a literal question about belief. The translation '你会不会相信' sounds like a literal question about credibility, missing the conversational flow.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 539,
+          "verdict": "fail",
+          "reason": "Semantic error. The source 'Georgie Boy, wants to hang?' is a continuation of the previous sentence: '[would you believe] my unrelated friend, Georgie Boy, wants to hang?'. The translation splits this incorrectly, making 'Georgie Boy' the subject of a new sentence 'Georgie Boy, wants to hang out?', which loses the connection to 'unrelated friend' and changes the meaning from 'My friend wants to hang out' to 'Georgie Boy wants to hang out' (as if addressing him directly or stating his desire independently). It should be part of the previous clause.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 540,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        }
+      ],
+      "judge_pass": 28,
+      "judge_fail": 2,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 19,
+      "start": 540,
+      "end": 543,
+      "translations": [
+        {
+          "index": 540,
+          "original": "Georgie Boy!\nGeorgie Boy! But -- Oh...",
+          "translated": "\n乔治男孩！但——哦……",
+          "failed": false
+        },
+        {
+          "index": 541,
+          "original": "Georgie Boy!\nGeorgie Boy!",
+          "translated": "\n乔治男孩！",
+          "failed": false
+        },
+        {
+          "index": 542,
+          "original": "Did you get any of that?",
+          "translated": "你得到一些了吗？",
+          "failed": false
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 541,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 542,
+          "verdict": "fail",
+          "reason": "Missing translation: The source contains a repetition 'Georgie Boy! Georgie Boy!' but the translation only includes one instance.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 543,
+          "verdict": "fail",
+          "reason": "Semantic error/Unnatural phrasing: 'Did you get any of that?' in this context usually means 'Did you hear/understand/record that?'. '你得到一些了吗？' is a literal and awkward translation that sounds like asking if someone physically received some items.",
+          "suggestion": "flow"
+        }
+      ],
+      "judge_pass": 1,
+      "judge_fail": 2,
+      "judge_shift": 0,
+      "status": "BugFound"
+    }
+  ],
+  "current_stage": 19,
+  "total_tokens": 38082,
+  "total_failed": 22,
+  "total_cached": 19
+}

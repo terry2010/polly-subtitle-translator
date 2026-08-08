@@ -1,0 +1,774 @@
+{
+  "fixture_name": "clarksons_farm",
+  "name_precision": true,
+  "source_lang": "en",
+  "target_lang": "zh",
+  "total_entries": 1054,
+  "batch_size": 30,
+  "names": [],
+  "names_status": "Passed",
+  "batches": [
+    {
+      "batch_num": 1,
+      "start": 0,
+      "end": 30,
+      "translations": [
+        {
+          "index": 0,
+          "original": "[soft music]",
+          "translated": "[轻柔的音乐]",
+          "failed": false
+        },
+        {
+          "index": 1,
+          "original": "[birds chirping]",
+          "translated": "[鸟儿鸣叫]",
+          "failed": false
+        },
+        {
+          "index": 2,
+          "original": "[cow mooing]",
+          "translated": "[牛叫声]",
+          "failed": false
+        },
+        {
+          "index": 3,
+          "original": "[wind blowing softly]",
+          "translated": "[微风轻拂]",
+          "failed": false
+        },
+        {
+          "index": 4,
+          "original": "[soft clattering]",
+          "translated": "[轻微的碰撞声]",
+          "failed": false
+        },
+        {
+          "index": 5,
+          "original": "[engine wheezing]",
+          "translated": "[引擎喘息声]",
+          "failed": false
+        },
+        {
+          "index": 6,
+          "original": "[Jeremy] <i>The FarmDroid\nhad now been set to work</i>",
+          "translated": "[Jeremy] <i>The FarmDroid\nhad now been set to work</i>",
+          "failed": true
+        },
+        {
+          "index": 7,
+          "original": "<i>replanting the onion and beetroot field.</i>",
+          "translated": "<i>replanting the onion and beetroot field.</i>",
+          "failed": true
+        },
+        {
+          "index": 8,
+          "original": "<i>But with the sky still stubbornly blue,</i>",
+          "translated": "<i>But with the sky still stubbornly blue,</i>",
+          "failed": true
+        },
+        {
+          "index": 9,
+          "original": "<i>I wasn't sure I could see the point.</i>",
+          "translated": "<i>I wasn't sure I could see the point.</i>",
+          "failed": true
+        },
+        {
+          "index": 10,
+          "original": "[soft clattering]",
+          "translated": "[轻微的撞击声]",
+          "failed": false
+        },
+        {
+          "index": 11,
+          "original": "[Jeremy] So this planting\nis all very well,",
+          "translated": "[Jeremy] 所以这种种植\n虽然很好，",
+          "failed": false
+        },
+        {
+          "index": 12,
+          "original": "but pointless if it doesn't rain.",
+          "translated": "但如果不下雨，那就毫无意义了。",
+          "failed": false
+        },
+        {
+          "index": 13,
+          "original": "Yeah.",
+          "translated": "是啊。",
+          "failed": false
+        },
+        {
+          "index": 14,
+          "original": "[Jeremy] So, it's reckoned",
+          "translated": "[杰里米] 据估计",
+          "failed": false
+        },
+        {
+          "index": 15,
+          "original": "ten thousand litres of water\nover a hectare",
+          "translated": "每公顷一万升水\n",
+          "failed": false
+        },
+        {
+          "index": 16,
+          "original": "gives you the equivalent\nof one millimetre of rain.",
+          "translated": "相当于\n一毫米的降雨量。",
+          "failed": false
+        },
+        {
+          "index": 17,
+          "original": "And it's 24 millimetres",
+          "translated": "而每周需要二十四毫米。",
+          "failed": false
+        },
+        {
+          "index": 18,
+          "original": "you need every week.",
+          "translated": "你每周都需要。",
+          "failed": false
+        },
+        {
+          "index": 19,
+          "original": "[clattering continues]",
+          "translated": "[碰撞声持续]",
+          "failed": false
+        },
+        {
+          "index": 20,
+          "original": "You've never seen a James Bond film,",
+          "translated": "你从未看过詹姆斯·邦德的电影，",
+          "failed": false
+        },
+        {
+          "index": 21,
+          "original": "but I've never seen anyone\nas captivated...",
+          "translated": "但我从未见过任何人\n如此着迷……",
+          "failed": false
+        },
+        {
+          "index": 22,
+          "original": "- [Kaleb] It's fascinating.\n- ...as you are by that.",
+          "translated": "- [Kaleb] 这很迷人。\n- ...就像你一样。",
+          "failed": false
+        },
+        {
+          "index": 23,
+          "original": "- Could you not just watch that all day?\n- No...",
+          "translated": "- Could you not just watch that all day?\n- No...",
+          "failed": true
+        },
+        {
+          "index": 24,
+          "original": "I mean, yeah, five minutes and...\nBut you... Look at his face!",
+          "translated": "我是说，是啊，五分钟然后……\n但你……看他的脸！",
+          "failed": false
+        },
+        {
+          "index": 25,
+          "original": "It's really... [chuckling]",
+          "translated": "这真的……[轻笑]",
+          "failed": false
+        },
+        {
+          "index": 26,
+          "original": "- You love that machine, don't you?\n- Yeah, I do.",
+          "translated": "- You love that machine, don't you?\n- Yeah, I do.",
+          "failed": true
+        },
+        {
+          "index": 27,
+          "original": "What gets me is\nit put 200,000 seeds in yesterday",
+          "translated": "让我不解的是\n它昨天种下了二十万颗种子",
+          "failed": false
+        },
+        {
+          "index": 28,
+          "original": "and it knows\nwhere every single one of them is.",
+          "translated": "而且它知道\n每一个都在哪里。",
+          "failed": false
+        },
+        {
+          "index": 29,
+          "original": "- That's unbelievable.\n- So,",
+          "translated": "- That's unbelievable.\n- So,",
+          "failed": true
+        }
+      ],
+      "judge_results": [
+        {
+          "index": 1,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 2,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 3,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 4,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 5,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 6,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 7,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English), missing Chinese translation.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 8,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English), missing Chinese translation.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 9,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English), missing Chinese translation.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 10,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English), missing Chinese translation.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 11,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 12,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 13,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 14,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 15,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 16,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 17,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 18,
+          "verdict": "fail",
+          "reason": "Semantic error: Source says 'And it's 24 millimetres', translation adds 'weekly' which belongs to the next sentence. The '24 millimetres' is the subject of the next clause.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 19,
+          "verdict": "fail",
+          "reason": "Semantic error/Incomplete: Source 'you need every week' is translated as 'You need every week', missing the object '24 millimetres' which was incorrectly placed in the previous entry.",
+          "suggestion": "alignment"
+        },
+        {
+          "index": 20,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 21,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 22,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 23,
+          "verdict": "fail",
+          "reason": "Semantic error: '...as you are by that' is translated as '...just like you'. The original means 'captivated as you are [captivated] by that [machine]'. The translation loses the comparison of the degree of fascination.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 24,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English), missing Chinese translation.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 25,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 26,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 27,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English), missing Chinese translation.",
+          "suggestion": "prompt"
+        },
+        {
+          "index": 28,
+          "verdict": "fail",
+          "reason": "Semantic error: 'What gets me is' is translated as 'What confuses me is' (让我不解的是). In this context, 'gets me' usually means 'amazes me' or 'impresses me', not confusion.",
+          "suggestion": "flow"
+        },
+        {
+          "index": 29,
+          "verdict": "pass",
+          "reason": null,
+          "suggestion": null
+        },
+        {
+          "index": 30,
+          "verdict": "fail",
+          "reason": "Translation is identical to source (English), missing Chinese translation.",
+          "suggestion": "prompt"
+        }
+      ],
+      "judge_pass": 19,
+      "judge_fail": 11,
+      "judge_shift": 0,
+      "status": "BugFound"
+    },
+    {
+      "batch_num": 2,
+      "start": 30,
+      "end": 60,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 3,
+      "start": 60,
+      "end": 90,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 4,
+      "start": 90,
+      "end": 120,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 5,
+      "start": 120,
+      "end": 150,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 6,
+      "start": 150,
+      "end": 180,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 7,
+      "start": 180,
+      "end": 210,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 8,
+      "start": 210,
+      "end": 240,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 9,
+      "start": 240,
+      "end": 270,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 10,
+      "start": 270,
+      "end": 300,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 11,
+      "start": 300,
+      "end": 330,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 12,
+      "start": 330,
+      "end": 360,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 13,
+      "start": 360,
+      "end": 390,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 14,
+      "start": 390,
+      "end": 420,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 15,
+      "start": 420,
+      "end": 450,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 16,
+      "start": 450,
+      "end": 480,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 17,
+      "start": 480,
+      "end": 510,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 18,
+      "start": 510,
+      "end": 540,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 19,
+      "start": 540,
+      "end": 570,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 20,
+      "start": 570,
+      "end": 600,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 21,
+      "start": 600,
+      "end": 630,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 22,
+      "start": 630,
+      "end": 660,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 23,
+      "start": 660,
+      "end": 690,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 24,
+      "start": 690,
+      "end": 720,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 25,
+      "start": 720,
+      "end": 750,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 26,
+      "start": 750,
+      "end": 780,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 27,
+      "start": 780,
+      "end": 810,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 28,
+      "start": 810,
+      "end": 840,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 29,
+      "start": 840,
+      "end": 870,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 30,
+      "start": 870,
+      "end": 900,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 31,
+      "start": 900,
+      "end": 930,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 32,
+      "start": 930,
+      "end": 960,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 33,
+      "start": 960,
+      "end": 990,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 34,
+      "start": 990,
+      "end": 1020,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 35,
+      "start": 1020,
+      "end": 1050,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 36,
+      "start": 1050,
+      "end": 1054,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    }
+  ],
+  "current_stage": 1,
+  "total_tokens": 5601,
+  "total_failed": 7,
+  "total_cached": 0
+}

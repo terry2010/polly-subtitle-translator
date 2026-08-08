@@ -1,0 +1,128 @@
+{
+  "timestamp": "2026-07-06 14:08:19",
+  "summary": {
+    "total_fixtures": 1,
+    "passed": 0,
+    "warned": 0,
+    "failed": 1,
+    "total_checks": 15,
+    "checks_passed": 11,
+    "checks_warned": 3,
+    "checks_failed": 1
+  },
+  "fixtures": [
+    {
+      "name": "rick_and_morty",
+      "file": "rick_and_morty.srt",
+      "status": "failed",
+      "entries": 560,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 560，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "560 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "560 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "translated_entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数一致: 560",
+          "source_hint": null
+        },
+        {
+          "name": "translated_timeline",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "时间轴全部对齐",
+          "source_hint": null
+        },
+        {
+          "name": "translated_format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "翻译后格式往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "subtitle_shift",
+          "tier": "L1",
+          "status": "warn",
+          "detail": "2 条空译文（可能是平移或降级失败）: [372, 373]",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "empty_translations",
+          "tier": "L2",
+          "status": "fail",
+          "detail": "2 条空译文: [372, 373]",
+          "source_hint": "translate.rs translate_batch_with_fallback 降级重试"
+        },
+        {
+          "name": "fake_translations",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无假翻译",
+          "source_hint": null
+        },
+        {
+          "name": "cjk_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文均含 CJK 字符",
+          "source_hint": null
+        },
+        {
+          "name": "sound_effect_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "音效标记一致",
+          "source_hint": null
+        },
+        {
+          "name": "name_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "人名一致，无残留标签",
+          "source_hint": null
+        },
+        {
+          "name": "length_ratio",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "11 条译文长度异常: [(47, 35, 4, 0.11428571428571428), (135, 42, 5, 0.11904761904761904), (149, 34, 5, 0.14705882352941177)]",
+          "source_hint": "translate.rs prompt 或 batch 逻辑"
+        },
+        {
+          "name": "translate_failures",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "失败 3 条, 缓存 587 条, token 0",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "judge_27b",
+          "tier": "L5",
+          "status": "pass",
+          "detail": "27b judge: 0 pass, 0 fail, 0 shift",
+          "source_hint": "27b judge"
+        }
+      ]
+    }
+  ]
+}

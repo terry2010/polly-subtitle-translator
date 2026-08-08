@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E2E 测试报告</title>
+<style>
+body { font-family: -apple-system, sans-serif; margin: 20px; background: #f5f5f5; }
+.header { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+.summary { display: flex; gap: 20px; }
+.stat { padding: 15px 25px; border-radius: 8px; color: #fff; font-size: 24px; font-weight: bold; }
+.stat.pass { background: #22c55e; }
+.stat.warn { background: #f59e0b; }
+.stat.fail { background: #ef4444; }
+.fixture { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 15px; }
+.fixture-header { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e5e5; }
+th { background: #f0f0f0; }
+.pass { color: #22c55e; }
+.warn { color: #f59e0b; }
+.fail { color: #ef4444; }
+</style>
+</head>
+<body>
+<div class="header">
+<h1>E2E 测试报告</h1>
+<p>运行时间: 2026-07-09 07:29:48</p>
+<p>总用时: 2分4秒</p>
+<div class="summary">
+<div class="stat pass">0<br><small>通过</small></div>
+<div class="stat warn">0<br><small>警告</small></div>
+<div class="stat fail">1<br><small>失败</small></div>
+</div>
+</div>
+<div class="fixture">
+<div class="fixture-header">❌ rick_s09e07 (501 条目, 11/5/8)</div>
+<table>
+<thead><tr><th>检查项</th><th>层级</th><th>状态</th><th>详情</th><th>相关代码</th></tr></thead>
+<tbody>
+<tr><td>entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数 501，序号唯一递增</td><td></td></tr>
+<tr><td>timeline_validity</td><td>L1</td><td class="pass">✅ pass</td><td>501 条时间轴全部有效</td><td></td></tr>
+<tr><td>format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>501 条往返一致</td><td></td></tr>
+<tr><td>translated_entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数一致: 501</td><td></td></tr>
+<tr><td>translated_timeline</td><td>L1</td><td class="pass">✅ pass</td><td>时间轴全部对齐</td><td></td></tr>
+<tr><td>translated_format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>翻译后格式往返一致</td><td></td></tr>
+<tr><td>subtitle_shift</td><td>L1</td><td class="warn">⚠️ warn</td><td>471 条空译文（可能是平移或降级失败）: [30, 31, 32, 33, 34]</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>empty_translations</td><td>L2</td><td class="fail">❌ fail</td><td>471 条空译文: [30, 31, 32, 33, 34]</td><td>translate.rs translate_batch_with_fallback 降级重试</td></tr>
+<tr><td>fake_translations</td><td>L2</td><td class="pass">✅ pass</td><td>无假翻译</td><td></td></tr>
+<tr><td>cjk_check</td><td>L2</td><td class="pass">✅ pass</td><td>译文均含 CJK 字符</td><td></td></tr>
+<tr><td>sound_effect_consistency</td><td>L2</td><td class="warn">⚠️ warn</td><td>1 条音效标记不一致: [(12, true, false)]</td><td>translate.rs prompt 音效标记规则</td></tr>
+<tr><td>name_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>人名一致，无残留标签</td><td></td></tr>
+<tr><td>length_ratio</td><td>L2</td><td class="pass">✅ pass</td><td>译文长度全部在合理范围</td><td></td></tr>
+<tr><td>alignment_check</td><td>L2</td><td class="pass">✅ pass</td><td>无错位迹象</td><td></td></tr>
+<tr><td>truncation_check</td><td>L2</td><td class="warn">⚠️ warn</td><td>8 条疑似截断: [(1, &quot;长度比 0.21, 句子数 2→1&quot;), (4, &quot;长度比 0.21, 句子数 2→1&quot;), (5, &quot;句末标点缺失, 长度比 0.27&quot;), (11, &quot;长度比 0.24, 句子数 3→1&quot;), (16, &quot;句末标点缺失, 长度比 0.19&quot;)]</td><td>translate.rs prompt 或 batch 翻译逻辑</td></tr>
+<tr><td>translate_failures</td><td>L2</td><td class="warn">⚠️ warn</td><td>失败 1 条, 缓存 0 条, token 2539 | 详情: #12: &quot;[ Both grunting ]&quot; → &quot;[ 两人都在用力 }&quot;</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>judge_27b</td><td>L5</td><td class="warn">⚠️ warn</td><td>27b judge: 22 pass, 6 fail, 2 shift (共 30 条判定, 问题批次: [])</td><td>27b judge 翻译质量问题</td></tr>
+<tr><td>bilingual_roundtrip_srt</td><td>L3</td><td class="fail">❌ fail</td><td>SRT 双语字幕问题数不一致: 翻译时 failed=1+missing=355=356, 重新加载 failed=0+missing=355=355, 差异条目: [12]</td><td>subtitle.rs export_subtitle / split_bilingual</td></tr>
+<tr><td>bilingual_roundtrip_ass</td><td>L3</td><td class="fail">❌ fail</td><td>ASS 双语字幕问题数不一致: 翻译时 failed=1+missing=355=356, 重新加载 failed=0+missing=355=355, 差异条目: [12]</td><td>subtitle.rs export_subtitle / split_bilingual</td></tr>
+<tr><td>bilingual_roundtrip_vtt</td><td>L3</td><td class="fail">❌ fail</td><td>VTT 双语字幕问题数不一致: 翻译时 failed=1+missing=355=356, 重新加载 failed=0+missing=355=355, 差异条目: [12]</td><td>subtitle.rs export_subtitle / split_bilingual</td></tr>
+<tr><td>repeated_open_1</td><td>L3</td><td class="fail">❌ fail</td><td>第 1 次打开问题数不一致: 翻译时=356, 恢复后=357 (缓存命中 90 条), 差异条目: [7]</td><td>translate.rs get_cached_entries</td></tr>
+<tr><td>repeated_open_2</td><td>L3</td><td class="fail">❌ fail</td><td>第 2 次打开问题数不一致: 翻译时=356, 恢复后=357 (缓存命中 90 条), 差异条目: [7]</td><td>translate.rs get_cached_entries</td></tr>
+<tr><td>repeated_open_3</td><td>L3</td><td class="fail">❌ fail</td><td>第 3 次打开问题数不一致: 翻译时=356, 恢复后=357 (缓存命中 90 条), 差异条目: [7]</td><td>translate.rs get_cached_entries</td></tr>
+<tr><td>code_bug_stopped</td><td>L3</td><td class="fail">❌ fail</td><td>批次 1 L3 持久化验证发现代码 bug，测试已停止。修复代码后用 E2E_RESET=1 重跑</td><td>translate.rs 缓存质量校验 / subtitle.rs 双语导出</td></tr>
+</tbody></table>
+</div>
+</body>
+</html>

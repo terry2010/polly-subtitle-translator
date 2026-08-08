@@ -1,0 +1,51 @@
+{
+  "timestamp": "2026-07-06 14:45:38",
+  "summary": {
+    "total_fixtures": 1,
+    "passed": 0,
+    "warned": 0,
+    "failed": 1,
+    "total_checks": 4,
+    "checks_passed": 3,
+    "checks_warned": 0,
+    "checks_failed": 1
+  },
+  "fixtures": [
+    {
+      "name": "rick_and_morty",
+      "file": "rick_and_morty.srt",
+      "status": "failed",
+      "entries": 560,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 560，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "560 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "560 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "state_machine",
+          "tier": "L5",
+          "status": "fail",
+          "detail": "批次 1 发现 bug，状态已保存",
+          "source_hint": "修复后重跑继续"
+        }
+      ]
+    }
+  ]
+}

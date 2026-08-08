@@ -178,7 +178,7 @@ edit(file_path="big_file.rs", old_string="// === SECTION 2 END ===",
 ### 发布流程
 
 ```
-node scripts/publish.mjs <版本号> "更新内容"
+cd client && node scripts/publish.mjs <版本号> "更新内容"
 ```
 
 脚本自动完成：改版本号 → 带签名构建 → 创建 GitHub Release → 上传 .exe + .sig → 更新 latest.json
@@ -215,16 +215,16 @@ node scripts/publish.mjs <版本号> "更新内容"
 
 ```bash
 # 编译检查
-cd src-tauri && cargo check --lib
+cd client/src-tauri && cargo check --lib
 
 # 运行单元测试（260 个）
-cd src-tauri && cargo test --lib
+cd client/src-tauri && cargo test --lib
 
 # Clippy 检查（约 28 个 warning，主要是函数参数过多/复杂类型等风格问题）
-cd src-tauri && cargo clippy --lib
+cd client/src-tauri && cargo clippy --lib
 
 # 前端类型检查
-npx tsc --noEmit
+cd client && npx tsc --noEmit
 ```
 
 ### 翻译质量验证

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E2E 测试报告</title>
+<style>
+body { font-family: -apple-system, sans-serif; margin: 20px; background: #f5f5f5; }
+.header { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+.summary { display: flex; gap: 20px; }
+.stat { padding: 15px 25px; border-radius: 8px; color: #fff; font-size: 24px; font-weight: bold; }
+.stat.pass { background: #22c55e; }
+.stat.warn { background: #f59e0b; }
+.stat.fail { background: #ef4444; }
+.fixture { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 15px; }
+.fixture-header { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e5e5; }
+th { background: #f0f0f0; }
+.pass { color: #22c55e; }
+.warn { color: #f59e0b; }
+.fail { color: #ef4444; }
+</style>
+</head>
+<body>
+<div class="header">
+<h1>E2E 测试报告</h1>
+<p>运行时间: 2026-07-08 13:18:56</p>
+<p>总用时: 41分29秒</p>
+<div class="summary">
+<div class="stat pass">0<br><small>通过</small></div>
+<div class="stat warn">1<br><small>警告</small></div>
+<div class="stat fail">0<br><small>失败</small></div>
+</div>
+</div>
+<div class="fixture">
+<div class="fixture-header">⚠️ Rick and Morty S09E05 1080p AMZN WEB-DL DUAL DDP5 1 H 264-TURG.eng (560 条目, 16/7/0)</div>
+<table>
+<thead><tr><th>检查项</th><th>层级</th><th>状态</th><th>详情</th><th>相关代码</th></tr></thead>
+<tbody>
+<tr><td>entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数 560，序号唯一递增</td><td></td></tr>
+<tr><td>timeline_validity</td><td>L1</td><td class="pass">✅ pass</td><td>560 条时间轴全部有效</td><td></td></tr>
+<tr><td>format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>560 条往返一致</td><td></td></tr>
+<tr><td>translated_entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数一致: 560</td><td></td></tr>
+<tr><td>translated_timeline</td><td>L1</td><td class="pass">✅ pass</td><td>时间轴全部对齐</td><td></td></tr>
+<tr><td>translated_format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>翻译后格式往返一致</td><td></td></tr>
+<tr><td>subtitle_shift</td><td>L1</td><td class="warn">⚠️ warn</td><td>1 条译文长度比值异常（可能合并/截断）: [(502, 0.13793103448275862)]</td><td>translate.rs batch 翻译逻辑</td></tr>
+<tr><td>empty_translations</td><td>L2</td><td class="pass">✅ pass</td><td>无空译文</td><td></td></tr>
+<tr><td>fake_translations</td><td>L2</td><td class="warn">⚠️ warn</td><td>假翻译 1 条 (0.18%)</td><td>translate.rs prompt 模板</td></tr>
+<tr><td>cjk_check</td><td>L2</td><td class="pass">✅ pass</td><td>译文均含 CJK 字符</td><td></td></tr>
+<tr><td>sound_effect_consistency</td><td>L2</td><td class="warn">⚠️ warn</td><td>2 条音效标记不一致: [(272, false, true), (502, false, true)]</td><td>translate.rs prompt 音效标记规则</td></tr>
+<tr><td>name_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>人名一致，无残留标签</td><td></td></tr>
+<tr><td>length_ratio</td><td>L2</td><td class="warn">⚠️ warn</td><td>1 条译文长度异常: [(502, 29, 4, 0.13793103448275862)]</td><td>translate.rs prompt 或 batch 逻辑</td></tr>
+<tr><td>alignment_check</td><td>L2</td><td class="pass">✅ pass</td><td>无错位迹象</td><td></td></tr>
+<tr><td>truncation_check</td><td>L2</td><td class="warn">⚠️ warn</td><td>87 条疑似截断: [(2, &quot;长度比 0.21&quot;), (3, &quot;句子数 2→1&quot;), (4, &quot;长度比 0.27&quot;), (7, &quot;句子数 2→1&quot;), (8, &quot;长度比 0.29&quot;)]</td><td>translate.rs prompt 或 batch 翻译逻辑</td></tr>
+<tr><td>translate_failures</td><td>L2</td><td class="warn">⚠️ warn</td><td>失败 5 条, 缓存 18 条, token 31148 | 详情: #39: &quot;UGG! Glugg UGG!&quot; → &quot;UGG！Glugg UGG！&quot;; #105: &quot;Nipslip Vodka.&quot; → &quot;Nipslip Vodka。&quot;; #272: &quot;from our mothers!\\n[ Mup crying ]&quot; → &quot;[穆普哭泣]&quot;; #310: &quot;'cause I'm pissed\\nat Snowball,&quot; → &quot;'cause I'm pissed\\nat Snowball,&quot;; #502: &quot;to go around, huh?\\n[ Laughs ]&quot; → &quot;[笑声]&quot;</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>judge_27b</td><td>L5</td><td class="warn">⚠️ warn</td><td>27b judge: 469 pass, 82 fail, 9 shift (共 560 条判定, 问题批次: [1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])</td><td>27b judge 翻译质量问题</td></tr>
+<tr><td>bilingual_roundtrip_srt</td><td>L3</td><td class="pass">✅ pass</td><td>SRT 双语字幕往返一致: translated=537, failed=0, missing=23 (翻译时 failed=5, missing=23)</td><td></td></tr>
+<tr><td>bilingual_roundtrip_ass</td><td>L3</td><td class="pass">✅ pass</td><td>ASS 双语字幕往返一致: translated=537, failed=0, missing=23 (翻译时 failed=5, missing=23)</td><td></td></tr>
+<tr><td>bilingual_roundtrip_vtt</td><td>L3</td><td class="pass">✅ pass</td><td>VTT 双语字幕往返一致: translated=537, failed=0, missing=23 (翻译时 failed=5, missing=23)</td><td></td></tr>
+<tr><td>repeated_open_1</td><td>L3</td><td class="pass">✅ pass</td><td>第 1 次打开一致: 560 条命中, failed=5, missing=23</td><td></td></tr>
+<tr><td>repeated_open_2</td><td>L3</td><td class="pass">✅ pass</td><td>第 2 次打开一致: 560 条命中, failed=5, missing=23</td><td></td></tr>
+<tr><td>repeated_open_3</td><td>L3</td><td class="pass">✅ pass</td><td>第 3 次打开一致: 560 条命中, failed=5, missing=23</td><td></td></tr>
+</tbody></table>
+</div>
+</body>
+</html>

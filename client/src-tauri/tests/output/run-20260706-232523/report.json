@@ -1,0 +1,170 @@
+{
+  "timestamp": "2026-07-06 23:25:23",
+  "summary": {
+    "total_fixtures": 1,
+    "passed": 0,
+    "warned": 0,
+    "failed": 1,
+    "total_checks": 21,
+    "checks_passed": 9,
+    "checks_warned": 4,
+    "checks_failed": 8
+  },
+  "fixtures": [
+    {
+      "name": "rick_s09e07",
+      "file": "rick_s09e07.srt",
+      "status": "failed",
+      "entries": 501,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 501，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "501 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "501 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "translated_entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数一致: 501",
+          "source_hint": null
+        },
+        {
+          "name": "translated_timeline",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "时间轴全部对齐",
+          "source_hint": null
+        },
+        {
+          "name": "translated_format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "翻译后格式往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "subtitle_shift",
+          "tier": "L1",
+          "status": "warn",
+          "detail": "2 条空译文（可能是平移或降级失败）: [101, 458]",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "empty_translations",
+          "tier": "L2",
+          "status": "fail",
+          "detail": "2 条空译文: [101, 458]",
+          "source_hint": "translate.rs translate_batch_with_fallback 降级重试"
+        },
+        {
+          "name": "fake_translations",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "假翻译 2 条 (0.40%)",
+          "source_hint": "translate.rs prompt 模板"
+        },
+        {
+          "name": "cjk_check",
+          "tier": "L2",
+          "status": "fail",
+          "detail": "2 条译文无 CJK 字符: [212, 368]",
+          "source_hint": "translate.rs prompt 或模型不支持中文"
+        },
+        {
+          "name": "sound_effect_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "音效标记一致",
+          "source_hint": null
+        },
+        {
+          "name": "name_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "人名一致，无残留标签",
+          "source_hint": null
+        },
+        {
+          "name": "length_ratio",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文长度全部在合理范围",
+          "source_hint": null
+        },
+        {
+          "name": "translate_failures",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "失败 3 条, 缓存 449 条, token 1503",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "judge_27b",
+          "tier": "L5",
+          "status": "warn",
+          "detail": "27b judge: 364 pass, 53 fail, 3 shift (共 420 条判定, 问题批次: [1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 13, 14, 15, 16, 17])",
+          "source_hint": "27b judge 翻译质量问题"
+        },
+        {
+          "name": "bilingual_roundtrip_srt",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "SRT 双语字幕问题数不一致: 翻译时 failed=3+missing=54=57, 重新加载 failed=0+missing=54=54, 差异条目: []",
+          "source_hint": "subtitle.rs export_subtitle / split_bilingual"
+        },
+        {
+          "name": "bilingual_roundtrip_ass",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "ASS 双语字幕问题数不一致: 翻译时 failed=3+missing=54=57, 重新加载 failed=0+missing=54=54, 差异条目: []",
+          "source_hint": "subtitle.rs export_subtitle / split_bilingual"
+        },
+        {
+          "name": "bilingual_roundtrip_vtt",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "VTT 双语字幕问题数不一致: 翻译时 failed=3+missing=54=57, 重新加载 failed=0+missing=54=54, 差异条目: []",
+          "source_hint": "subtitle.rs export_subtitle / split_bilingual"
+        },
+        {
+          "name": "repeated_open_1",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 1 次打开问题数不一致: 翻译时=57, 恢复后=55 (缓存命中 499 条)",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "repeated_open_2",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 2 次打开问题数不一致: 翻译时=57, 恢复后=55 (缓存命中 499 条)",
+          "source_hint": "translate.rs get_cached_entries"
+        },
+        {
+          "name": "repeated_open_3",
+          "tier": "L3",
+          "status": "fail",
+          "detail": "第 3 次打开问题数不一致: 翻译时=57, 恢复后=55 (缓存命中 499 条)",
+          "source_hint": "translate.rs get_cached_entries"
+        }
+      ]
+    }
+  ]
+}

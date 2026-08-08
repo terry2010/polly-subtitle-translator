@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E2E 测试报告</title>
+<style>
+body { font-family: -apple-system, sans-serif; margin: 20px; background: #f5f5f5; }
+.header { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+.summary { display: flex; gap: 20px; }
+.stat { padding: 15px 25px; border-radius: 8px; color: #fff; font-size: 24px; font-weight: bold; }
+.stat.pass { background: #22c55e; }
+.stat.warn { background: #f59e0b; }
+.stat.fail { background: #ef4444; }
+.fixture { background: #fff; padding: 20px; border-radius: 8px; margin-bottom: 15px; }
+.fixture-header { font-size: 18px; font-weight: bold; margin-bottom: 10px; }
+table { width: 100%; border-collapse: collapse; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e5e5; }
+th { background: #f0f0f0; }
+.pass { color: #22c55e; }
+.warn { color: #f59e0b; }
+.fail { color: #ef4444; }
+</style>
+</head>
+<body>
+<div class="header">
+<h1>E2E 测试报告</h1>
+<p>运行时间: 2026-07-09 02:16:04</p>
+<p>总用时: 25分57秒</p>
+<div class="summary">
+<div class="stat pass">0<br><small>通过</small></div>
+<div class="stat warn">0<br><small>警告</small></div>
+<div class="stat fail">3<br><small>失败</small></div>
+</div>
+</div>
+<div class="fixture">
+<div class="fixture-header">❌ clarksons_farm (1054 条目, 15/4/5)</div>
+<table>
+<thead><tr><th>检查项</th><th>层级</th><th>状态</th><th>详情</th><th>相关代码</th></tr></thead>
+<tbody>
+<tr><td>entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数 1054，序号唯一递增</td><td></td></tr>
+<tr><td>timeline_validity</td><td>L1</td><td class="pass">✅ pass</td><td>1054 条时间轴全部有效</td><td></td></tr>
+<tr><td>format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>1054 条往返一致</td><td></td></tr>
+<tr><td>translated_entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数一致: 1054</td><td></td></tr>
+<tr><td>translated_timeline</td><td>L1</td><td class="pass">✅ pass</td><td>时间轴全部对齐</td><td></td></tr>
+<tr><td>translated_format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>翻译后格式往返一致</td><td></td></tr>
+<tr><td>subtitle_shift</td><td>L1</td><td class="warn">⚠️ warn</td><td>1024 条空译文（可能是平移或降级失败）: [30, 31, 32, 33, 34]</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>empty_translations</td><td>L2</td><td class="fail">❌ fail</td><td>1024 条空译文: [30, 31, 32, 33, 34]</td><td>translate.rs translate_batch_with_fallback 降级重试</td></tr>
+<tr><td>fake_translations</td><td>L2</td><td class="warn">⚠️ warn</td><td>假翻译 22 条 (2.09%)</td><td>translate.rs prompt 模板</td></tr>
+<tr><td>cjk_check</td><td>L2</td><td class="pass">✅ pass</td><td>译文均含 CJK 字符</td><td></td></tr>
+<tr><td>sound_effect_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>音效标记一致</td><td></td></tr>
+<tr><td>name_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>人名一致，无残留标签</td><td></td></tr>
+<tr><td>length_ratio</td><td>L2</td><td class="pass">✅ pass</td><td>译文长度全部在合理范围</td><td></td></tr>
+<tr><td>alignment_check</td><td>L2</td><td class="pass">✅ pass</td><td>无错位迹象</td><td></td></tr>
+<tr><td>truncation_check</td><td>L2</td><td class="pass">✅ pass</td><td>无截断迹象</td><td></td></tr>
+<tr><td>translate_failures</td><td>L2</td><td class="warn">⚠️ warn</td><td>失败 22 条, 缓存 0 条, token 0 | 详情: #6: &quot;[Jeremy] &lt;i&gt;The FarmDroid\\nhad now been set to work&lt;/i&gt;&quot; → &quot;[Jeremy] &lt;i&gt;The FarmDroid\\nhad now been set to work&lt;/i&gt;&quot;; #7: &quot;&lt;i&gt;replanting the onion and beetroot field.&lt;/i&gt;&quot; → &quot;&lt;i&gt;replanting the onion and beetroot field.&lt;/i&gt;&quot;; #8: &quot;&lt;i&gt;But with the sky still stubbornly blue,&lt;/i&gt;&quot; → &quot;&lt;i&gt;But with the sky still stubbornly blue,&lt;/i&gt;&quot;; #9: &quot;&lt;i&gt;I wasn't sure I could see the point.&lt;/i&gt;&quot; → &quot;&lt;i&gt;I wasn't sure I could see the point.&lt;/i&gt;&quot;; #11: &quot;[Jeremy] So this planting\\nis all very well,&quot; → &quot;[Jeremy] So this planting\\nis all very well,&quot;; #12: &quot;but pointless if it doesn't rain.&quot; → &quot;but pointless if it doesn't rain.&quot;; #13: &quot;Yeah.&quot; → &quot;Yeah.&quot;; #14: &quot;[Jeremy] So, it's reckoned&quot; → &quot;[Jeremy] So, it's reckoned&quot;; #15: &quot;ten thousand litres of water\\nover a hectare&quot; → &quot;ten thousand litres of water\\nover a hectare&quot;; #16: &quot;gives you the equivalent\\nof one millimetre of rain.&quot; → &quot;gives you the equivalent\\nof one millimetre of rain.&quot;; #17: &quot;And it's 24 millimetres&quot; → &quot;And it's 24 millimetres&quot;; #18: &quot;you need every week.&quot; → &quot;you need every week.&quot;; #20: &quot;You've never seen a James Bond film,&quot; → &quot;You've never seen a James Bond film,&quot;; #21: &quot;but I've never seen anyone\\nas captivated...&quot; → &quot;but I've never seen anyone\\nas captivated...&quot;; #22: &quot;- [Kaleb] It's fascinating.\\n- ...as you are by that.&quot; → &quot;- [Kaleb] It's fascinating.\\n- ...as you are by that.&quot;; #23: &quot;- Could you not just watch that all day?\\n- No...&quot; → &quot;- Could you not just watch that all day?\\n- No...&quot;; #24: &quot;I mean, yeah, five minutes and...\\nBut you... Look at his face!&quot; → &quot;I mean, yeah, five minutes and...\\nBut you... Look at his face!&quot;; #25: &quot;It's really... [chuckling]&quot; → &quot;It's really... [chuckling]&quot;; #26: &quot;- You love that machine, don't you?\\n- Yeah, I do.&quot; → &quot;- You love that machine, don't you?\\n- Yeah, I do.&quot;; #27: &quot;What gets me is\\nit put 200,000 seeds in yesterday&quot; → &quot;What gets me is\\nit put 200,000 seeds in yesterday&quot;; #28: &quot;and it knows\\nwhere every single one of them is.&quot; → &quot;and it knows\\nwhere every single one of them is.&quot;; #29: &quot;- That's unbelievable.\\n- So,&quot; → &quot;- That's unbelievable.\\n- So,&quot;</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>judge_27b</td><td>L5</td><td class="warn">⚠️ warn</td><td>27b judge: 0 pass, 30 fail, 0 shift (共 30 条判定, 问题批次: [])</td><td>27b judge 翻译质量问题</td></tr>
+<tr><td>bilingual_roundtrip_srt</td><td>L3</td><td class="fail">❌ fail</td><td>SRT 双语字幕检测失败: is_bilingual=false, matched=0, total=1054</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>bilingual_roundtrip_ass</td><td>L3</td><td class="fail">❌ fail</td><td>ASS 双语字幕检测失败: is_bilingual=false, matched=0, total=1054</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>bilingual_roundtrip_vtt</td><td>L3</td><td class="fail">❌ fail</td><td>VTT 双语字幕检测失败: is_bilingual=false, matched=0, total=1054</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>repeated_open_1</td><td>L3</td><td class="pass">✅ pass</td><td>第 1 次打开一致: 0 条命中, failed=0, missing=973</td><td></td></tr>
+<tr><td>repeated_open_2</td><td>L3</td><td class="pass">✅ pass</td><td>第 2 次打开一致: 0 条命中, failed=0, missing=973</td><td></td></tr>
+<tr><td>repeated_open_3</td><td>L3</td><td class="pass">✅ pass</td><td>第 3 次打开一致: 0 条命中, failed=0, missing=973</td><td></td></tr>
+<tr><td>code_bug_stopped</td><td>L3</td><td class="fail">❌ fail</td><td>批次 1 L3 持久化验证发现代码 bug，测试已停止。修复代码后用 E2E_RESET=1 重跑</td><td>translate.rs 缓存质量校验 / subtitle.rs 双语导出</td></tr>
+</tbody></table>
+</div>
+<div class="fixture">
+<div class="fixture-header">❌ rick_and_morty (560 条目, 15/3/6)</div>
+<table>
+<thead><tr><th>检查项</th><th>层级</th><th>状态</th><th>详情</th><th>相关代码</th></tr></thead>
+<tbody>
+<tr><td>entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数 560，序号唯一递增</td><td></td></tr>
+<tr><td>timeline_validity</td><td>L1</td><td class="pass">✅ pass</td><td>560 条时间轴全部有效</td><td></td></tr>
+<tr><td>format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>560 条往返一致</td><td></td></tr>
+<tr><td>translated_entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数一致: 560</td><td></td></tr>
+<tr><td>translated_timeline</td><td>L1</td><td class="pass">✅ pass</td><td>时间轴全部对齐</td><td></td></tr>
+<tr><td>translated_format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>翻译后格式往返一致</td><td></td></tr>
+<tr><td>subtitle_shift</td><td>L1</td><td class="warn">⚠️ warn</td><td>530 条空译文（可能是平移或降级失败）: [30, 31, 32, 33, 34]</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>empty_translations</td><td>L2</td><td class="fail">❌ fail</td><td>530 条空译文: [30, 31, 32, 33, 34]</td><td>translate.rs translate_batch_with_fallback 降级重试</td></tr>
+<tr><td>fake_translations</td><td>L2</td><td class="fail">❌ fail</td><td>假翻译 29 条 (5.2%): [0, 1, 2, 3, 4]</td><td>translate.rs prompt 模板（强化必须翻译）</td></tr>
+<tr><td>cjk_check</td><td>L2</td><td class="pass">✅ pass</td><td>译文均含 CJK 字符</td><td></td></tr>
+<tr><td>sound_effect_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>音效标记一致</td><td></td></tr>
+<tr><td>name_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>人名一致，无残留标签</td><td></td></tr>
+<tr><td>length_ratio</td><td>L2</td><td class="pass">✅ pass</td><td>译文长度全部在合理范围</td><td></td></tr>
+<tr><td>alignment_check</td><td>L2</td><td class="pass">✅ pass</td><td>无错位迹象</td><td></td></tr>
+<tr><td>truncation_check</td><td>L2</td><td class="pass">✅ pass</td><td>无截断迹象</td><td></td></tr>
+<tr><td>translate_failures</td><td>L2</td><td class="warn">⚠️ warn</td><td>失败 29 条, 缓存 0 条, token 0 | 详情: #0: &quot;Jerry:\\nUhh, I'm so nervous!&quot; → &quot;Jerry:\\nUhh, I'm so nervous!&quot;; #1: &quot;It's been so long, no one\\neven makes fun of me&quot; → &quot;It's been so long, no one\\neven makes fun of me&quot;; #2: &quot;for being unemployed\\nanymore.&quot; → &quot;for being unemployed\\nanymore.&quot;; #3: &quot;Aw. We can make fun of you\\nif you want, sweetie.&quot; → &quot;Aw. We can make fun of you\\nif you want, sweetie.&quot;; #4: &quot;You could also\\ntake one of these.&quot; → &quot;You could also\\ntake one of these.&quot;; #5: &quot;It's a worry worm.&quot; → &quot;It's a worry worm.&quot;; #6: &quot;It eats your worries\\nand dies out in a couple hours.&quot; → &quot;It eats your worries\\nand dies out in a couple hours.&quot;; #7: &quot;I'm on one right now.\\nSuper chill.&quot; → &quot;I'm on one right now.\\nSuper chill.&quot;; #8: &quot;I'm not taking\\nbreakfast drugs!&quot; → &quot;I'm not taking\\nbreakfast drugs!&quot;; #9: &quot;We doing\\nbreakfast drugs?&quot; → &quot;We doing\\nbreakfast drugs?&quot;; #10: &quot;I'm just dropping\\nMorty off. Deal me in.&quot; → &quot;I'm just dropping\\nMorty off. Deal me in.&quot;; #11: &quot;Nobody's dealer-ing\\nanyone.&quot; → &quot;Nobody's dealer-ing\\nanyone.&quot;; #12: &quot;Seriously, guys, this\\ninterview is important to me!&quot; → &quot;Seriously, guys, this\\ninterview is important to me!&quot;; #13: &quot;Wow! Good luck, Dad!&quot; → &quot;Wow! Good luck, Dad!&quot;; #14: &quot;Didn't -- Didn't realize\\nyou were still trying.&quot; → &quot;Didn't -- Didn't realize\\nyou were still trying.&quot;; #15: &quot;Yeah. Why?&quot; → &quot;Yeah. Why?&quot;; #16: &quot;No one's on your ass\\nto contribute a thing.&quot; → &quot;No one's on your ass\\nto contribute a thing.&quot;; #17: &quot;Ah, if you're trying to\\nneg me into taking a worm,&quot; → &quot;Ah, if you're trying to\\nneg me into taking a worm,&quot;; #18: &quot;you've succeeded.&quot; → &quot;you've succeeded.&quot;; #19: &quot;Negging works.\\n[ Gulps ]&quot; → &quot;Negging works.\\n[ Gulps ]&quot;; #20: &quot;See you all in a week!\\nMnh.&quot; → &quot;See you all in a week!\\nMnh.&quot;; #21: &quot;I'm so excited!&quot; → &quot;I'm so excited!&quot;; #22: &quot;Guh-uh, this is what it feels\\nlike to have friends?&quot; → &quot;Guh-uh, this is what it feels\\nlike to have friends?&quot;; #23: &quot;Wouldn't know.\\nPick you up on Sunday?&quot; → &quot;Wouldn't know.\\nPick you up on Sunday?&quot;; #24: &quot;See you then!&quot; → &quot;See you then!&quot;; #25: &quot;- Snowball!\\n- Morty!&quot; → &quot;- Snowball!\\n- Morty!&quot;; #26: &quot;- [ Panting ]\\n- [ Laughs ]&quot; → &quot;- [ Panting ]\\n- [ Laughs ]&quot;; #27: &quot;Oh, my God!\\nI missed you so much!&quot; → &quot;Oh, my God!\\nI missed you so much!&quot;; #28: &quot;Me too, Morty. Me too.&quot; → &quot;Me too, Morty. Me too.&quot;</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>judge_27b</td><td>L5</td><td class="warn">⚠️ warn</td><td>27b judge: 0 pass, 30 fail, 0 shift (共 30 条判定, 问题批次: [])</td><td>27b judge 翻译质量问题</td></tr>
+<tr><td>bilingual_roundtrip_srt</td><td>L3</td><td class="fail">❌ fail</td><td>SRT 双语字幕检测失败: is_bilingual=false, matched=0, total=560</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>bilingual_roundtrip_ass</td><td>L3</td><td class="fail">❌ fail</td><td>ASS 双语字幕检测失败: is_bilingual=false, matched=0, total=560</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>bilingual_roundtrip_vtt</td><td>L3</td><td class="fail">❌ fail</td><td>VTT 双语字幕检测失败: is_bilingual=false, matched=0, total=560</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>repeated_open_1</td><td>L3</td><td class="pass">✅ pass</td><td>第 1 次打开一致: 0 条命中, failed=0, missing=480</td><td></td></tr>
+<tr><td>repeated_open_2</td><td>L3</td><td class="pass">✅ pass</td><td>第 2 次打开一致: 0 条命中, failed=0, missing=480</td><td></td></tr>
+<tr><td>repeated_open_3</td><td>L3</td><td class="pass">✅ pass</td><td>第 3 次打开一致: 0 条命中, failed=0, missing=480</td><td></td></tr>
+<tr><td>code_bug_stopped</td><td>L3</td><td class="fail">❌ fail</td><td>批次 1 L3 持久化验证发现代码 bug，测试已停止。修复代码后用 E2E_RESET=1 重跑</td><td>translate.rs 缓存质量校验 / subtitle.rs 双语导出</td></tr>
+</tbody></table>
+</div>
+<div class="fixture">
+<div class="fixture-header">❌ rick_s09e07 (501 条目, 15/4/5)</div>
+<table>
+<thead><tr><th>检查项</th><th>层级</th><th>状态</th><th>详情</th><th>相关代码</th></tr></thead>
+<tbody>
+<tr><td>entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数 501，序号唯一递增</td><td></td></tr>
+<tr><td>timeline_validity</td><td>L1</td><td class="pass">✅ pass</td><td>501 条时间轴全部有效</td><td></td></tr>
+<tr><td>format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>501 条往返一致</td><td></td></tr>
+<tr><td>translated_entry_count</td><td>L1</td><td class="pass">✅ pass</td><td>条目数一致: 501</td><td></td></tr>
+<tr><td>translated_timeline</td><td>L1</td><td class="pass">✅ pass</td><td>时间轴全部对齐</td><td></td></tr>
+<tr><td>translated_format_roundtrip</td><td>L1</td><td class="pass">✅ pass</td><td>翻译后格式往返一致</td><td></td></tr>
+<tr><td>subtitle_shift</td><td>L1</td><td class="warn">⚠️ warn</td><td>471 条空译文（可能是平移或降级失败）: [30, 31, 32, 33, 34]</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>empty_translations</td><td>L2</td><td class="fail">❌ fail</td><td>471 条空译文: [30, 31, 32, 33, 34]</td><td>translate.rs translate_batch_with_fallback 降级重试</td></tr>
+<tr><td>fake_translations</td><td>L2</td><td class="warn">⚠️ warn</td><td>假翻译 19 条 (3.79%)</td><td>translate.rs prompt 模板</td></tr>
+<tr><td>cjk_check</td><td>L2</td><td class="pass">✅ pass</td><td>译文均含 CJK 字符</td><td></td></tr>
+<tr><td>sound_effect_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>音效标记一致</td><td></td></tr>
+<tr><td>name_consistency</td><td>L2</td><td class="pass">✅ pass</td><td>人名一致，无残留标签</td><td></td></tr>
+<tr><td>length_ratio</td><td>L2</td><td class="pass">✅ pass</td><td>译文长度全部在合理范围</td><td></td></tr>
+<tr><td>alignment_check</td><td>L2</td><td class="pass">✅ pass</td><td>无错位迹象</td><td></td></tr>
+<tr><td>truncation_check</td><td>L2</td><td class="pass">✅ pass</td><td>无截断迹象</td><td></td></tr>
+<tr><td>translate_failures</td><td>L2</td><td class="warn">⚠️ warn</td><td>失败 19 条, 缓存 0 条, token 0 | 详情: #1: &quot;-This the place?\\n-This the place.&quot; → &quot;-This the place?\\n-This the place.&quot;; #4: &quot;-This the stuff?\\n-This the stuff.&quot; → &quot;-This the stuff?\\n-This the stuff.&quot;; #5: &quot;And this is no ordinary stuff,\\nMorty.&quot; → &quot;And this is no ordinary stuff,\\nMorty.&quot;; #6: &quot;This sap is primo .&quot; → &quot;This sap is primo .&quot;; #10: &quot;-Argh!\\n-Ah!&quot; → &quot;-Argh!\\n-Ah!&quot;; #11: &quot;-What the hell?\\n-Shit! Vines!&quot; → &quot;-What the hell?\\n-Shit! Vines!&quot;; #13: &quot;Locusts come\\nto harvest my bounty.&quot; → &quot;Locusts come\\nto harvest my bounty.&quot;; #14: &quot;Hey, giant ancient tree guy.&quot; → &quot;Hey, giant ancient tree guy.&quot;; #15: &quot;Sorry. We thought\\nthe sap was accountability free.&quot; → &quot;Sorry. We thought\\nthe sap was accountability free.&quot;; #16: &quot;Yeah, well, we're not locusts,\\njust a couple adventurers.&quot; → &quot;Yeah, well, we're not locusts,\\njust a couple adventurers.&quot;; #17: &quot;Spacefarers.&quot; → &quot;Spacefarers.&quot;; #18: &quot;You consume your planets,&quot; → &quot;You consume your planets,&quot;; #19: &quot;then spread your sickness\\nto the stars.&quot; → &quot;then spread your sickness\\nto the stars.&quot;; #20: &quot;Nah. Nah, man.\\nWe're clean, I promise.&quot; → &quot;Nah. Nah, man.\\nWe're clean, I promise.&quot;; #21: &quot;Yeah, yeah.\\nWe just got tested,&quot; → &quot;Yeah, yeah.\\nWe just got tested,&quot;; #22: &quot;and I got a bit of\\na soy allergy.&quot; → &quot;and I got a bit of\\na soy allergy.&quot;; #23: &quot;I have a place\\nfor animals like you.&quot; → &quot;I have a place\\nfor animals like you.&quot;; #24: &quot;You will be reformed.&quot; → &quot;You will be reformed.&quot;; #26: &quot;What is...&quot; → &quot;What is...&quot;</td><td>translate.rs translate_batch_with_fallback</td></tr>
+<tr><td>judge_27b</td><td>L5</td><td class="warn">⚠️ warn</td><td>27b judge: 0 pass, 30 fail, 0 shift (共 30 条判定, 问题批次: [])</td><td>27b judge 翻译质量问题</td></tr>
+<tr><td>bilingual_roundtrip_srt</td><td>L3</td><td class="fail">❌ fail</td><td>SRT 双语字幕检测失败: is_bilingual=false, matched=0, total=501</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>bilingual_roundtrip_ass</td><td>L3</td><td class="fail">❌ fail</td><td>ASS 双语字幕检测失败: is_bilingual=false, matched=0, total=501</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>bilingual_roundtrip_vtt</td><td>L3</td><td class="fail">❌ fail</td><td>VTT 双语字幕检测失败: is_bilingual=false, matched=0, total=501</td><td>subtitle.rs detect_bilingual</td></tr>
+<tr><td>repeated_open_1</td><td>L3</td><td class="pass">✅ pass</td><td>第 1 次打开一致: 0 条命中, failed=0, missing=374</td><td></td></tr>
+<tr><td>repeated_open_2</td><td>L3</td><td class="pass">✅ pass</td><td>第 2 次打开一致: 0 条命中, failed=0, missing=374</td><td></td></tr>
+<tr><td>repeated_open_3</td><td>L3</td><td class="pass">✅ pass</td><td>第 3 次打开一致: 0 条命中, failed=0, missing=374</td><td></td></tr>
+<tr><td>code_bug_stopped</td><td>L3</td><td class="fail">❌ fail</td><td>批次 1 L3 持久化验证发现代码 bug，测试已停止。修复代码后用 E2E_RESET=1 重跑</td><td>translate.rs 缓存质量校验 / subtitle.rs 双语导出</td></tr>
+</tbody></table>
+</div>
+</body>
+</html>

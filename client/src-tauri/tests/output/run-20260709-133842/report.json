@@ -1,0 +1,185 @@
+{
+  "timestamp": "2026-07-09 13:38:42",
+  "summary": {
+    "total_fixtures": 1,
+    "passed": 0,
+    "warned": 1,
+    "failed": 0,
+    "total_checks": 23,
+    "checks_passed": 19,
+    "checks_warned": 4,
+    "checks_failed": 0
+  },
+  "fixtures": [
+    {
+      "name": "rick_s09e07",
+      "file": "rick_s09e07.srt",
+      "status": "warned",
+      "entries": 501,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 501，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "501 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "501 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "translated_entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数一致: 501",
+          "source_hint": null
+        },
+        {
+          "name": "translated_timeline",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "时间轴全部对齐",
+          "source_hint": null
+        },
+        {
+          "name": "translated_format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "翻译后格式往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "subtitle_shift",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "无平移迹象",
+          "source_hint": null
+        },
+        {
+          "name": "empty_translations",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无空译文",
+          "source_hint": null
+        },
+        {
+          "name": "fake_translations",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "假翻译 2 条 (0.40%)",
+          "source_hint": "translate.rs prompt 模板"
+        },
+        {
+          "name": "cjk_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文均含 CJK 字符",
+          "source_hint": null
+        },
+        {
+          "name": "sound_effect_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "音效标记一致",
+          "source_hint": null
+        },
+        {
+          "name": "name_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "人名一致，无残留标签",
+          "source_hint": null
+        },
+        {
+          "name": "length_ratio",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文长度全部在合理范围",
+          "source_hint": null
+        },
+        {
+          "name": "alignment_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无错位迹象",
+          "source_hint": null
+        },
+        {
+          "name": "truncation_check",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "47 条疑似截断: [(26, \"句末标点缺失\"), (43, \"长度比 0.20\"), (47, \"句子数 2→1\"), (53, \"长度比 0.19\"), (63, \"句子数 2→1\")]",
+          "source_hint": "translate.rs prompt 或 batch 翻译逻辑"
+        },
+        {
+          "name": "translate_failures",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "失败 2 条, 缓存 20 条, token 33232 | 详情: #133: \"Morty: Whoo-hoo!\" → \"Morty: Whoo-hoo!\"; #368: \"NAAAAAAAAAAAANTS\\\\ningonyamaaaaa bagithi baba...\" → \"NAAAAAAAAAAAANTS\\\\ningonyamaaaaa bagithi baba...\"",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "judge_27b",
+          "tier": "L5",
+          "status": "warn",
+          "detail": "27b judge: 436 pass, 64 fail, 1 shift (共 501 条判定, 问题批次: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17])",
+          "source_hint": "27b judge 翻译质量问题"
+        },
+        {
+          "name": "bilingual_roundtrip_srt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "SRT 双语字幕往返一致: translated=448, failed=0, missing=2 (翻译时 failed=2, missing=2)",
+          "source_hint": null
+        },
+        {
+          "name": "bilingual_roundtrip_ass",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "ASS 双语字幕往返一致: translated=448, failed=0, missing=2 (翻译时 failed=2, missing=2)",
+          "source_hint": null
+        },
+        {
+          "name": "bilingual_roundtrip_vtt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "VTT 双语字幕往返一致: translated=448, failed=0, missing=2 (翻译时 failed=2, missing=2)",
+          "source_hint": null
+        },
+        {
+          "name": "repeated_open_1",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 1 次打开一致: 501 条命中, failed=2, missing=2",
+          "source_hint": null
+        },
+        {
+          "name": "repeated_open_2",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 2 次打开一致: 501 条命中, failed=2, missing=2",
+          "source_hint": null
+        },
+        {
+          "name": "repeated_open_3",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 3 次打开一致: 501 条命中, failed=2, missing=2",
+          "source_hint": null
+        }
+      ]
+    }
+  ],
+  "elapsed": "34分25秒"
+}

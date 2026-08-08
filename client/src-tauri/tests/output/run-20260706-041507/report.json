@@ -1,0 +1,73 @@
+{
+  "timestamp": "2026-07-06 04:15:07",
+  "summary": {
+    "total_fixtures": 2,
+    "passed": 0,
+    "warned": 2,
+    "failed": 0,
+    "total_checks": 6,
+    "checks_passed": 4,
+    "checks_warned": 2,
+    "checks_failed": 0
+  },
+  "fixtures": [
+    {
+      "name": "clarksons_farm",
+      "file": "clarksons_farm.srt",
+      "status": "warned",
+      "entries": 1054,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "warn",
+          "detail": "条目数 1054，1054 条序号不连续",
+          "source_hint": "subtitle.rs parse_srt index 赋值"
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "1054 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "1054 条往返一致",
+          "source_hint": null
+        }
+      ]
+    },
+    {
+      "name": "rick_and_morty",
+      "file": "rick_and_morty.srt",
+      "status": "warned",
+      "entries": 560,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "warn",
+          "detail": "条目数 560，560 条序号不连续",
+          "source_hint": "subtitle.rs parse_srt index 赋值"
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "560 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "560 条往返一致",
+          "source_hint": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "timestamp": "2026-07-07 13:09:15",
+  "summary": {
+    "total_fixtures": 1,
+    "passed": 0,
+    "warned": 1,
+    "failed": 0,
+    "total_checks": 23,
+    "checks_passed": 17,
+    "checks_warned": 6,
+    "checks_failed": 0
+  },
+  "fixtures": [
+    {
+      "name": "Clarksons Farm S05E07 Sickening 2160p AMZN WEB-DL DDP5 1 H 265-FLUX.eng",
+      "file": "/Volumes/2t/code/polly-subtitle-translator/Clarksons Farm S05E07 Sickening 2160p AMZN WEB-DL DDP5 1 H 265-FLUX.eng.srt",
+      "status": "warned",
+      "entries": 1054,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 1054，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "1054 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "1054 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "translated_entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数一致: 1054",
+          "source_hint": null
+        },
+        {
+          "name": "translated_timeline",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "时间轴全部对齐",
+          "source_hint": null
+        },
+        {
+          "name": "translated_format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "翻译后格式往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "subtitle_shift",
+          "tier": "L1",
+          "status": "warn",
+          "detail": "13 条空译文（可能是平移或降级失败）: [198, 200, 305, 307, 450]",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "empty_translations",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无空译文",
+          "source_hint": null
+        },
+        {
+          "name": "fake_translations",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "假翻译 1 条 (0.09%)",
+          "source_hint": "translate.rs prompt 模板"
+        },
+        {
+          "name": "cjk_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文均含 CJK 字符",
+          "source_hint": null
+        },
+        {
+          "name": "sound_effect_consistency",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "2 条音效标记不一致: [(246, false, true), (717, true, false)]",
+          "source_hint": "translate.rs prompt 音效标记规则"
+        },
+        {
+          "name": "name_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "人名一致，无残留标签",
+          "source_hint": null
+        },
+        {
+          "name": "length_ratio",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文长度全部在合理范围",
+          "source_hint": null
+        },
+        {
+          "name": "alignment_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无错位迹象",
+          "source_hint": null
+        },
+        {
+          "name": "truncation_check",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "241 条疑似截断: [(7, \"长度比 0.26, 句子数 2→1\"), (8, \"长度比 0.24\"), (9, \"长度比 0.28, 句子数 2→1\"), (15, \"长度比 0.26\"), (16, \"长度比 0.25\")]",
+          "source_hint": "translate.rs prompt 或 batch 翻译逻辑"
+        },
+        {
+          "name": "translate_failures",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "失败 19 条, 缓存 29 条, token 83052",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "judge_27b",
+          "tier": "L5",
+          "status": "warn",
+          "detail": "27b judge: 815 pass, 147 fail, 10 shift (共 972 条判定, 问题批次: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 33, 34, 35])",
+          "source_hint": "27b judge 翻译质量问题"
+        },
+        {
+          "name": "bilingual_roundtrip_srt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "SRT 双语字幕往返一致: translated=1035, failed=0, missing=19 (翻译时 failed=19, missing=19)",
+          "source_hint": null
+        },
+        {
+          "name": "bilingual_roundtrip_ass",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "ASS 双语字幕往返一致: translated=1035, failed=0, missing=19 (翻译时 failed=19, missing=19)",
+          "source_hint": null
+        },
+        {
+          "name": "bilingual_roundtrip_vtt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "VTT 双语字幕往返一致: translated=1035, failed=0, missing=19 (翻译时 failed=19, missing=19)",
+          "source_hint": null
+        },
+        {
+          "name": "repeated_open_1",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 1 次打开一致: 1041 条命中, failed=6, missing=19",
+          "source_hint": null
+        },
+        {
+          "name": "repeated_open_2",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 2 次打开一致: 1041 条命中, failed=6, missing=19",
+          "source_hint": null
+        },
+        {
+          "name": "repeated_open_3",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 3 次打开一致: 1041 条命中, failed=6, missing=19",
+          "source_hint": null
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+{
+  "timestamp": "2026-07-10 00:22:48",
+  "summary": {
+    "total_fixtures": 1,
+    "passed": 0,
+    "warned": 1,
+    "failed": 0,
+    "total_checks": 23,
+    "checks_passed": 20,
+    "checks_warned": 3,
+    "checks_failed": 0
+  },
+  "fixtures": [
+    {
+      "name": "Rick and Morty S09E04 A Ricker Runs Through It 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune.eng",
+      "file": "/Volumes/2t/code/polly-subtitle-translator/Rick and Morty S09E04 A Ricker Runs Through It 1080p AMZN WEB-DL DDP5 1 H 264-Kitsune.eng.srt",
+      "status": "warned",
+      "entries": 543,
+      "checks": [
+        {
+          "name": "entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数 543，序号唯一递增",
+          "source_hint": null
+        },
+        {
+          "name": "timeline_validity",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "543 条时间轴全部有效",
+          "source_hint": null
+        },
+        {
+          "name": "format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "543 条往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_entry_count",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "条目数一致: 543",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_timeline",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "时间轴全部对齐",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] translated_format_roundtrip",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "翻译后格式往返一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] subtitle_shift",
+          "tier": "L1",
+          "status": "pass",
+          "detail": "无平移迹象",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] empty_translations",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无空译文",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] fake_translations",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无假翻译",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] cjk_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文均含 CJK 字符",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] sound_effect_consistency",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "音效标记一致",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] name_consistency",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "6 条译文残留 <name> 标签: [39, 202, 372]",
+          "source_hint": "translate.rs post_process_name_tags / extract_name_tags"
+        },
+        {
+          "name": "[NP] length_ratio",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "译文长度全部在合理范围",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] alignment_check",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "无错位迹象",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] truncation_check",
+          "tier": "L2",
+          "status": "warn",
+          "detail": "53 条疑似截断: [(15, \"句子数 2→1\"), (18, \"长度比 0.26\"), (31, \"长度比 0.27\"), (43, \"句末标点缺失\"), (61, \"长度比 0.26\")]",
+          "source_hint": "translate.rs prompt 或 batch 翻译逻辑"
+        },
+        {
+          "name": "[NP] translate_failures",
+          "tier": "L2",
+          "status": "pass",
+          "detail": "失败 0 条, 缓存 19 条, token 79964",
+          "source_hint": "translate.rs translate_batch_with_fallback"
+        },
+        {
+          "name": "[NP] judge_27b",
+          "tier": "L5",
+          "status": "warn",
+          "detail": "27b judge: 491 pass, 47 fail, 5 shift (共 543 条判定, 问题批次: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19])",
+          "source_hint": "27b judge 翻译质量问题"
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_srt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "SRT 双语字幕往返一致: translated=535, failed=0, missing=0 (翻译时 failed=0, missing=0)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_ass",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "ASS 双语字幕往返一致: translated=535, failed=0, missing=0 (翻译时 failed=0, missing=0)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] bilingual_roundtrip_vtt",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "VTT 双语字幕往返一致: translated=535, failed=0, missing=0 (翻译时 failed=0, missing=0)",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] repeated_open_1",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 1 次打开一致: 543 条命中, failed=0, missing=0",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] repeated_open_2",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 2 次打开一致: 543 条命中, failed=0, missing=0",
+          "source_hint": null
+        },
+        {
+          "name": "[NP] repeated_open_3",
+          "tier": "L3",
+          "status": "pass",
+          "detail": "第 3 次打开一致: 543 条命中, failed=0, missing=0",
+          "source_hint": null
+        }
+      ]
+    }
+  ],
+  "elapsed": "53分41秒"
+}

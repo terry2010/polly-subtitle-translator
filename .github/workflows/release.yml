@@ -86,18 +86,21 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri
+          workspaces: client/src-tauri
 
       - run: npm ci
+        working-directory: client
 
       - name: Set version
         run: node scripts/publish.mjs --set-version "${{ needs.prepare.outputs.version }}"
+        working-directory: client
 
       - name: Build with signing
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: npx tauri build --bundles ${{ matrix.bundles }}
+        working-directory: client
 
       - name: Upload artifacts to Release
         uses: softprops/action-gh-release@v2
@@ -106,11 +109,11 @@ jobs:
           name: v${{ needs.prepare.outputs.version }}
           body: ${{ needs.prepare.outputs.notes }}
           files: |
-            src-tauri/target/release/bundle/nsis/*.exe
-            src-tauri/target/release/bundle/nsis/*.sig
-            src-tauri/target/release/bundle/dmg/*.dmg
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
+            client/src-tauri/target/release/bundle/nsis/*.exe
+            client/src-tauri/target/release/bundle/nsis/*.sig
+            client/src-tauri/target/release/bundle/dmg/*.dmg
+            client/src-tauri/target/release/bundle/macos/*.app.tar.gz
+            client/src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
 
   # ──────────────────────────────────────────────
   # 清单更新阶段：合并双平台签名，生成 latest.json
@@ -129,3 +132,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/publish.mjs --update-latest "${{ needs.prepare.outputs.version }}" "${{ needs.prepare.outputs.notes }}"
+        working-directory: client

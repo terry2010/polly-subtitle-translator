@@ -1,0 +1,493 @@
+{
+  "fixture_name": "rick_s09e07",
+  "name_precision": true,
+  "source_lang": "en",
+  "target_lang": "zh",
+  "total_entries": 501,
+  "batch_size": 30,
+  "names": [
+    {
+      "english": "Morty",
+      "chinese": "莫蒂"
+    },
+    {
+      "english": "Locusts",
+      "chinese": "蝗虫"
+    },
+    {
+      "english": "Soy",
+      "chinese": "大豆"
+    },
+    {
+      "english": "Amoeba",
+      "chinese": "变形虫"
+    },
+    {
+      "english": "Cellmates",
+      "chinese": "狱友"
+    },
+    {
+      "english": "Lungfish",
+      "chinese": "肺鱼"
+    },
+    {
+      "english": "Snake",
+      "chinese": "蛇"
+    },
+    {
+      "english": "Rick",
+      "chinese": "瑞克"
+    },
+    {
+      "english": "Orc",
+      "chinese": "兽人"
+    },
+    {
+      "english": "Sludge",
+      "chinese": "泥浆"
+    },
+    {
+      "english": "Pod person",
+      "chinese": "豆荚人"
+    },
+    {
+      "english": "Gorilla #3",
+      "chinese": "大猩猩3号"
+    },
+    {
+      "english": "Los Lobos",
+      "chinese": "洛斯洛博斯"
+    },
+    {
+      "english": "Warden",
+      "chinese": "典狱长"
+    },
+    {
+      "english": "Omega",
+      "chinese": "欧米伽"
+    },
+    {
+      "english": "Bronze post-mortem",
+      "chinese": "青铜尸检"
+    },
+    {
+      "english": "Mulch",
+      "chinese": "堆肥"
+    },
+    {
+      "english": "Lion",
+      "chinese": "狮子"
+    },
+    {
+      "english": "Gorilla 3",
+      "chinese": "大猩猩3号"
+    },
+    {
+      "english": "Hyena 3",
+      "chinese": "鬣狗3号"
+    },
+    {
+      "english": "Biodome",
+      "chinese": "生物圈"
+    },
+    {
+      "english": "Chimp",
+      "chinese": "黑猩猩"
+    },
+    {
+      "english": "Timber",
+      "chinese": "木头"
+    },
+    {
+      "english": "Spacefarers",
+      "chinese": "太空旅行者"
+    },
+    {
+      "english": "Glove boxes",
+      "chinese": "手套箱"
+    },
+    {
+      "english": "Plants",
+      "chinese": "植物"
+    },
+    {
+      "english": "Biology",
+      "chinese": "生物学"
+    }
+  ],
+  "names_status": "Passed",
+  "batches": [
+    {
+      "batch_num": 1,
+      "start": 0,
+      "end": 30,
+      "translations": [
+        {
+          "index": 0,
+          "original": "[ Saucer whirs ]",
+          "translated": "[碟盘嗡嗡作响]",
+          "failed": false
+        },
+        {
+          "index": 1,
+          "original": "-This the place?\n-This the place.",
+          "translated": "-这是地方吗？",
+          "failed": false
+        },
+        {
+          "index": 2,
+          "original": "[ Grunts ]",
+          "translated": "[低吼声]",
+          "failed": false
+        },
+        {
+          "index": 3,
+          "original": "[ Machine beeps ]",
+          "translated": "[机器滴答声]",
+          "failed": false
+        },
+        {
+          "index": 4,
+          "original": "-This the stuff?\n-This the stuff.",
+          "translated": "-这是地方吗？",
+          "failed": false
+        },
+        {
+          "index": 5,
+          "original": "And this is no ordinary stuff,\nMorty.",
+          "translated": "而且这可不是普通的\n东西，莫蒂。",
+          "failed": false
+        },
+        {
+          "index": 6,
+          "original": "This sap is primo .",
+          "translated": "这糖浆是顶级的。",
+          "failed": false
+        },
+        {
+          "index": 7,
+          "original": "[ Both grunting ]",
+          "translated": "[两人都在低吼]",
+          "failed": false
+        },
+        {
+          "index": 8,
+          "original": "[ Liquid sloshes ]",
+          "translated": "[ 液体晃动声 ]",
+          "failed": false
+        },
+        {
+          "index": 9,
+          "original": "[ Vines creak ]",
+          "translated": "[ 树藤嘎吱作响声 ]",
+          "failed": false
+        },
+        {
+          "index": 10,
+          "original": "-Argh!\n-Ah!",
+          "translated": "-啊！-啊！",
+          "failed": false
+        },
+        {
+          "index": 11,
+          "original": "-What the hell?\n-Shit! Vines!",
+          "translated": "-搞什么鬼？",
+          "failed": false
+        },
+        {
+          "index": 12,
+          "original": "[ Both grunting ]",
+          "translated": "[ 两人都在用力 ]",
+          "failed": false
+        },
+        {
+          "index": 13,
+          "original": "Locusts come\nto harvest my bounty.",
+          "translated": "蝗虫来\n收割我的战利品。",
+          "failed": false
+        },
+        {
+          "index": 14,
+          "original": "Hey, giant ancient tree guy.",
+          "translated": "嘿，巨大的古树大叔。",
+          "failed": false
+        },
+        {
+          "index": 15,
+          "original": "Sorry. We thought\nthe sap was accountability free.",
+          "translated": "抱歉。我们以为\n树液是不含责任的。",
+          "failed": false
+        },
+        {
+          "index": 16,
+          "original": "Yeah, well, we're not locusts,\njust a couple adventurers.",
+          "translated": "是啊，但我们不是蝗虫，\n只是两个冒险家。",
+          "failed": false
+        },
+        {
+          "index": 17,
+          "original": "Spacefarers.",
+          "translated": "太空旅行者。",
+          "failed": false
+        },
+        {
+          "index": 18,
+          "original": "You consume your planets,",
+          "translated": "你们吞噬你们的星球，",
+          "failed": false
+        },
+        {
+          "index": 19,
+          "original": "then spread your sickness\nto the stars.",
+          "translated": "然后把你的瘟疫\n传播到星星上去。",
+          "failed": false
+        },
+        {
+          "index": 20,
+          "original": "Nah. Nah, man.\nWe're clean, I promise.",
+          "translated": "不。不，伙计。\n我们是干净的，我保证。",
+          "failed": false
+        },
+        {
+          "index": 21,
+          "original": "Yeah, yeah.\nWe just got tested,",
+          "translated": "是啊，是啊。\n我们刚做过检查，",
+          "failed": false
+        },
+        {
+          "index": 22,
+          "original": "and I got a bit of\na soy allergy.",
+          "translated": "而且我有点\n大豆过敏。",
+          "failed": false
+        },
+        {
+          "index": 23,
+          "original": "I have a place\nfor animals like you.",
+          "translated": "我有个地方\n是留给像你这样的动物的。",
+          "failed": false
+        },
+        {
+          "index": 24,
+          "original": "You will be reformed.",
+          "translated": "你们将被重塑。",
+          "failed": false
+        },
+        {
+          "index": 25,
+          "original": "[ Groaning ]\n[ Groaning ]",
+          "translated": "[呻吟声]\n[呻吟声]",
+          "failed": false
+        },
+        {
+          "index": 26,
+          "original": "What is...",
+          "translated": "这是什么……",
+          "failed": false
+        },
+        {
+          "index": 27,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 28,
+          "original": "♪♪",
+          "translated": "♪♪",
+          "failed": false
+        },
+        {
+          "index": 29,
+          "original": "[ Water splashes ]",
+          "translated": "[ 水花飞溅 ]",
+          "failed": false
+        }
+      ],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Translated"
+    },
+    {
+      "batch_num": 2,
+      "start": 30,
+      "end": 60,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 3,
+      "start": 60,
+      "end": 90,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 4,
+      "start": 90,
+      "end": 120,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 5,
+      "start": 120,
+      "end": 150,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 6,
+      "start": 150,
+      "end": 180,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 7,
+      "start": 180,
+      "end": 210,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 8,
+      "start": 210,
+      "end": 240,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 9,
+      "start": 240,
+      "end": 270,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 10,
+      "start": 270,
+      "end": 300,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 11,
+      "start": 300,
+      "end": 330,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 12,
+      "start": 330,
+      "end": 360,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 13,
+      "start": 360,
+      "end": 390,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 14,
+      "start": 390,
+      "end": 420,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 15,
+      "start": 420,
+      "end": 450,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 16,
+      "start": 450,
+      "end": 480,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    },
+    {
+      "batch_num": 17,
+      "start": 480,
+      "end": 501,
+      "translations": [],
+      "judge_results": [],
+      "judge_pass": 0,
+      "judge_fail": 0,
+      "judge_shift": 0,
+      "status": "Pending"
+    }
+  ],
+  "current_stage": 1,
+  "total_tokens": 3395,
+  "total_failed": 0,
+  "total_cached": 0
+}
