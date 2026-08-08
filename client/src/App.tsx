@@ -314,11 +314,11 @@ export default function App() {
       };
       copyToClipboard(text).then((ok) => {
         if (ok) {
-          toast.success("已复制 toast 内容", { duration: 1500 });
+          toast.success(i18n.t("common.copiedToast"), { duration: 1500 });
         } else if (fallbackCopy(text)) {
-          toast.success("已复制 toast 内容", { duration: 1500 });
+          toast.success(i18n.t("common.copiedToast"), { duration: 1500 });
         } else {
-          toast.error("复制失败", { duration: 1500 });
+          toast.error(i18n.t("common.copyFailed"), { duration: 1500 });
         }
       });
     };

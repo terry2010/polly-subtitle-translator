@@ -225,21 +225,21 @@ function StyleRow({
         value={size}
         onChange={(e) => onSize(parseInt(e.target.value, 10) || 0)}
         className="h-7 w-16 text-xs"
-        aria-label={t("subtitle.exportFontSize", "字号")}
+        aria-label={t("subtitle.exportFontSize")}
       />
       <input
         type="color"
         value={cssColor}
         onChange={(e) => onColor(hexToAssColor(e.target.value))}
         className="h-7 w-7 rounded border cursor-pointer"
-        aria-label={t("subtitle.exportColor", "颜色")}
+        aria-label={t("subtitle.exportColor")}
       />
       <Button
         size="sm"
         variant={bold ? "default" : "outline"}
         className={btnCls}
         onClick={() => onBold(!bold)}
-        aria-label={t("subtitle.exportBold", "粗体")}
+        aria-label={t("subtitle.exportBold")}
       >
         B
       </Button>
@@ -248,7 +248,7 @@ function StyleRow({
         variant={italic ? "default" : "outline"}
         className={`${btnCls} italic`}
         onClick={() => onItalic(!italic)}
-        aria-label={t("subtitle.exportItalic", "斜体")}
+        aria-label={t("subtitle.exportItalic")}
       >
         I
       </Button>
@@ -257,7 +257,7 @@ function StyleRow({
         variant={underline ? "default" : "outline"}
         className={`${btnCls} underline`}
         onClick={() => onUnderline(!underline)}
-        aria-label={t("subtitle.exportUnderline", "下划线")}
+        aria-label={t("subtitle.exportUnderline")}
       >
         U
       </Button>
@@ -432,13 +432,13 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t("subtitle.save", "保存字幕")}</DialogTitle>
+          <DialogTitle>{t("subtitle.save")}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1 w-full min-w-0">
           {/* 格式选择 */}
           <div className="flex items-center gap-2">
-            <span className="text-sm w-16 flex-shrink-0">{t("subtitle.exportFormat", "格式")}</span>
+            <span className="text-sm w-16 flex-shrink-0">{t("subtitle.exportFormat")}</span>
             <div className="flex gap-1">
               {(["srt", "ass", "vtt"] as FormatKind[]).map((f) => (
                 <button
@@ -454,7 +454,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
 
           {/* 模式选择 */}
           <div className="flex items-center gap-4">
-            <span className="text-sm w-16 flex-shrink-0">{t("subtitle.exportMode", "模式")}</span>
+            <span className="text-sm w-16 flex-shrink-0">{t("subtitle.exportMode")}</span>
             <label className="flex items-center gap-1 text-sm cursor-pointer">
               <input
                 type="radio"
@@ -462,7 +462,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
                 checked={mode === "monolingual"}
                 onChange={() => setMode("monolingual")}
               />
-              {t("subtitle.exportMonolingual", "单语")}
+              {t("subtitle.exportMonolingual")}
             </label>
             <label className="flex items-center gap-1 text-sm cursor-pointer">
               <input
@@ -471,21 +471,21 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
                 checked={mode === "bilingual"}
                 onChange={() => setMode("bilingual")}
               />
-              {t("subtitle.exportBilingual", "双语")}
+              {t("subtitle.exportBilingual")}
             </label>
           </div>
 
           {/* 单语分支：语言选择 */}
           {mode === "monolingual" && (
             <div className="flex items-center gap-2 pl-4">
-              <span className="text-sm w-12 flex-shrink-0">{t("subtitle.exportLang", "语言")}</span>
+              <span className="text-sm w-12 flex-shrink-0">{t("subtitle.exportLang")}</span>
               <select
                 value={monolingualLang}
                 onChange={(e) => setMonolingualLang(e.target.value as MonoLang)}
                 className="h-7 rounded border border-input bg-transparent px-2 text-xs"
               >
-                <option value="translated">{t("subtitle.exportLangTranslated", "译文")}</option>
-                <option value="source">{t("subtitle.exportLangSource", "原文")}</option>
+                <option value="translated">{t("subtitle.exportLangTranslated")}</option>
+                <option value="source">{t("subtitle.exportLangSource")}</option>
               </select>
             </div>
           )}
@@ -493,7 +493,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
           {/* 双语分支：顺序 + 翻转按钮 */}
           {mode === "bilingual" && (
             <div className="flex items-center gap-2 pl-4">
-              <span className="text-sm w-12 flex-shrink-0">{t("subtitle.exportOrder", "顺序")}</span>
+              <span className="text-sm w-12 flex-shrink-0">{t("subtitle.exportOrder")}</span>
               <label className="flex items-center gap-1 text-sm cursor-pointer">
                 <input
                   type="radio"
@@ -501,7 +501,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
                   checked={translatedFirst}
                   onChange={() => setTranslatedFirst(true)}
                 />
-                {t("subtitle.exportTranslatedFirst", "译文在上")}
+                {t("subtitle.exportTranslatedFirst")}
               </label>
               <label className="flex items-center gap-1 text-sm cursor-pointer">
                 <input
@@ -510,14 +510,14 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
                   checked={!translatedFirst}
                   onChange={() => setTranslatedFirst(false)}
                 />
-                {t("subtitle.exportSourceFirst", "原文在上")}
+                {t("subtitle.exportSourceFirst")}
               </label>
               <Button
                 size="sm"
                 variant="outline"
                 className="h-7 w-7 p-0"
                 onClick={() => setTranslatedFirst((v) => !v)}
-                aria-label={t("subtitle.exportSwapOrder", "翻转顺序")}
+                aria-label={t("subtitle.exportSwapOrder")}
               >
                 <ArrowUpDown className="h-3.5 w-3.5" />
               </Button>
@@ -527,7 +527,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
           {/* SRT/VTT 双语提示 */}
           {format !== "ass" && mode === "bilingual" && (
             <p className="text-xs text-muted-foreground pl-4">
-              {t("subtitle.exportSrtNoStyleHint", "SRT/VTT 不支持样式，仅 ASS 可配置字号/颜色/特效")}
+              {t("subtitle.exportSrtNoStyleHint")}
             </p>
           )}
 
@@ -535,7 +535,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
           {showAssStyle && (
             <div className="space-y-3 border rounded-md p-3 bg-muted/30">
               <div className="flex items-center justify-between">
-                <div className="text-sm font-medium">{t("subtitle.exportAssStyle", "ASS 样式")}</div>
+                <div className="text-sm font-medium">{t("subtitle.exportAssStyle")}</div>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -543,11 +543,11 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
                   onClick={() => setAssStyle({ ...DEFAULT_ASS_STYLE })}
                 >
                   <RotateCcw className="h-3 w-3 mr-1" />
-                  {t("subtitle.exportResetStyle", "重置样式")}
+                  {t("subtitle.exportResetStyle")}
                 </Button>
               </div>
               <StyleRow
-                label={t("subtitle.exportPrimaryLine", "第一行")}
+                label={t("subtitle.exportPrimaryLine")}
                 size={assStyle.primary_font_size}
                 color={assStyle.primary_color}
                 bold={assStyle.primary_bold}
@@ -560,7 +560,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
                 onUnderline={(v) => setAssStyle((s) => ({ ...s, primary_underline: v }))}
               />
               <StyleRow
-                label={t("subtitle.exportSecondaryLine", "第二行")}
+                label={t("subtitle.exportSecondaryLine")}
                 size={assStyle.secondary_font_size}
                 color={assStyle.secondary_color}
                 bold={assStyle.secondary_bold}
@@ -574,7 +574,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
               />
               <div className="flex items-center gap-4 flex-wrap">
                 <label className="flex items-center gap-1 text-xs">
-                  {t("subtitle.exportOutline", "描边")}
+                  {t("subtitle.exportOutline")}
                   <Input
                     type="number"
                     value={assStyle.outline}
@@ -586,11 +586,11 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
                     value={assColorToCss(assStyle.outline_color)}
                     onChange={(e) => setAssStyle((s) => ({ ...s, outline_color: hexToAssColor(e.target.value) }))}
                     className="h-7 w-7 rounded border cursor-pointer"
-                    aria-label={t("subtitle.exportOutlineColor", "描边颜色")}
+                    aria-label={t("subtitle.exportOutlineColor")}
                   />
                 </label>
                 <label className="flex items-center gap-1 text-xs">
-                  {t("subtitle.exportShadow", "阴影")}
+                  {t("subtitle.exportShadow")}
                   <Input
                     type="number"
                     value={assStyle.shadow}
@@ -602,7 +602,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
                     value={assColorToCss(assStyle.shadow_color)}
                     onChange={(e) => setAssStyle((s) => ({ ...s, shadow_color: hexToAssColor(e.target.value) }))}
                     className="h-7 w-7 rounded border cursor-pointer"
-                    aria-label={t("subtitle.exportShadowColor", "阴影颜色")}
+                    aria-label={t("subtitle.exportShadowColor")}
                   />
                 </label>
               </div>
@@ -611,7 +611,7 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
 
           {/* 实时预览 */}
           <div className="space-y-1">
-            <div className="text-sm font-medium">{t("subtitle.exportPreview", "预览")}</div>
+            <div className="text-sm font-medium">{t("subtitle.exportPreview")}</div>
             <ExportPreview file={effectiveFile!} options={currentOptions()} assStyle={assStyle} />
           </div>
         </div>
@@ -622,15 +622,15 @@ export function ExportDialog({ open, onOpenChange, file }: ExportDialogProps) {
           {videoPath ? (
             <Button variant="outline" size="sm" onClick={handleMergeToVideo} disabled={merging}>
               {merging ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Merge className="mr-1 h-4 w-4" />}
-              {t("subtitle.mergeToVideo", "合并到视频")}
+              {t("subtitle.mergeToVideo")}
             </Button>
           ) : <div />}
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-              {t("subtitle.exportCancel", "取消")}
+              {t("subtitle.exportCancel")}
             </Button>
             <Button size="sm" onClick={handleExport}>
-              {t("subtitle.exportConfirm", "保存字幕")}
+              {t("subtitle.exportConfirm")}
             </Button>
           </div>
         </div>

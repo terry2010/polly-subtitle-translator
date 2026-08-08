@@ -19,27 +19,27 @@ export function RestoreOriginalDialog({ open, onOpenChange, originalText, modifi
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{t("subtitle.restoreTitle", "恢复原文")}</DialogTitle>
+          <DialogTitle>{t("subtitle.restoreTitle")}</DialogTitle>
           <DialogDescription>
-            {t("subtitle.editOriginalHint", "点击编辑原文（编辑后需重新翻译）")}
+            {t("subtitle.editOriginalHint")}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <div>
-            <p className="text-xs text-muted-foreground mb-1">{t("subtitle.originalText", "原始文本")}</p>
+            <p className="text-xs text-muted-foreground mb-1">{t("subtitle.originalText")}</p>
             <p className="text-sm bg-muted/30 rounded px-2 py-1.5 max-h-24 overflow-auto whitespace-pre-wrap">{originalText}</p>
           </div>
           <div>
-            <p className="text-xs text-muted-foreground mb-1">{t("subtitle.modifiedText", "修改后文本")}</p>
+            <p className="text-xs text-muted-foreground mb-1">{t("subtitle.modifiedText")}</p>
             <p className="text-sm bg-muted/30 rounded px-2 py-1.5 max-h-24 overflow-auto whitespace-pre-wrap">{modifiedText}</p>
           </div>
         </div>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            {t("common.cancel", "取消")}
+            {t("common.cancel")}
           </Button>
           <Button onClick={() => { onRestore(); onOpenChange(false); }}>
-            {t("subtitle.restore", "恢复")}
+            {t("subtitle.restore")}
           </Button>
         </div>
       </DialogContent>

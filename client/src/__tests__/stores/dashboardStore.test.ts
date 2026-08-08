@@ -10,7 +10,7 @@ vi.mock("../../lib/api", () => ({
     resumeTranslateJob: vi.fn(),
     deleteTranslateJob: vi.fn(),
   },
-  formatIpcError: vi.fn((e: any) => e?.message || String(e)),
+  formatIpcError: vi.fn((err: any) => (err && typeof err === "object" && "message" in err ? err.message : null) || String(err)),
 }));
 
 // mock toast

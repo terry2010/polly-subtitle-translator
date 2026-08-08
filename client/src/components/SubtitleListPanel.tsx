@@ -279,7 +279,7 @@ export function SubtitleListPanel() {
                             });
                           }}
                           className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-blue-600 hover:bg-blue-100"
-                          title={t("subtitle.edited", "已编辑")}
+                          title={t("subtitle.edited")}
                         >
                           <Pencil className="h-3 w-3" />
                         </button>

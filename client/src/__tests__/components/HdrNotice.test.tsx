@@ -47,7 +47,7 @@ describe("HdrNotice - 渲染", () => {
       probeResult: makeProbe({ hdr_format: "Dolby Vision", details: "", is_dolby_vision: true }),
     });
     render(<HdrNotice />);
-    expect(screen.getByText(/Dolby Vision 内容可能需要兼容播放器/)).toBeInTheDocument();
+    expect(screen.getByText("player.dolbyVisionNotice")).toBeInTheDocument();
   });
 });
 

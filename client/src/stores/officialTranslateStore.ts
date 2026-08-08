@@ -12,6 +12,7 @@ import type {
   SubtitleFile,
   SubtitleEntry,
 } from "../lib/ipc-types";
+import i18n from "../lib/i18n";
 import { useAuthStore } from "./authStore";
 
 type OfficialTranslateStatus = "idle" | "translating" | "completed" | "error";
@@ -183,7 +184,7 @@ export const useOfficialTranslateStore = create<OfficialTranslateState>((set, ge
       }
       // 提示用户取消结果
       if (result.completed_lines !== undefined && result.total_lines !== undefined && result.total_lines > 0) {
-        toast.info(`已取消翻译，已完成 ${result.completed_lines}/${result.total_lines} 行` + (result.refunded ? `，退还 ${result.refunded} 点数` : ""));
+        toast.info(i18n.t("translate.officialCancelled", { completed: result.completed_lines, total: result.total_lines }) + (result.refunded ? i18n.t("translate.officialRefunded", { count: result.refunded }) : ""));
       }
     } catch (e: any) {
       console.warn("取消官方翻译失败:", e);

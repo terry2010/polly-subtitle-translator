@@ -54,6 +54,7 @@ interface SearchableLangSelectProps {
 }
 
 function SearchableLangSelect({ value, onChange, options, placeholder }: SearchableLangSelectProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const ref = useRef<HTMLDivElement>(null);
@@ -109,7 +110,7 @@ function SearchableLangSelect({ value, onChange, options, placeholder }: Searcha
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索语言..."
+              placeholder={t("search.language") + "..."}
               className="h-7 w-full rounded border border-input bg-transparent px-2 text-xs outline-none focus:ring-1"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && filtered.length > 0) {
@@ -124,7 +125,7 @@ function SearchableLangSelect({ value, onChange, options, placeholder }: Searcha
           </div>
           <div className="max-h-48 overflow-auto p-1">
             {filtered.length === 0 ? (
-              <div className="px-2 py-3 text-center text-xs text-muted-foreground">无匹配结果</div>
+              <div className="px-2 py-3 text-center text-xs text-muted-foreground">{t("common.noMatch")}</div>
             ) : (
               filtered.map((o) => (
                 <button
@@ -583,7 +584,7 @@ export default function MainView() {
       });
       setExtractedFiles((prev) => [
         ...prev,
-        { name: `${baseName}.${lang}.${ext}`, path: outputPath, status: t("video.extracted", "已提取") },
+        { name: `${baseName}.${lang}.${ext}`, path: outputPath, status: t("video.extracted") },
       ]);
 
       // loadSubtitle 已内部完成 getSourceEdits + getCachedTranslations 恢复，
@@ -1074,7 +1075,7 @@ export default function MainView() {
 
   // 来源语言列表（含 auto）
   const SOURCE_LANG_OPTIONS: LangOption[] = [
-    { code: "auto", name: "Auto Detect", nativeName: t("translate.autoDetect", "自动检测") },
+    { code: "auto", name: "Auto Detect", nativeName: t("translate.autoDetect") },
     { code: "en", name: "English", nativeName: "English" },
     { code: "ja", name: "Japanese", nativeName: "日本語" },
     { code: "ko", name: "Korean", nativeName: "한국어" },
@@ -1161,10 +1162,10 @@ export default function MainView() {
         ? (SERVICES.find((s) => s.id === serviceId)?.name || "AI")
         : provider === "bing" ? "Bing" : provider === "google" ? "Google" : t("settings.baidu");
       toast.error(
-        t("translate.providerNotConfigured", "{{provider}} 翻译 API 尚未配置密钥，请先在设置中配置后再翻译", { provider: providerName }),
+        t("translate.providerNotConfigured", { provider: providerName }),
         {
           action: {
-            label: t("translate.goConfig", "去配置"),
+            label: t("translate.goConfig"),
             onClick: () => navigate("/settings?provider=" + provider),
           },
           duration: 5000,
@@ -1176,7 +1177,7 @@ export default function MainView() {
     if (sourceLang === "auto" && !PROVIDER_SUPPORTS_AUTO[provider]) {
       const providerName = provider === "bing" ? "Bing" : provider === "google" ? "Google" : provider;
       toast.error(
-        t("translate.autoNotSupported", "{{provider}} 翻译不支持自动检测源语言，请在上方「来源语言」下拉框中手动选择字幕的语言", { provider: providerName })
+        t("translate.autoNotSupported", { provider: providerName })
       );
       return;
     }
@@ -1188,13 +1189,13 @@ export default function MainView() {
       nameTagging = true;
       nameExtractCancelledRef.current = false;
       translateStore.setExtractingNames(true);
-      toast.info(t("translate.nameExtracting", "正在预扫描提取人名..."));
+      toast.info(t("translate.nameExtracting"));
       try {
         const extracted = await translateStore.extractNames(subtitleStore.file.entries);
         // 检查是否被用户取消
         if (nameExtractCancelledRef.current) {
           translateStore.setExtractingNames(false);
-          toast.info(t("translate.nameExtractCancelled", "人名精译已取消，翻译中止"));
+          toast.info(t("translate.nameExtractCancelled"));
           return;
         }
         if (extracted && extracted.length > 0) {
@@ -1227,7 +1228,7 @@ export default function MainView() {
               });
               if (!confirmed) {
                 translateStore.setExtractingNames(false);
-                toast.info(t("translate.nameExtractCancelled", "人名精译已取消，翻译中止"));
+                toast.info(t("translate.nameExtractCancelled"));
                 return;
               }
               glossary = useTranslateStore.getState().glossaryDraft.map((g) => [g.english, g.chinese] as [string, string]);
@@ -1247,7 +1248,7 @@ export default function MainView() {
           return;
         }
         // 其他错误：短暂提示，继续正常翻译
-        toast.warning(t("translate.nameExtractFailed", "人名预扫描失败，将使用正常翻译"));
+        toast.warning(t("translate.nameExtractFailed"));
       }
       translateStore.setExtractingNames(false);
     }
@@ -1295,10 +1296,10 @@ export default function MainView() {
 
   const formatEta = (secs: number) => {
     if (secs <= 0) return "--";
-    if (secs < 60) return `${Math.ceil(secs)}秒`;
+    if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
     const m = Math.floor(secs / 60);
     const s = Math.ceil(secs % 60);
-    return `${m}分${s}秒`;
+    return t("settings.etaMinSecs", { m, s });
   };
 
   const formatSize = (bytes: number | null) => {
@@ -1525,7 +1526,7 @@ export default function MainView() {
                   {probeResult.video_stream && (
                     <div>{probeResult.video_stream.width}x{probeResult.video_stream.height} {probeResult.video_stream.codec_name}</div>
                   )}
-                  <div>{t("video.format", "格式")}: {probeResult.format.format_name}</div>
+                  <div>{t("video.format")}: {probeResult.format.format_name}</div>
                   <div>{t("video.audioStreams")}: {probeResult.audio_streams.map(s => s.language ?? "??").join(", ")}</div>
                   <div>{t("video.subtitleStreams")}: {probeResult.subtitle_streams.length}</div>
                 </CardContent>
@@ -1570,7 +1571,7 @@ export default function MainView() {
                 <div className="flex gap-1">
                   <Button size="sm" variant="destructive" className="h-7 flex-1 px-1 text-xs" onClick={() => { clearVideo(); subtitleStore.setFile(null); handleCloseVideo(); }}>
                     <X className="h-3.5 w-3.5 mr-0.5" />
-                    {probeResult ? t("video.closeVideo") : subtitleStore.file ? t("subtitle.closeSubtitle", "关闭字幕") : t("common.close", "关闭")}
+                    {probeResult ? t("video.closeVideo") : subtitleStore.file ? t("subtitle.closeSubtitle") : t("common.close")}
                   </Button>
                   <Button size="sm" variant="ghost" className="h-7 flex-1 px-1 text-xs" onClick={() => navigate("/settings")}>
                     <SettingsIcon className="h-3.5 w-3.5 mr-0.5" />
@@ -1601,12 +1602,12 @@ export default function MainView() {
           {/* 字幕操作区 */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">{t("video.translateSubtitle", "翻译字幕")}</CardTitle>
+              <CardTitle className="text-sm">{t("video.translateSubtitle")}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               {/* 来源语言：默认从字幕流语言推断，无法识别时为 auto */}
               <div className="flex items-center gap-2">
-                <label className="w-12 text-xs text-muted-foreground flex-shrink-0">{t("translate.sourceLang", "来源语言")}</label>
+                <label className="w-12 text-xs text-muted-foreground flex-shrink-0">{t("translate.sourceLang")}</label>
                 <SearchableLangSelect
                   value={translateStore.sourceLang}
                   onChange={translateStore.setSourceLang}
@@ -1684,21 +1685,21 @@ export default function MainView() {
                           const found = models.find((m) => m.model === model);
                           if (found) return found.name;
                           // 服务端未返回 available_models 时用默认名称
-                          if (model === "polly-fine") return t("translate.officialFine", "精品翻译");
-                          if (model === "polly-standard") return t("translate.officialStandard", "高质翻译");
-                          if (model === "polly-fast") return t("translate.officialFast", "标准翻译");
+                          if (model === "polly-fine") return t("translate.officialFine");
+                          if (model === "polly-standard") return t("translate.officialStandard");
+                          if (model === "polly-fast") return t("translate.officialFast");
                           return model;
                         })()}
                       </span>
                     ) : (
-                      <SelectValue placeholder={t("translate.noEngineAvailable", "无可用引擎")} className="truncate min-w-0 text-muted-foreground" />
+                      <SelectValue placeholder={t("translate.noEngineAvailable")} className="truncate min-w-0 text-muted-foreground" />
                     )}
                   </SelectTrigger>
                   <SelectContent>
                     {/* 官方翻译分组：仅登录后显示，从 available_models 动态渲染 */}
                     {isLoggedIn && (
                       <SelectGroup>
-                        <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.officialEngines", "官方翻译")}</SelectLabel>
+                        <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.officialEngines")}</SelectLabel>
                         {(() => {
                           const models = authUser?.available_models?.filter((m) => m.enabled) || [];
                           if (models.length > 0) {
@@ -1710,7 +1711,7 @@ export default function MainView() {
                                     {m.price_url && (
                                       <span
                                         className="instant-tooltip flex-shrink-0 cursor-pointer text-primary/60 hover:text-primary"
-                                        data-tooltip={t("settings.viewPrice", "查看价格")}
+                                        data-tooltip={t("settings.viewPrice")}
                                         onPointerDown={(e) => e.stopPropagation()}
                                         onPointerUp={(e) => e.stopPropagation()}
                                         onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(m.price_url!).catch(() => {}); }}
@@ -1729,9 +1730,9 @@ export default function MainView() {
                           // 服务端未返回 available_models 时用默认三档
                           return (
                             <>
-                              <SelectItem value="official:polly-fine">{t("translate.officialFine", "高质量精译")}</SelectItem>
-                              <SelectItem value="official:polly-standard">{t("translate.officialStandard", "标准翻译")}</SelectItem>
-                              <SelectItem value="official:polly-fast">{t("translate.officialFast", "快速翻译")}</SelectItem>
+                              <SelectItem value="official:polly-fine">{t("translate.officialFine")}</SelectItem>
+                              <SelectItem value="official:polly-standard">{t("translate.officialStandard")}</SelectItem>
+                              <SelectItem value="official:polly-fast">{t("translate.officialFast")}</SelectItem>
                             </>
                           );
                         })()}
@@ -1744,7 +1745,7 @@ export default function MainView() {
                       if (configuredTraditional.length === 0) return null;
                       return (
                         <SelectGroup>
-                          <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.traditionalEngines", "传统翻译")}</SelectLabel>
+                          <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.traditionalEngines")}</SelectLabel>
                           {configuredTraditional.map((s) => (
                             <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                           ))}
@@ -1761,7 +1762,7 @@ export default function MainView() {
                       }
                       return Array.from(groups.entries()).map(([serviceId, g]) => (
                         <SelectGroup key={serviceId}>
-                          <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">AI翻译 - {g.serviceName}</SelectLabel>
+                          <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("translate.aiLabel", { name: g.serviceName })}</SelectLabel>
                           {g.models.map((m) => {
                             const value = encodeAiSelectValue(m.serviceId, m.model);
                             const maybeFree = isMaybeFreeModel(m.serviceId, m.model);
@@ -1773,7 +1774,7 @@ export default function MainView() {
                                   {maybeFree && (
                                     <span
                                       className="instant-tooltip flex-shrink-0 h-2.5 w-2.5 rounded-sm bg-green-500"
-                                      data-tooltip={t("settings.maybeFree", "可能免费，以官方价格为准")}
+                                      data-tooltip={t("settings.maybeFree")}
                                       onPointerDown={(e) => e.stopPropagation()}
                                       onPointerUp={(e) => e.stopPropagation()}
                                     />
@@ -1781,7 +1782,7 @@ export default function MainView() {
                                   {priceUrl && (
                                     <span
                                       className="instant-tooltip flex-shrink-0 cursor-pointer text-primary/60 hover:text-primary"
-                                      data-tooltip={t("settings.viewPrice", "查看价格")}
+                                      data-tooltip={t("settings.viewPrice")}
                                       onPointerDown={(e) => e.stopPropagation()}
                                       onPointerUp={(e) => e.stopPropagation()}
                                       onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(priceUrl).catch(() => {}); }}
@@ -1800,7 +1801,7 @@ export default function MainView() {
                     <SelectItem value="__add_more__">
                       <span className="flex items-center gap-1 text-primary">
                         <Plus className="h-3 w-3" />
-                        {t("translate.addMoreEngines", "添加更多引擎")}
+                        {t("translate.addMoreEngines")}
                       </span>
                     </SelectItem>
                   </SelectContent>
@@ -1838,7 +1839,7 @@ export default function MainView() {
                   }}
                 >
                   <Square className="mr-1 h-4 w-4" />
-                  {t("translate.nameExtracting", "正在预扫描提取人名...")}
+                  {t("translate.nameExtracting")}
                 </Button>
               ) : (
                 <Button
@@ -1846,7 +1847,7 @@ export default function MainView() {
                   className="w-full"
                   onClick={handleTranslateAndMerge}
                   disabled={!subtitleStore.file || !translateStore.provider}
-                  title={!translateStore.provider ? t("translate.noEngineAvailable", "未配置翻译引擎") : undefined}
+                  title={!translateStore.provider ? t("translate.noEngineAvailable") : undefined}
                 >
                   {t("translate.translate")}
                 </Button>
@@ -1856,10 +1857,10 @@ export default function MainView() {
               {devModeEnabled && translateStore.lastTranslateTime > 0 && (
                 <div className="text-[10px] text-muted-foreground space-y-0.5 py-1 border-t border-border/50 pt-2">
                   <div>
-                    耗时: {(translateStore.lastTranslateTime / 1000).toFixed(2)}秒
+                    {t("translate.statTime", { secs: (translateStore.lastTranslateTime / 1000).toFixed(2) })}
                   </div>
                   <div>
-                    字数: {translateStore.lastTranslateChars.toLocaleString()}
+                    {t("translate.statChars", { n: translateStore.lastTranslateChars.toLocaleString() })}
                   </div>
                   {translateStore.lastTranslateTokens && (
                     <div>
@@ -1883,7 +1884,7 @@ export default function MainView() {
                     }}
                     className="h-3.5 w-3.5 rounded border-gray-300 accent-primary flex-shrink-0"
                   />
-                  <span>{t("translate.autoTranslateAfterExtract", "提取完毕后自动翻译字幕")}</span>
+                  <span>{t("translate.autoTranslateAfterExtract")}</span>
                 </label>
               )}
 
@@ -1896,9 +1897,9 @@ export default function MainView() {
                   </div>
                   <Progress value={(translateStore.progress / translateStore.total) * 100} />
                   <div className="flex justify-between text-[10px] text-muted-foreground">
-                    <span>{translateStore.totalChars.toLocaleString()} 字</span>
-                    <span>{translateStore.speed > 0 ? `${translateStore.speed.toFixed(0)} 字/秒` : "计算中..."}</span>
-                    <span>{translateStore.eta > 0 ? `剩余 ${formatEta(translateStore.eta)}` : ""}</span>
+                    <span>{t("translate.statCharCount", { n: translateStore.totalChars.toLocaleString() })}</span>
+                    <span>{translateStore.speed > 0 ? t("translate.statSpeed", { speed: translateStore.speed.toFixed(0) }) : t("translate.calculating")}</span>
+                    <span>{translateStore.eta > 0 ? t("translate.statEta", { eta: formatEta(translateStore.eta) }) : ""}</span>
                   </div>
                 </div>
               )}
@@ -1923,13 +1924,13 @@ export default function MainView() {
               {nameExtracting && translateStore.extractNamesTotal > 0 && (
                 <div className="space-y-1">
                   <div className="flex justify-between text-xs">
-                    <span>{t("translate.nameExtracting", "正在预扫描提取人名...")}</span>
+                    <span>{t("translate.nameExtracting")}</span>
                     <span>{translateStore.extractNamesProgress} / {translateStore.extractNamesTotal}</span>
                   </div>
                   <Progress value={(translateStore.extractNamesProgress / translateStore.extractNamesTotal) * 100} />
                   <div className="flex justify-between text-[10px] text-muted-foreground">
-                    <span>{translateStore.extractNamesSpeed > 0 ? `${translateStore.extractNamesSpeed.toFixed(1)} 段/秒` : "计算中..."}</span>
-                    <span>{translateStore.extractNamesEta > 0 ? `剩余 ${formatEta(translateStore.extractNamesEta)}` : ""}</span>
+                    <span>{translateStore.extractNamesSpeed > 0 ? t("translate.statExtractSpeed", { speed: translateStore.extractNamesSpeed.toFixed(1) }) : t("translate.calculating")}</span>
+                    <span>{translateStore.extractNamesEta > 0 ? t("translate.statEta", { eta: formatEta(translateStore.extractNamesEta) }) : ""}</span>
                   </div>
                   {/* 提取后自动翻译 checkbox */}
                   {autoTranslateLoaded && (
@@ -1945,7 +1946,7 @@ export default function MainView() {
                         }}
                         className="h-3.5 w-3.5 rounded border-gray-300 accent-primary flex-shrink-0"
                       />
-                      <span>{t("translate.autoTranslateAfterExtract", "提取完毕后自动翻译字幕")}</span>
+                      <span>{t("translate.autoTranslateAfterExtract")}</span>
                     </label>
                   )}
                 </div>
@@ -1980,10 +1981,10 @@ export default function MainView() {
         <div className="flex items-center gap-3">
           <span>{translateStore.translating || officialTranslating ? t("translate.progress") : t("common.ready")}</span>
           {subtitleStore.file && (
-            <span>{t("subtitle.count", "条目数")}: {subtitleStore.file.entries.length}</span>
+            <span>{t("subtitle.count")}: {subtitleStore.file.entries.length}</span>
           )}
           {subtitleStore.file && subtitleStore.undoStack.length > 0 && (
-            <span className="text-orange-500">● {t("subtitle.unsaved", "已修改")}</span>
+            <span className="text-orange-500">● {t("subtitle.unsaved")}</span>
           )}
         </div>
         <span>v{appVersion}</span>

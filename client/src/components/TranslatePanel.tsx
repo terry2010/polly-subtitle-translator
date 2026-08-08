@@ -229,12 +229,12 @@ export function TranslatePanel() {
               }}
             >
               <SelectTrigger className="mt-1 h-8 text-xs">
-                <SelectValue placeholder={t("translate.configInSettings", "请在设置中配置")} />
+                <SelectValue placeholder={t("translate.configInSettings")} />
               </SelectTrigger>
               <SelectContent>
                 {configuredEngines.length === 0 ? (
                   <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                    {t("translate.configInSettings", "请在设置中配置")}
+                    {t("translate.configInSettings")}
                   </div>
                 ) : (
                   configuredEngines.map((e) => (

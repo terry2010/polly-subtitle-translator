@@ -48,10 +48,10 @@ const AudioTrackSelect = memo(function AudioTrackSelect({
       onFocus={() => { uiState.selectOpen = true; }}
       onBlur={() => { uiState.selectOpen = false; }}
       className="max-w-[140px] truncate rounded-md border border-border bg-background px-1.5 py-1 text-[11px] text-foreground outline-none transition-colors hover:bg-muted focus:border-primary"
-      title={t("player.audioTrack", "音轨")}
+      title={t("player.audioTrack")}
     >
       {audioStreams.map((a, i) => {
-        const lang = a.language || t("player.unknown", "未知");
+        const lang = a.language || t("player.unknown");
         const title = a.title ? ` - ${a.title}` : "";
         const codec = a.codec_name ? ` [${a.codec_name}]` : "";
         return (
@@ -88,7 +88,7 @@ const SpeedSelect = memo(function SpeedSelect({
       <button
         type="button"
         className="flex items-center gap-1.5 rounded-md bg-muted px-2.5 py-1 text-[12px] font-medium tabular-nums transition-colors hover:bg-muted/70"
-        title={t("player.speed", "{{speed}}x 倍速", { speed })}
+        title={t("player.speed", { speed })}
       >
         {speed}x
         <svg width="10" height="10" viewBox="0 0 8 8" className="text-muted-foreground">
@@ -116,12 +116,12 @@ const SpeedSelect = memo(function SpeedSelect({
 });
 
 /// 格式化剩余时间
-function formatEta(secs: number): string {
+function formatEta(secs: number, t: (key: string, options?: any) => string): string {
   if (secs <= 0) return "--";
-  if (secs < 60) return `${Math.ceil(secs)}秒`;
+  if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
   const m = Math.floor(secs / 60);
   const s = Math.ceil(secs % 60);
-  return `${m}分${s}秒`;
+  return t("settings.etaMinSecs", { m, s });
 }
 
 /// 模块级标志：player_init 是否正在进行中
@@ -591,7 +591,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     closeContextMenu();
     const entry = findCurrentEntry();
     if (!entry) {
-      toast.info(t("player.noCurrentSubtitle", "当前没有对应字幕"));
+      toast.info(t("player.noCurrentSubtitle"));
       return;
     }
     try {
@@ -612,7 +612,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     // 找到当前条目之后的第一条未删除字幕
     const next = file.entries.find((e) => !e._deleted && e.start_ms > currentMs);
     if (!next) {
-      toast.info(t("player.noNextSubtitle", "没有下一句字幕"));
+      toast.info(t("player.noNextSubtitle"));
       return;
     }
     try {
@@ -629,7 +629,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     closeContextMenu();
     const entry = findCurrentEntry();
     if (!entry) {
-      toast.info(t("player.noCurrentSubtitle", "当前没有对应字幕"));
+      toast.info(t("player.noCurrentSubtitle"));
       return;
     }
     if (entry.text.includes("\\p1")) return; // 跳过矢量绘图指令
@@ -654,13 +654,13 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
     closeContextMenu();
     if (!probeResult) { openingPlayerRef.current = false; return; }
     // 立刻 toast 提示
-    const displayName = playerName ?? exePath.split(/[\\/]/).pop()?.replace(/\.exe$/i, "") ?? t("player.defaultPlayer", "播放器");
-    toast.info(`${t("player.openingWith", "正在使用")} ${displayName} ${t("player.openingVideo", "打开视频文件")}`);
+    const displayName = playerName ?? exePath.split(/[\\/]/).pop()?.replace(/\.exe$/i, "") ?? t("player.defaultPlayer");
+    toast.info(`${t("player.openingWith")} ${displayName} ${t("player.openingVideo")}`);
     await pauseVideo(); // 暂停内嵌播放，避免和外部播放器同时播放
     try {
       await api.openWithPlayer(exePath, probeResult.video_path);
     } catch (e) {
-      toast.error(t("player.openWithPlayerFailed", "打开播放器失败"));
+      toast.error(t("player.openWithPlayerFailed"));
       error(e);
     } finally {
       // 500ms 后释放锁，防止用户立刻再次点击
@@ -750,11 +750,11 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
 
   // 未下载 libmpv：显示下载提示
   if (libmpvStatus && !libmpvStatus.downloaded) {
-    const stageLabel = downloadStage === "fetching" ? t("player.libmpvStageFetching", "获取版本信息")
-      : downloadStage === "downloading" ? t("player.libmpvStageDownloading", "下载中")
-      : downloadStage === "extracting" ? t("player.libmpvStageExtracting", "解压安装")
-      : downloadStage === "done" ? t("player.libmpvStageDone", "完成")
-      : t("player.libmpvStagePreparing", "准备中");
+    const stageLabel = downloadStage === "fetching" ? t("player.libmpvStageFetching")
+      : downloadStage === "downloading" ? t("player.libmpvStageDownloading")
+      : downloadStage === "extracting" ? t("player.libmpvStageExtracting")
+      : downloadStage === "done" ? t("player.libmpvStageDone")
+      : t("player.libmpvStagePreparing");
     return (
       <div
         className="relative bg-black flex items-center justify-center overflow-hidden rounded"
@@ -784,7 +784,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               <div className="flex justify-between text-xs text-white/40 tabular-nums">
                 <span className="truncate">{stageLabel}</span>
                 {downloadStage === "downloading" && downloadSpeed > 0 && (
-                  <span className="shrink-0">{downloadSpeed.toFixed(1)} MB/s · {formatEta(downloadEta)}</span>
+                  <span className="shrink-0">{downloadSpeed.toFixed(1)} MB/s · {formatEta(downloadEta, t)}</span>
                 )}
               </div>
             </>
@@ -793,10 +793,10 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               {downloadError ? (
                 <p className="text-xs mb-3 text-red-400/80 line-clamp-3">{downloadError}</p>
               ) : (
-                <p className="text-xs mb-4">{t("player.libmpvDownloadHint", "需要下载播放组件（约 30MB）")}</p>
+                <p className="text-xs mb-4">{t("player.libmpvDownloadHint")}</p>
               )}
               <Button size="sm" onClick={handleDownload}>
-                <Download className="mr-1 h-4 w-4" />{t("player.libmpvDownloadButton", "下载播放组件")}
+                <Download className="mr-1 h-4 w-4" />{t("player.libmpvDownloadButton")}
               </Button>
             </>
           )}
@@ -814,7 +814,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
       >
         <div className="text-center text-white/30">
           <Film className="mx-auto h-12 w-12 mb-2 opacity-50" />
-          <p className="text-xs">{t("player.placeholder", "打开视频后在此播放")}</p>
+          <p className="text-xs">{t("player.placeholder")}</p>
         </div>
       </div>
     );
@@ -831,7 +831,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
         style={{ aspectRatio, maxHeight: "40vh" }}
         onClick={() => { if (playerReady) togglePlay(); }}
         onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
-        title={playerReady ? (playing ? t("player.clickPause", "点击暂停") : t("player.clickPlay", "点击播放")) : undefined}
+        title={playerReady ? (playing ? t("player.clickPause") : t("player.clickPlay")) : undefined}
       >
         {loadingVideo && (
           <div className="absolute inset-0 flex items-center justify-center text-white/50">
@@ -857,7 +857,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               onChange={handleSeek}
               className="player-slider flex-1"
               style={{ background: sliderBg(seekPct) }}
-              title={t("player.progress", "进度")}
+              title={t("player.progress")}
             />
             <span className="w-[40px] font-mono text-[10px] tabular-nums text-muted-foreground">
               {formatTime(duration)}
@@ -870,7 +870,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             <button
               onClick={togglePlay}
               className="flex h-7 w-7 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm transition-transform hover:scale-105 active:scale-95"
-              title={playing ? t("player.pause", "暂停") : t("player.play", "播放")}
+              title={playing ? t("player.pause") : t("player.play")}
             >
               {playing ? <Pause className="h-3.5 w-3.5" /> : <Play className="h-3.5 w-3.5 translate-x-[1px]" />}
             </button>
@@ -880,7 +880,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               <button
                 onClick={toggleMute}
                 className="text-muted-foreground transition-colors hover:text-foreground"
-                title={volume === 0 ? t("player.unmute", "取消静音") : t("player.mute", "静音")}
+                title={volume === 0 ? t("player.unmute") : t("player.mute")}
               >
                 {volume === 0 ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
               </button>
@@ -892,7 +892,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
                 onChange={handleVolume}
                 className="player-slider w-20"
                 style={{ background: sliderBg(volume) }}
-                title={t("player.volume", "音量")}
+                title={t("player.volume")}
               />
             </div>
 
@@ -910,7 +910,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               {/* 打开视频所在文件夹 */}
               <button
                 className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                title={t("player.openFolder", "打开视频文件夹")}
+                title={t("player.openFolder")}
                 onClick={handleOpenFolder}
               >
                 <FolderOpen className="h-4 w-4" />
@@ -926,7 +926,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
                     <button
                       key={p.exe_path}
                       className="rounded p-1 hover:bg-accent transition-colors"
-                      title={t("player.openWithName", "用 {{name}} 打开视频", { name: p.name })}
+                      title={t("player.openWithName", { name: p.name })}
                       onClick={() => void handleOpenWithPlayer(p.exe_path, p.name)}
                     >
                       {iconUrl ? (
@@ -949,7 +949,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
                         {/* 展开箭头按钮 */}
                         <button
                           className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
-                          title={t("player.morePlayers", "更多播放器")}
+                          title={t("player.morePlayers")}
                         >
                           <ChevronRight className="h-4 w-4" />
                         </button>
@@ -993,7 +993,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             disabled={!subtitleStore.file}
           >
             <Play className="h-3.5 w-3.5" />
-            {t("player.playFromCurrent", "从本字幕开头播放")}
+            {t("player.playFromCurrent")}
           </button>
           {/* 从下一句字幕播放 */}
           <button
@@ -1002,7 +1002,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             disabled={!subtitleStore.file}
           >
             <Play className="h-3.5 w-3.5" />
-            {t("player.playFromNext", "从下一句字幕播放")}
+            {t("player.playFromNext")}
           </button>
           {/* 翻译本条字幕 */}
           <button
@@ -1011,7 +1011,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             disabled={!subtitleStore.file || translateStore.translating}
           >
             <Languages className="h-3.5 w-3.5" />
-            {t("player.translateCurrent", "翻译本条字幕")}
+            {t("player.translateCurrent")}
           </button>
 
           <div className="my-1 h-px bg-border" />
@@ -1022,7 +1022,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             onClick={() => { closeContextMenu(); void togglePlay(); }}
           >
             <Play className="h-3.5 w-3.5" />
-            {playing ? t("player.pause", "暂停") : t("player.play", "播放")}
+            {playing ? t("player.pause") : t("player.play")}
           </button>
           {/* 静音 / 取消静音 */}
           <button
@@ -1030,7 +1030,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             onClick={() => void contextToggleMute()}
           >
             {volume === 0 ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
-            {volume === 0 ? t("player.unmute", "取消静音") : t("player.mute", "静音")}
+            {volume === 0 ? t("player.unmute") : t("player.mute")}
           </button>
           {/* 关闭视频 */}
           <button
@@ -1038,7 +1038,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             onClick={handleCloseVideo}
           >
             <X className="h-3.5 w-3.5" />
-            {t("player.closeVideo", "关闭视频")}
+            {t("player.closeVideo")}
           </button>
 
           <div className="my-1 h-px bg-border" />
@@ -1050,7 +1050,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               onMouseEnter={() => { setPlayersSubmenuOpen(true); void loadPlayers(); }}
             >
               <MonitorPlay className="h-3.5 w-3.5" />
-              {t("player.openWith", "用播放器打开")}
+              {t("player.openWith")}
               <ChevronRight className="ml-auto h-3.5 w-3.5" />
             </button>
             {playersSubmenuOpen && (
@@ -1060,7 +1060,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               >
                 {players.length === 0 && (
                   <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                    {t("player.noPlayers", "未找到播放器")}
+                    {t("player.noPlayers")}
                   </div>
                 )}
                 {players.map((p) => {
@@ -1078,7 +1078,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
                       )}
                       <span className="truncate flex-1 text-left">{p.name}</span>
                       {p.is_default && (
-                        <span className="shrink-0 text-[10px] text-primary">{t("player.default", "默认")}</span>
+                        <span className="shrink-0 text-[10px] text-primary">{t("player.default")}</span>
                       )}
                     </button>
                   );
@@ -1093,7 +1093,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             onClick={handleOpenFolder}
           >
             <FolderOpen className="h-3.5 w-3.5" />
-            {t("player.openFolder", "打开视频文件夹")}
+            {t("player.openFolder")}
           </button>
           {/* 视频信息 */}
           <button
@@ -1101,7 +1101,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
             onClick={handleShowVideoInfo}
           >
             <Info className="h-3.5 w-3.5" />
-            {t("player.videoInfo", "视频信息")}
+            {t("player.videoInfo")}
           </button>
         </div>
       )}

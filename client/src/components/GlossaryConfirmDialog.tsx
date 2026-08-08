@@ -100,9 +100,9 @@ export function GlossaryConfirmDialog({
       });
       if (!outputPath) return;
       await writeTextFile(outputPath, content);
-      toast.success(t("translate.glossaryExportSuccess", "导出成功"));
+      toast.success(t("translate.glossaryExportSuccess"));
     } catch (e) {
-      toast.error(t("translate.glossaryExportFailed", "导出失败"));
+      toast.error(t("translate.glossaryExportFailed"));
     }
   };
 
@@ -112,9 +112,9 @@ export function GlossaryConfirmDialog({
     const text = filtered.map((g) => `${g.english} → ${g.chinese}`).join("\n");
     try {
       await navigator.clipboard.writeText(text);
-      toast.success(t("translate.glossaryCopySuccess", "已复制到剪贴板"));
+      toast.success(t("translate.glossaryCopySuccess"));
     } catch {
-      toast.error(t("translate.glossaryCopyFailed", "复制失败"));
+      toast.error(t("translate.glossaryCopyFailed"));
     }
   };
 
@@ -122,10 +122,10 @@ export function GlossaryConfirmDialog({
     <Dialog open onOpenChange={(open) => { if (!open) onCancel(); }}>
       <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>{t("translate.glossaryTitle", "人名译名表")}</DialogTitle>
+          <DialogTitle>{t("translate.glossaryTitle")}</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground -mt-2">
-          {t("translate.glossaryDesc", "AI 已从字幕中提取以下人名及建议译名。请检查并修改，确认后将用于所有翻译批次保证一致性。")}
+          {t("translate.glossaryDesc")}
         </p>
         {showAutoTranslateCheckbox && (
           <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer select-none py-2">
@@ -138,13 +138,13 @@ export function GlossaryConfirmDialog({
               }}
               className="h-3.5 w-3.5 rounded border-gray-300 accent-primary flex-shrink-0"
             />
-            <span>{t("translate.autoTranslateAfterExtract", "提取完毕后自动翻译字幕")}</span>
+            <span>{t("translate.autoTranslateAfterExtract")}</span>
           </label>
         )}
         <div className="flex-1 overflow-y-auto space-y-2 min-h-[200px]">
           <div className="flex gap-2 text-xs font-medium text-muted-foreground px-1">
-            <span className="w-[40%]">{t("translate.glossaryEnglish", "英文名")}</span>
-            <span className="w-[40%]">{t("translate.glossaryChinese", "中文译名")}</span>
+            <span className="w-[40%]">{t("translate.glossaryEnglish")}</span>
+            <span className="w-[40%]">{t("translate.glossaryChinese")}</span>
             <span className="w-20" />
           </div>
           {localGlossary.map((entry, index) => (
@@ -174,14 +174,14 @@ export function GlossaryConfirmDialog({
           ))}
           <Button size="sm" variant="outline" onClick={handleAdd} className="w-full">
             <Plus className="h-4 w-4 mr-1" />
-            {t("translate.glossaryAdd", "添加人名")}
+            {t("translate.glossaryAdd")}
           </Button>
         </div>
         <div className="flex justify-between gap-2 pt-2">
           <div className="flex gap-1">
             <Button size="sm" variant="outline" onClick={handleCopy}>
               <Copy className="h-4 w-4 mr-1" />
-              {t("translate.glossaryCopy", "复制")}
+              {t("translate.glossaryCopy")}
             </Button>
             <Button size="sm" variant="outline" onClick={() => handleExport("txt")}>
               <Download className="h-4 w-4 mr-1" />
@@ -196,8 +196,8 @@ export function GlossaryConfirmDialog({
             <Button variant="outline" onClick={onCancel}>
               <X className="h-4 w-4 mr-1" />
               {autoTranslating
-                ? t("translate.glossaryCloseDialog", "关闭弹窗")
-                : t("translate.glossaryCancel", "取消翻译")}
+                ? t("translate.glossaryCloseDialog")
+                : t("translate.glossaryCancel")}
             </Button>
             <Button
               onClick={handleConfirm}
@@ -205,10 +205,10 @@ export function GlossaryConfirmDialog({
             >
               <Check className="h-4 w-4 mr-1" />
               {translateDone
-                ? t("translate.glossaryTranslateDone", "字幕翻译已完成")
+                ? t("translate.glossaryTranslateDone")
                 : autoTranslating
-                  ? t("translate.glossaryTranslating", "字幕翻译中")
-                  : t("translate.glossaryConfirm", "确认并翻译")}
+                  ? t("translate.glossaryTranslating")
+                  : t("translate.glossaryConfirm")}
             </Button>
           </div>
         </div>

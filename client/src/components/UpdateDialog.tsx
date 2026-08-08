@@ -19,12 +19,12 @@ interface UpdateDialogProps {
 type Stage = "prompt" | "downloading" | "done" | "failed";
 
 /// 格式化剩余时间
-function formatEta(secs: number): string {
+function formatEta(secs: number, t: (key: string, options?: any) => string): string {
   if (secs <= 0) return "--";
-  if (secs < 60) return `${Math.ceil(secs)}秒`;
+  if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
   const m = Math.floor(secs / 60);
   const s = Math.ceil(secs % 60);
-  return `${m}分${s}秒`;
+  return t("settings.etaMinSecs", { m, s });
 }
 
 export function UpdateDialog({ open, version, notes, onClose }: UpdateDialogProps) {
@@ -121,7 +121,7 @@ export function UpdateDialog({ open, version, notes, onClose }: UpdateDialogProp
                 </div>
                 <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
                   <span>{t("update.downloading")}</span>
-                  {speedMbps > 0 && <span>{speedMbps.toFixed(1)} MB/s · {formatEta(etaSecs)}</span>}
+                  {speedMbps > 0 && <span>{speedMbps.toFixed(1)} MB/s · {formatEta(etaSecs, t)}</span>}
                 </div>
               </>
             )}

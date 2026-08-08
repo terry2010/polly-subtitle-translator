@@ -101,12 +101,12 @@ export default function BatchView({ embedded = false }: { embedded?: boolean }) 
   const handleSelectFiles = useCallback(async () => {
     const result = await open({
       multiple: true,
-      filters: [{ name: "视频/字幕", extensions: ["mkv", "mp4", "avi", "mov", "wmv", "flv", "ts", "m2ts", "srt", "ass", "ssa", "vtt"] }],
+      filters: [{ name: t("batch.videoSubtitleFilter"), extensions: ["mkv", "mp4", "avi", "mov", "wmv", "flv", "ts", "m2ts", "srt", "ass", "ssa", "vtt"] }],
     });
     if (result && result.length > 0) {
       setSelectedPaths(result as string[]);
     }
-  }, []);
+  }, [t]);
 
   const handleSelectFolder = useCallback(async () => {
     const result = await open({ directory: true, multiple: true });
@@ -177,11 +177,9 @@ export default function BatchView({ embedded = false }: { embedded?: boolean }) 
           <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <h1 className="text-lg font-semibold flex-1">批量翻译</h1>
+          <h1 className="text-lg font-semibold flex-1">{t("batch.title")}</h1>
           <Button variant="ghost" size="sm" onClick={() => navigate("/settings")}>
-            <SettingsIcon className="h-4 w-4 mr-1" />
-            设置
-          </Button>
+            <SettingsIcon className="h-4 w-4 mr-1" />{t("batch.settings")}</Button>
         </div>
       )}
 
@@ -189,28 +187,22 @@ export default function BatchView({ embedded = false }: { embedded?: boolean }) 
         {/* 文件选择区 */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">添加文件</CardTitle>
+            <CardTitle className="text-base">{t("batch.addFile")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={handleSelectFiles}>
-                <FileVideo className="h-4 w-4 mr-1" />
-                选择文件
-              </Button>
+                <FileVideo className="h-4 w-4 mr-1" />{t("batch.selectFile")}</Button>
               <Button variant="outline" size="sm" onClick={handleSelectFolder}>
-                <FolderOpen className="h-4 w-4 mr-1" />
-                选择文件夹
-              </Button>
+                <FolderOpen className="h-4 w-4 mr-1" />{t("batch.selectFolder")}</Button>
             </div>
             {selectedPaths.length > 0 && (
               <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">
-                  已选择 {selectedPaths.length} 个文件/目录
+                  {t("batch.selectedCount", { count: selectedPaths.length })}
                 </p>
                 <Button size="sm" onClick={handleSubmit}>
-                  <Play className="h-4 w-4 mr-1" />
-                  添加到队列
-                </Button>
+                  <Play className="h-4 w-4 mr-1" />{t("batch.addToQueue")}</Button>
               </div>
             )}
           </CardContent>
@@ -221,23 +213,19 @@ export default function BatchView({ embedded = false }: { embedded?: boolean }) 
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle className="text-base">
-                队列（{stats.total}）
+                {t("batch.queueTitle", { count: stats.total })}
               </CardTitle>
               <div className="flex gap-1">
                 {store.isPaused ? (
                   <Button variant="outline" size="sm" onClick={handleResume}>
-                    <Play className="h-4 w-4 mr-1" />
-                    启动
-                  </Button>
+                    <Play className="h-4 w-4 mr-1" />{t("batch.start")}</Button>
                 ) : (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handlePause}
                   >
-                    <Pause className="h-4 w-4 mr-1" />
-                    停止
-                  </Button>
+                    <Pause className="h-4 w-4 mr-1" />{t("batch.stop")}</Button>
                 )}
                 <Button
                   variant="outline"
@@ -245,37 +233,33 @@ export default function BatchView({ embedded = false }: { embedded?: boolean }) 
                   onClick={handleClear}
                   disabled={stats.queued + stats.failed + stats.skipped === 0}
                 >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  清空列表
-                </Button>
+                  <Trash2 className="h-4 w-4 mr-1" />{t("batch.clearList")}</Button>
               </div>
             </div>
           </CardHeader>
           <CardContent>
             {/* 统计栏 */}
             <div className="flex gap-4 text-sm mb-3 text-muted-foreground">
-              <span>排队: {stats.queued}</span>
-              <span>处理中: {stats.processing}</span>
-              <span className="text-green-500">完成: {stats.done}</span>
-              <span className="text-orange-500">跳过: {stats.skipped}</span>
-              <span className="text-red-500">失败: {stats.failed}</span>
-              {stats.cancelled > 0 && <span className="text-muted-foreground">取消: {stats.cancelled}</span>}
+              <span>{t("batch.statQueued", { count: stats.queued })}</span>
+              <span>{t("batch.statProcessing", { count: stats.processing })}</span>
+              <span className="text-green-500">{t("batch.statDone", { count: stats.done })}</span>
+              <span className="text-orange-500">{t("batch.statSkipped", { count: stats.skipped })}</span>
+              <span className="text-red-500">{t("batch.statFailed", { count: stats.failed })}</span>
+              {stats.cancelled > 0 && <span className="text-muted-foreground">{t("batch.statCancelled", { count: stats.cancelled })}</span>}
             </div>
 
             {store.isPaused && (
               <div className="mb-3 p-2 bg-orange-50 dark:bg-orange-950/30 border border-orange-200 dark:border-orange-800 rounded text-sm">
                 <span className="flex items-center gap-1">
                   <Pause className="h-4 w-4" />
-                  队列已暂停{store.pauseReason ? `: ${store.pauseReason}` : ""}
+                  {t("batch.paused")}{store.pauseReason ? `: ${store.pauseReason}` : ""}
                 </span>
               </div>
             )}
 
             {/* 任务列表 */}
             {store.tasks.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                队列为空，请添加文件开始批量翻译
-              </div>
+              <div className="text-center py-8 text-muted-foreground">{t("batch.emptyQueue")}</div>
             ) : (
               <DndContext sensors={taskSensors} collisionDetection={closestCenter} onDragEnd={handleTaskDragEnd}>
                 <SortableContext items={store.tasks.map((t) => t.id)} strategy={verticalListSortingStrategy}>
@@ -321,6 +305,7 @@ function SortableTaskRow({
   onStart: (id: string) => void;
   onCancel: (id: string) => void;
 }) {
+  const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: task.id });
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ x: 0, y: 0 });
@@ -399,9 +384,9 @@ function SortableTaskRow({
           )}
           {task.total_entries > 0 && (
             <div className="text-xs text-muted-foreground mt-0.5">
-              {task.done_entries}/{task.total_entries} 条
-              {task.cached_entries > 0 && ` (缓存 ${task.cached_entries})`}
-              {task.failed_entries > 0 && ` (失败 ${task.failed_entries})`}
+              {t("batch.entryProgress", { done: task.done_entries, total: task.total_entries })}
+              {task.cached_entries > 0 && t("batch.cachedCount", { count: task.cached_entries })}
+              {task.failed_entries > 0 && t("batch.failedCount", { count: task.failed_entries })}
             </div>
           )}
           <div className="text-xs text-muted-foreground mt-0.5">
@@ -417,7 +402,7 @@ function SortableTaskRow({
               size="icon"
               className="h-7 w-7 text-green-600 hover:text-green-700"
               onClick={() => onStart(task.id)}
-              title="启动翻译"
+              title={t("batch.startTranslate")}
             >
               <Play className="h-3.5 w-3.5" />
             </Button>
@@ -427,7 +412,7 @@ function SortableTaskRow({
             size="icon"
             className="h-7 w-7 text-muted-foreground hover:text-red-500"
             onClick={() => onDelete(task.id)}
-            title="删除"
+            title={t("common.delete")}
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -445,38 +430,28 @@ function SortableTaskRow({
             <button
               className="w-full text-left px-3 py-1.5 hover:bg-accent"
               onClick={handleCopyFileName}
-            >
-              复制文件名
-            </button>
+            >{t("batch.copyFileName")}</button>
             <button
               className="w-full text-left px-3 py-1.5 hover:bg-accent"
               onClick={handleCopyFilePath}
-            >
-              复制文件路径
-            </button>
+            >{t("batch.copyFilePath")}</button>
             <div className="border-t border-border my-1" />
             {!isProcessing && (
               <button
                 className="w-full text-left px-3 py-1.5 hover:bg-accent text-green-600"
                 onClick={handleStart}
-              >
-                开始翻译
-              </button>
+              >{t("batch.startTranslate")}</button>
             )}
             {(isQueued || isProcessing) && (
               <button
                 className="w-full text-left px-3 py-1.5 hover:bg-accent text-orange-600"
                 onClick={handleStop}
-              >
-                停止翻译
-              </button>
+              >{t("batch.stopTranslate")}</button>
             )}
             <button
               className="w-full text-left px-3 py-1.5 hover:bg-accent text-red-500"
               onClick={handleRemove}
-            >
-              从队列中移除
-            </button>
+            >{t("batch.removeFromQueue")}</button>
           </div>
         </>
       )}
@@ -489,6 +464,7 @@ function SortableTaskRow({
 // === SECTION 3: FolderWatchSection 组件 ===
 
 function FolderWatchSection() {
+  const { t } = useTranslation();
   const store = useBatchStore();
   const [watchPaths, setWatchPaths] = useState<string[]>([]);
   const [recursive, setRecursive] = useState(true);
@@ -520,11 +496,11 @@ function FolderWatchSection() {
       (e) => {
         const { total, done, skipped, cancelled } = e.payload;
         if (cancelled) {
-          toast.info(`扫描已取消（已检查 ${done}/${total}，跳过 ${skipped}）`);
+          toast.info(t("batch.scanCancelled", { done, total, skipped }));
         } else if (total === 0) {
-          toast.info("监视目录中未找到视频文件");
+          toast.info(t("batch.noVideoFound"));
         } else {
-          toast.success(`扫描完成：共 ${total} 个文件，跳过 ${skipped} 个`);
+          toast.success(t("batch.scanDone", { total, skipped }));
         }
         setScanProgress(null);
       }
@@ -533,7 +509,7 @@ function FolderWatchSection() {
       unlistenProgress.then((fn) => fn()).catch(() => {});
       unlistenDone.then((fn) => fn()).catch(() => {});
     };
-  }, []);
+  }, [t]);
 
   const handleAddWatchFolder = useCallback(async () => {
     const result = await open({ directory: true, multiple: true });
@@ -546,18 +522,18 @@ function FolderWatchSection() {
     const result = await open({
       multiple: true,
       filters: [
-        { name: "视频/字幕", extensions: ["mp4", "mkv", "avi", "mov", "flv", "webm", "m4v", "wmv", "srt", "ass", "vtt", "ssa"] },
+        { name: t("batch.videoSubtitleFilter"), extensions: ["mp4", "mkv", "avi", "mov", "flv", "webm", "m4v", "wmv", "srt", "ass", "vtt", "ssa"] },
       ],
     });
     if (result && result.length > 0) {
       await store.addFilesToQueue(result as string[]);
     }
-  }, [store]);
+  }, [store, t]);
 
   const handleStartWatch = useCallback(async () => {
     if (watchPaths.length === 0) return;
     await store.startWatch(watchPaths, recursive);
-  }, [watchPaths, recursive, store]);
+  }, [watchPaths, recursive, store, t]);
 
   const handleStopWatch = useCallback(async () => {
     await store.stopWatch();
@@ -569,11 +545,11 @@ function FolderWatchSection() {
 
   const handleScanExisting = useCallback(async () => {
     if (watchPaths.length === 0) {
-      toast.error("请先添加监视目录");
+      toast.error(t("batch.watchDirRequired"));
       return;
     }
     await store.scanExistingFiles(watchPaths, recursive);
-  }, [watchPaths, recursive, store]);
+  }, [watchPaths, recursive, store, t]);
 
   const handleCancelScan = useCallback(async () => {
     await store.cancelScan();
@@ -587,30 +563,24 @@ function FolderWatchSection() {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base">文件夹监视</CardTitle>
+          <CardTitle className="text-base">{t("batch.folderWatch")}</CardTitle>
           <div className="flex gap-2">
             {scanProgress ? (
-              <Button variant="outline" size="sm" onClick={handleCancelScan} title="取消扫描检查">
-                <XCircle className="h-4 w-4 mr-1" />
-                取消检查
-              </Button>
+              <Button variant="outline" size="sm" onClick={handleCancelScan} title={t("batch.cancelCheck")}>
+                <XCircle className="h-4 w-4 mr-1" />{t("batch.cancelCheck")}</Button>
             ) : (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleScanExisting}
                 disabled={watchPaths.length === 0}
-                title="扫描监视目录中所有已有文件，检查外挂/内嵌字幕，不需要翻译的自动跳过"
+                title={t("batch.scanHint")}
               >
-                <Search className="h-4 w-4 mr-1" />
-                检查已有文件
-              </Button>
+                <Search className="h-4 w-4 mr-1" />{t("batch.checkExisting")}</Button>
             )}
             {store.isWatching ? (
               <Button variant="outline" size="sm" onClick={handleStopWatch}>
-                <Square className="h-4 w-4 mr-1" />
-                停止监视
-              </Button>
+                <Square className="h-4 w-4 mr-1" />{t("batch.stopWatch")}</Button>
             ) : (
               <Button
                 variant="outline"
@@ -618,9 +588,7 @@ function FolderWatchSection() {
                 onClick={handleStartWatch}
                 disabled={watchPaths.length === 0}
               >
-                <Play className="h-4 w-4 mr-1" />
-                开始监视
-              </Button>
+                <Play className="h-4 w-4 mr-1" />{t("batch.startWatch")}</Button>
             )}
           </div>
         </div>
@@ -628,13 +596,9 @@ function FolderWatchSection() {
       <CardContent className="space-y-3">
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={handleAddWatchFolder}>
-            <FolderOpen className="h-4 w-4 mr-1" />
-            添加监视目录
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleAddFiles} title="手动选取视频或字幕文件加入翻译队列">
-            <FileVideo className="h-4 w-4 mr-1" />
-            添加文件
-          </Button>
+            <FolderOpen className="h-4 w-4 mr-1" />{t("batch.addWatchDir")}</Button>
+          <Button variant="outline" size="sm" onClick={handleAddFiles} title={t("batch.addFileHint")}>
+            <FileVideo className="h-4 w-4 mr-1" />{t("batch.addFile")}</Button>
         </div>
 
         {watchPaths.length > 0 && (
@@ -669,16 +633,14 @@ function FolderWatchSection() {
             id="recursive"
             className="h-4 w-4"
           />
-          <label htmlFor="recursive" className="text-sm cursor-pointer">
-            递归监视子目录
-          </label>
+          <label htmlFor="recursive" className="text-sm cursor-pointer">{t("batch.recursiveWatch")}</label>
         </div>
 
         {/* 扫描进度条 */}
         {scanProgress && (
           <div className="space-y-1">
             <div className="flex items-center justify-between text-xs text-muted-foreground">
-              <span>正在检查 {scanProgress.done}/{scanProgress.total}（跳过 {scanProgress.skipped}）</span>
+              <span>{t("batch.scanningProgress", { done: scanProgress.done, total: scanProgress.total, skipped: scanProgress.skipped })}</span>
               <span>{scanPct}%</span>
             </div>
             <Progress value={scanPct} className="h-2" />
@@ -689,7 +651,7 @@ function FolderWatchSection() {
           <div className="p-2 bg-green-50 dark:bg-green-950/30 border border-green-200 dark:border-green-800 rounded text-sm">
             <span className="flex items-center gap-1">
               <CheckCircle2 className="h-4 w-4 text-green-500" />
-              正在监视 {store.config.watch_paths.length} 个目录
+              {t("batch.watchingDirs", { count: store.config.watch_paths.length })}
             </span>
           </div>
         )}
@@ -703,6 +665,7 @@ function FolderWatchSection() {
 // === SECTION 4: BatchConfigSection 组件 ===
 
 function BatchConfigSection() {
+  const { t } = useTranslation();
   const store = useBatchStore();
   const [localConfig, setLocalConfig] = useState<BatchConfig | null>(null);
 
@@ -727,10 +690,8 @@ function BatchConfigSection() {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base">翻译配置</CardTitle>
-          <Button size="sm" onClick={handleSave}>
-            保存配置
-          </Button>
+          <CardTitle className="text-base">{t("batch.translateConfig")}</CardTitle>
+          <Button size="sm" onClick={handleSave}>{t("batch.saveConfig")}</Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -741,7 +702,7 @@ function BatchConfigSection() {
 
           {/* 目标语言：单选 */}
           <div className="space-y-1">
-            <label className="text-sm font-medium">目标语言</label>
+            <label className="text-sm font-medium">{t("translate.targetLang")}</label>
             <Select
               value={localConfig.target_lang}
               onValueChange={(v) => update({ target_lang: v })}
@@ -760,10 +721,8 @@ function BatchConfigSection() {
 
           {/* 不翻译的语言：多选 toggle 按钮 */}
           <div className="space-y-1">
-            <label className="text-sm font-medium">不翻译的语言（多选）</label>
-            <p className="text-xs text-muted-foreground">
-              检测到字幕含以下任一语言（外挂文件名/内嵌流/内容字符）则跳过翻译
-            </p>
+            <label className="text-sm font-medium">{t("batch.skipLangs")}</label>
+            <p className="text-xs text-muted-foreground">{t("batch.skipLangsHint")}</p>
             <div className="flex flex-wrap gap-1.5">
               {SKIP_LANG_OPTIONS.map((lang) => {
                 const selected = (localConfig.skip_langs ?? []).includes(lang.value);
@@ -797,7 +756,7 @@ function BatchConfigSection() {
 
         {/* 输出模式：单语/双语 */}
         <div className="space-y-1">
-          <label className="text-sm font-medium">输出模式</label>
+          <label className="text-sm font-medium">{t("batch.outputMode")}</label>
           <Select
             value={localConfig.output_mode}
             onValueChange={(v) => update({ output_mode: v as OutputMode })}
@@ -806,15 +765,15 @@ function BatchConfigSection() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="Monolingual">单语（仅译文）</SelectItem>
-              <SelectItem value="Bilingual">双语（原文+译文）</SelectItem>
+              <SelectItem value="Monolingual">{t("batch.outputMonolingual")}</SelectItem>
+              <SelectItem value="Bilingual">{t("batch.outputBilingual")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
 
         {/* 输出格式：多选 toggle 按钮 */}
         <div className="space-y-1">
-          <label className="text-sm font-medium">输出格式（可多选，同时生成多种格式）</label>
+          <label className="text-sm font-medium">{t("batch.outputFormats")}</label>
           <div className="flex flex-wrap gap-1.5">
             {([
               { value: "srt", label: "SRT" },
@@ -860,15 +819,13 @@ function BatchConfigSection() {
             id="embed_to_video"
             className="h-4 w-4"
           />
-          <label htmlFor="embed_to_video" className="text-sm cursor-pointer">
-            嵌入视频（将字幕合并到 mkv 文件）
-          </label>
+          <label htmlFor="embed_to_video" className="text-sm cursor-pointer">{t("batch.embedVideo")}</label>
         </div>
 
         {/* 并发数 */}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium whitespace-nowrap">文件并发数</label>
+            <label className="text-sm font-medium whitespace-nowrap">{t("batch.fileConcurrency")}</label>
             <input
               type="number"
               value={localConfig.file_concurrency}
@@ -879,7 +836,7 @@ function BatchConfigSection() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium whitespace-nowrap">条目并发数</label>
+            <label className="text-sm font-medium whitespace-nowrap">{t("batch.entryConcurrency")}</label>
             <input
               type="number"
               value={localConfig.entry_concurrency}
@@ -891,14 +848,14 @@ function BatchConfigSection() {
           </div>
         </div>
         <div className="grid grid-cols-2 gap-3 -mt-1">
-          <p className="text-xs text-muted-foreground">同时处理几个文件</p>
-          <p className="text-xs text-muted-foreground">单文件内翻译并发</p>
+          <p className="text-xs text-muted-foreground">{t("batch.fileConcurrencyHint")}</p>
+          <p className="text-xs text-muted-foreground">{t("batch.entryConcurrencyHint")}</p>
         </div>
 
         {/* 假文件检测 */}
         <div className="grid grid-cols-2 gap-3">
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium whitespace-nowrap">最小文件大小(MB)</label>
+            <label className="text-sm font-medium whitespace-nowrap">{t("batch.minFileSize")}</label>
             <input
               type="number"
               value={localConfig.min_file_size_mb}
@@ -908,7 +865,7 @@ function BatchConfigSection() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium whitespace-nowrap">最小时长(秒)</label>
+            <label className="text-sm font-medium whitespace-nowrap">{t("batch.minDuration")}</label>
             <input
               type="number"
               value={localConfig.min_duration_secs}
@@ -930,9 +887,7 @@ function BatchConfigSection() {
               id="check_external"
               className="h-4 w-4"
             />
-            <label htmlFor="check_external" className="text-sm cursor-pointer">
-              检查外挂字幕（已有目标语言字幕则跳过）
-            </label>
+            <label htmlFor="check_external" className="text-sm cursor-pointer">{t("batch.checkExternal")}</label>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -942,9 +897,7 @@ function BatchConfigSection() {
               id="check_embedded"
               className="h-4 w-4"
             />
-            <label htmlFor="check_embedded" className="text-sm cursor-pointer">
-              检查内嵌字幕（已有目标语言字幕流则跳过）
-            </label>
+            <label htmlFor="check_embedded" className="text-sm cursor-pointer">{t("batch.checkEmbedded")}</label>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -954,9 +907,7 @@ function BatchConfigSection() {
               id="skip_cache"
               className="h-4 w-4"
             />
-            <label htmlFor="skip_cache" className="text-sm cursor-pointer">
-              跳过缓存（强制重新翻译）
-            </label>
+            <label htmlFor="skip_cache" className="text-sm cursor-pointer">{t("batch.skipCache")}</label>
           </div>
           <div className="flex items-center gap-2">
             <input
@@ -966,9 +917,7 @@ function BatchConfigSection() {
               id="scan_on_start"
               className="h-4 w-4"
             />
-            <label htmlFor="scan_on_start" className="text-sm cursor-pointer">
-              启动监视时扫描已有文件
-            </label>
+            <label htmlFor="scan_on_start" className="text-sm cursor-pointer">{t("batch.scanOnWatchStart")}</label>
           </div>
         </div>
 
@@ -988,6 +937,7 @@ function SortableLangItem({ lang, index, onRemove }: {
   index: number;
   onRemove: () => void;
 }) {
+  const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: lang });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -1012,6 +962,7 @@ function SourceLangPriorityList({ config, update }: {
   config: BatchConfig;
   update: (patch: Partial<BatchConfig>) => void;
 }) {
+  const { t } = useTranslation();
   const sensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
@@ -1041,10 +992,8 @@ function SourceLangPriorityList({ config, update }: {
 
   return (
     <div className="space-y-1">
-      <label className="text-sm font-medium">源语言（优先级从上到下）</label>
-      <p className="text-xs text-muted-foreground">
-        翻译时按优先级顺序检测字幕内容，传第一个匹配的语言给引擎
-      </p>
+      <label className="text-sm font-medium">{t("batch.sourceLangs")}</label>
+      <p className="text-xs text-muted-foreground">{t("batch.sourceLangsHint")}</p>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={sourceLangs} strategy={verticalListSortingStrategy}>
           <div className="space-y-1.5">
@@ -1187,10 +1136,10 @@ function BatchEngineSelect({ config, update }: {
 
   return (
     <div className="space-y-1">
-      <label className="text-sm font-medium">翻译引擎</label>
+      <label className="text-sm font-medium">{t("batch.engine")}</label>
       <Select value={selectValue} onValueChange={handleValueChange}>
         <SelectTrigger className="w-full">
-          <SelectValue placeholder="无可用引擎" />
+          <SelectValue placeholder={t("translate.noEngineAvailable")} />
         </SelectTrigger>
         <SelectContent>
           {/* 传统引擎分组：从 SERVICES 动态渲染已配置的传统翻译引擎 */}
@@ -1200,7 +1149,7 @@ function BatchEngineSelect({ config, update }: {
             if (configuredTraditional.length === 0) return null;
             return (
               <SelectGroup>
-                <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">传统翻译</SelectLabel>
+                <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("batch.legacyEngine")}</SelectLabel>
                 {configuredTraditional.map((s) => (
                   <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                 ))}
@@ -1217,7 +1166,7 @@ function BatchEngineSelect({ config, update }: {
             }
             return Array.from(groups.entries()).map(([serviceId, g]) => (
               <SelectGroup key={serviceId}>
-                <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">AI翻译 - {g.serviceName}</SelectLabel>
+                <SelectLabel className="text-[10px] text-muted-foreground px-2 py-1 font-medium">{t("batch.aiTranslateLabel", { name: g.serviceName })}</SelectLabel>
                 {g.models.map((m) => {
                   const value = encodeAiSelectValue(m.serviceId, m.model);
                   const maybeFree = isMaybeFreeModel(m.serviceId, m.model);
@@ -1229,7 +1178,7 @@ function BatchEngineSelect({ config, update }: {
                         {maybeFree && (
                           <span
                             className="instant-tooltip flex-shrink-0 h-2.5 w-2.5 rounded-sm bg-green-500"
-                            data-tooltip={t("settings.maybeFree", "可能免费，以官方价格为准")}
+                            data-tooltip={t("settings.maybeFree")}
                             onPointerDown={(e) => e.stopPropagation()}
                             onPointerUp={(e) => e.stopPropagation()}
                           />
@@ -1237,7 +1186,7 @@ function BatchEngineSelect({ config, update }: {
                         {priceUrl && (
                           <span
                             className="instant-tooltip flex-shrink-0 cursor-pointer text-primary/60 hover:text-primary"
-                            data-tooltip={t("settings.viewPrice", "查看价格")}
+                            data-tooltip={t("settings.viewPrice")}
                             onPointerDown={(e) => e.stopPropagation()}
                             onPointerUp={(e) => e.stopPropagation()}
                             onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(priceUrl).catch(() => {}); }}
@@ -1254,9 +1203,7 @@ function BatchEngineSelect({ config, update }: {
           })()}
           <SelectItem value="__add_more__">
             <span className="flex items-center gap-1 text-primary">
-              <Plus className="h-3 w-3" />
-              添加更多引擎
-            </span>
+              <Plus className="h-3 w-3" />{t("translate.addMoreEngines")}</span>
           </SelectItem>
         </SelectContent>
       </Select>
@@ -1275,6 +1222,7 @@ function ScheduleSection({
   config: BatchConfig;
   update: (patch: Partial<BatchConfig>) => void;
 }) {
+  const { t } = useTranslation();
   const isAlways = config.schedule === "Always";
 
   // 从 TimeWindow 提取当前值
@@ -1339,7 +1287,7 @@ function ScheduleSection({
     });
   };
 
-  const dayNames = ["日", "一", "二", "三", "四", "五", "六"];
+  const dayNames = [t("batch.daySun"), t("batch.dayMon"), t("batch.dayTue"), t("batch.dayWed"), t("batch.dayThu"), t("batch.dayFri"), t("batch.daySat")];
 
   return (
     <div className="space-y-3 border-t pt-3">
@@ -1351,9 +1299,7 @@ function ScheduleSection({
           id="schedule_always"
           className="h-4 w-4"
         />
-        <label htmlFor="schedule_always" className="text-sm font-medium cursor-pointer">
-          全天运行（不限制工作时间）
-        </label>
+        <label htmlFor="schedule_always" className="text-sm font-medium cursor-pointer">{t("batch.allDay")}</label>
       </div>
 
       {!isAlways && (
@@ -1361,10 +1307,8 @@ function ScheduleSection({
           {/* 时间窗口 */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium">工作时间窗口</label>
-              <Button variant="outline" size="sm" onClick={addWindow} type="button">
-                + 添加时段
-              </Button>
+              <label className="text-sm font-medium">{t("batch.workWindow")}</label>
+              <Button variant="outline" size="sm" onClick={addWindow} type="button">{t("batch.addTimeRange")}</Button>
             </div>
             {windows.map((w, idx) => (
               <div key={idx} className="flex items-center gap-2">
@@ -1387,7 +1331,7 @@ function ScheduleSection({
                 />
                 <span className="text-sm">:00</span>
                 {w[1] <= w[0] && (
-                  <span className="text-xs text-orange-500">（跨午夜）</span>
+                  <span className="text-xs text-orange-500">{t("batch.crossMidnight")}</span>
                 )}
                 <Button
                   variant="ghost"
@@ -1400,14 +1344,12 @@ function ScheduleSection({
                 </Button>
               </div>
             ))}
-            <p className="text-xs text-muted-foreground">
-              当结束时间 ≤ 开始时间时视为跨午夜（如 22:00～2:00 = 22-24 + 0-2）
-            </p>
+            <p className="text-xs text-muted-foreground">{t("batch.crossMidnightHint")}</p>
           </div>
 
           {/* 星期选择 */}
           <div className="space-y-2">
-            <label className="text-sm font-medium">运行日期</label>
+            <label className="text-sm font-medium">{t("batch.runDays")}</label>
             <div className="flex gap-1">
               {dayNames.map((name, day) => (
                 <button

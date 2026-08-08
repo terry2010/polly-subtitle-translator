@@ -117,7 +117,7 @@ export default function SettingsView() {
     { key: "translate", label: t("settings.translateApi"), icon: <Languages className="h-4 w-4" /> },
     { key: "player", label: t("settings.player"), icon: <Film className="h-4 w-4" /> },
     { key: "advanced", label: t("settings.advanced"), icon: <Wrench className="h-4 w-4" /> },
-    ...(devMode ? [{ key: "developer" as SettingsTab, label: t("settings.developer", "开发者选项"), icon: <Bug className="h-4 w-4" /> }] : []),
+    ...(devMode ? [{ key: "developer" as SettingsTab, label: t("settings.developer"), icon: <Bug className="h-4 w-4" /> }] : []),
     ...(devMode ? [{ key: "batch" as SettingsTab, label: t("settings.batch"), icon: <Layers className="h-4 w-4" /> }] : []),
     { key: "about", label: t("settings.about"), icon: <Info className="h-4 w-4" /> },
   ];
@@ -210,19 +210,19 @@ function GeneralSettings({ theme, setTheme, language, setLanguage }: {
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("settings.general")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.generalDesc", "应用基本外观与行为设置")}</p>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.generalDesc")}</p>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("settings.appearance", "外观")}</CardTitle>
+          <CardTitle className="text-base">{t("settings.appearance")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {/* 界面语言 */}
           <div className="flex items-center justify-between">
             <div>
               <label className="text-sm font-medium">{t("settings.language")}</label>
-              <p className="text-xs text-muted-foreground">{t("settings.languageDesc", "应用界面显示语言")}</p>
+              <p className="text-xs text-muted-foreground">{t("settings.languageDesc")}</p>
             </div>
             <Select value={language} onValueChange={setLanguage}>
               <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
@@ -239,7 +239,7 @@ function GeneralSettings({ theme, setTheme, language, setLanguage }: {
           <div className="flex items-center justify-between">
             <div>
               <label className="text-sm font-medium">{t("settings.theme")}</label>
-              <p className="text-xs text-muted-foreground">{t("settings.themeDesc", "浅色/深色/跟随系统")}</p>
+              <p className="text-xs text-muted-foreground">{t("settings.themeDesc")}</p>
             </div>
             <Select value={theme} onValueChange={setTheme}>
               <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
@@ -255,7 +255,7 @@ function GeneralSettings({ theme, setTheme, language, setLanguage }: {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("settings.defaultLangs", "默认翻译语言")}</CardTitle>
+          <CardTitle className="text-base">{t("settings.defaultLangs")}</CardTitle>
         </CardHeader>
         <CardContent>
           <DefaultLangSettings />
@@ -336,7 +336,7 @@ function DefaultLangSettings() {
         <div>
           <label className="text-sm">{t("settings.defaultTargetLang")}</label>
           <p className="text-xs text-muted-foreground">
-            {t("settings.followSystem", "跟随系统语言")}（{langName(systemLang)}）
+            {t("settings.followSystem")}（{langName(systemLang)}）
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -477,7 +477,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     const trimmedUrl = urlToFetch.trim();
     if (!trimmedUrl) return;
     try { new URL(trimmedUrl); } catch {
-      if (isManual) toast.error(t("settings.openaiInvalidUrl", "API 地址格式无效"));
+      if (isManual) toast.error(t("settings.openaiInvalidUrl"));
       return;
     }
     const fetchServiceId = currentService?.id ?? "";
@@ -523,7 +523,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         } catch (e: any) {
           const err = typeof e === "string" ? JSON.parse(e) : e;
           lastError = err?.message === "timeout"
-            ? t("settings.openaiFetchTimeout", "获取超时，请检查地址是否正确")
+            ? t("settings.openaiFetchTimeout")
             : err;
           // 认证失败（401/403）或空模型列表：直接返回，不需要尝试其他候选 URL
           if (err?.code === "translate.authFailed" || err?.code === "openai.noModels") break;
@@ -533,7 +533,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         // 所有候选 URL 都失败，显示错误信息
         if (isManual) {
           const msg = typeof lastError === "string" ? lastError : (lastError ? formatIpcError(lastError) : "");
-          toast.error(msg || t("settings.openaiNoModels", "未能获取模型列表"));
+          toast.error(msg || t("settings.openaiNoModels"));
         }
         return;
       }
@@ -560,7 +560,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         return prevModel;
       });
       if (isManual) {
-        toast.success(t("settings.openaiModelsLoaded", "已加载 {{count}} 个模型", { count: allModels.length }));
+        toast.success(t("settings.openaiModelsLoaded", { count: allModels.length }));
       }
     } catch { /* 静默 */ } finally {
       if (currentFetchServiceRef.current === fetchServiceId) {
@@ -677,18 +677,18 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     if (currentService.requiresApiKey) {
       const isMasked = secretKey === "••••••••";
       if (!isMasked && !secretKey.trim()) {
-        toast.error(t("settings.secretKeyRequired", "请填写 API Key"));
+        toast.error(t("settings.secretKeyRequired"));
         return;
       }
     }
     // 传统翻译：有 appIdLabel 的引擎需要 app_id（百度/有道/腾讯/火山/阿里/AWS）
     if (currentService.category === "traditional" && currentService.appIdLabel && !appId.trim()) {
-      toast.error(t("settings.appIdRequired", "请填写 App ID"));
+      toast.error(t("settings.appIdRequired"));
       return;
     }
     // 需要区域的引擎（Bing/AWS）：区域必填
     if (currentService.hasRegion && !region.trim()) {
-      toast.error(t("settings.regionRequired", "请填写区域"));
+      toast.error(t("settings.regionRequired"));
       return;
     }
 
@@ -727,12 +727,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       setConfiguredIds(updated);
 
       if (credentialSaved) {
-        toast.success(t("settings.saveSuccess", "已保存"));
+        toast.success(t("settings.saveSuccess"));
       } else {
-        toast.warning(t("settings.saveSuccessButCredential", "配置已保存，但密钥保存失败（可能不支持系统钥匙串）"));
+        toast.warning(t("settings.saveSuccessButCredential"));
       }
     } catch (e: any) {
-      toast.error(t("settings.saveFailed", "保存失败") + ": " + formatIpcError(e));
+      toast.error(t("settings.saveFailed") + ": " + formatIpcError(e));
     }
   }, [currentService, appId, secretKey, region, baseUrl, qps, selectedModels, useProxy, t]);
 
@@ -743,11 +743,11 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     if (currentService.category === "ai") {
       const trimmedUrl = baseUrl.trim();
       if (!trimmedUrl) {
-        toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
+        toast.error(t("settings.openaiBaseUrlRequired"));
         return;
       }
       try { new URL(trimmedUrl); } catch {
-        toast.error(t("settings.openaiInvalidUrl", "API 地址格式无效"));
+        toast.error(t("settings.openaiInvalidUrl"));
         return;
       }
     }
@@ -755,7 +755,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     if (currentService.requiresApiKey) {
       const isMasked = secretKey === "••••••••";
       if (!isMasked && !secretKey.trim()) {
-        toast.error(t("settings.secretKeyRequired", "请填写 API Key"));
+        toast.error(t("settings.secretKeyRequired"));
         return;
       }
     }
@@ -763,22 +763,22 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     if (currentService.category === "traditional" && !currentService.appIdLabel) {
       const isMasked = secretKey === "••••••••";
       if (!isMasked && !secretKey.trim()) {
-        toast.error(t("settings.secretKeyRequired", "请填写 API Key"));
+        toast.error(t("settings.secretKeyRequired"));
         return;
       }
     }
     // 双字段传统引擎（有 appIdLabel）：必须填 app_id
     if (currentService.category === "traditional" && currentService.appIdLabel && !appId.trim()) {
-      toast.error(t("settings.appIdRequired", "请填写 App ID"));
+      toast.error(t("settings.appIdRequired"));
       return;
     }
     // 需要区域的引擎（Bing/AWS）：区域必填
     if (currentService.hasRegion && !region.trim()) {
-      toast.error(t("settings.regionRequired", "请填写区域"));
+      toast.error(t("settings.regionRequired"));
       return;
     }
     if (currentService.category === "ai" && selectedModels.length === 0) {
-      toast.error(t("settings.modelRequired", "请先选择模型"));
+      toast.error(t("settings.modelRequired"));
       return;
     }
     setTesting(true);
@@ -807,12 +807,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       setTestResult("ok");
       if (result.original && result.translated) {
         toast.success(
-          t("settings.openaiTestSuccess", "连接成功") + "\n" +
+          t("settings.openaiTestSuccess") + "\n" +
           `${result.original} → ${result.translated}`,
           { duration: 8000 }
         );
       } else {
-        toast.success(t("settings.testSuccess", "连接成功"));
+        toast.success(t("settings.testSuccess"));
       }
     } catch (e: any) {
       setTestResult("fail");
@@ -859,7 +859,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       setUseProxy(null);
       setTestResult(null);
       checkAllServiceConfigs().then(setConfiguredIds);
-      toast.success(t("settings.configDeleted", "配置已删除"));
+      toast.success(t("settings.configDeleted"));
     } catch (e: any) {
       toast.error(formatIpcError(e));
     } finally {
@@ -889,7 +889,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     if (!currentService) return;
     const trimmedUrl = baseUrl.trim();
     if (!trimmedUrl) {
-      toast.error(t("settings.openaiBaseUrlRequired", "请先填写 API 地址"));
+      toast.error(t("settings.openaiBaseUrlRequired"));
       return;
     }
     const actualSecret = secretKey === "••••••••" ? undefined : secretKey;
@@ -922,7 +922,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         <div className="flex items-center justify-between gap-1">
           <span className="truncate font-medium">{s.name}</span>
           {s.comingSoon && (
-            <span className="text-[10px] text-muted-foreground ml-1 shrink-0">{t("settings.comingSoonTag", "即将支持")}</span>
+            <span className="text-[10px] text-muted-foreground ml-1 shrink-0">{t("settings.comingSoonTag")}</span>
           )}
           {!s.comingSoon && s.hasFreeTier && (
             <span className="text-[10px] text-green-600 shrink-0">🆓</span>
@@ -949,12 +949,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
     >
       <span className="flex items-center gap-1 text-primary">
         <Plus className="h-3 w-3" />
-        {t("settings.addApi", "添加 API")}
+        {t("settings.addApi")}
       </span>
       <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
         {category === "traditional"
-          ? t("settings.addTraditionalServiceDesc", "添加百度翻译等传统翻译服务")
-          : t("settings.addAiServiceDesc", "添加 DeepSeek 等 AI 大模型")}
+          ? t("settings.addTraditionalServiceDesc")
+          : t("settings.addAiServiceDesc")}
       </p>
     </button>
   );
@@ -965,43 +965,43 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       <div>
         <h2 className="text-xl font-semibold flex items-center gap-2">
           <Star className="h-5 w-5 text-yellow-500" />
-          {t("settings.officialApi", "官方 API")}
+          {t("settings.officialApi")}
         </h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiDesc", "精译·省钱·免费")}</p>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiDesc")}</p>
       </div>
       <Card>
         <CardContent className="space-y-4 pt-4">
           <div>
-            <h3 className="text-base font-medium">{t("settings.officialApiJingyi", "精译")}</h3>
-            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiJingyiDesc", "对字幕翻译做了专门调优，翻译质量接近字幕组翻译效果。")}</p>
+            <h3 className="text-base font-medium">{t("settings.officialApiJingyi")}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiJingyiDesc")}</p>
           </div>
           <div>
-            <h3 className="text-base font-medium">{t("settings.officialApiZhongzhuan", "低价时段中转")}</h3>
-            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiZhongzhuanDesc", "低价时段中转到 DeepSeek，帮用户省钱。本功能按官方定价收取，不赚钱。")}</p>
+            <h3 className="text-base font-medium">{t("settings.officialApiZhongzhuan")}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiZhongzhuanDesc")}</p>
           </div>
           <div>
-            <h3 className="text-base font-medium">{t("settings.officialApiMianfei", "超慢免费 API")}</h3>
-            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiMianfeiDesc", "转发到作者的电脑上，使用 Qwen 3.5 9B 翻译。速度慢但完全免费。")}</p>
+            <h3 className="text-base font-medium">{t("settings.officialApiMianfei")}</h3>
+            <p className="text-sm text-muted-foreground mt-1">{t("settings.officialApiMianfeiDesc")}</p>
           </div>
           <div className="border-t pt-4 space-y-2">
             {authStatus === "logged_in" && authUser ? (
               <>
                 <p className="text-sm text-muted-foreground">
-                  {t("settings.officialApiLoggedIn", "已登录")}：{authUser.email}
+                  {t("settings.officialApiLoggedIn")}：{authUser.email}
                 </p>
                 <div className="text-xs text-muted-foreground space-y-1">
                   <p>
-                    {t("settings.officialApiBonusBalance", "会员点数")}:{" "}
+                    {t("settings.officialApiBonusBalance")}:{" "}
                     {(authUser.bonus_balance || 0).toLocaleString()}
                     {authUser.bonus_expires_at &&
-                      `（${t("settings.officialApiValidUntil", "有效期至")} ${authUser.bonus_expires_at.slice(0, 10).replace(/-/g, "/")}）`}
+                      `（${t("settings.officialApiValidUntil")} ${authUser.bonus_expires_at.slice(0, 10).replace(/-/g, "/")}）`}
                   </p>
                   <p>
-                    {t("settings.officialApiTokenBalance", "按量点数")}:{" "}
+                    {t("settings.officialApiTokenBalance")}:{" "}
                     {(authUser.token_balance || 0).toLocaleString()}
                   </p>
                   <p>
-                    {t("settings.officialApiVip", "等级")}: {authUser.vip_level}
+                    {t("settings.officialApiVip")}: {authUser.vip_level}
                   </p>
                 </div>
                 <Button
@@ -1009,29 +1009,29 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                   variant="outline"
                   onClick={() => { void authLogout(); }}
                 >
-                  {t("settings.officialApiLogoutButton", "退出登录")}
+                  {t("settings.officialApiLogoutButton")}
                 </Button>
               </>
             ) : authStatus === "logging_in" ? (
               <>
-                <p className="text-sm text-muted-foreground">{t("settings.officialApiWaiting", "等待浏览器登录...")}</p>
+                <p className="text-sm text-muted-foreground">{t("settings.officialApiWaiting")}</p>
                 <Button size="sm" disabled>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  {t("settings.officialApiLoginButton", "登陆认证")}
+                  {t("settings.officialApiLoginButton")}
                 </Button>
-                <p className="text-xs text-muted-foreground">{t("settings.officialApiBrowserHint", "已在浏览器中打开登录页面，请在浏览器中完成登录")}</p>
+                <p className="text-xs text-muted-foreground">{t("settings.officialApiBrowserHint")}</p>
               </>
             ) : (
               <>
-                <p className="text-sm text-muted-foreground">{t("settings.officialApiLoginPrompt", "登陆认证后即可使用官方 API 服务。")}</p>
+                <p className="text-sm text-muted-foreground">{t("settings.officialApiLoginPrompt")}</p>
                 <Button
                   size="sm"
                   onClick={() => { void authLogin(); }}
                 >
-                  {t("settings.officialApiLoginButton", "登陆认证")}
+                  {t("settings.officialApiLoginButton")}
                 </Button>
                 {authStatus === "error" && (
-                  <p className="text-xs text-destructive">{t("settings.officialApiLoginFailed", "登录失败，请重试")}</p>
+                  <p className="text-xs text-destructive">{t("settings.officialApiLoginFailed")}</p>
                 )}
               </>
             )}
@@ -1050,8 +1050,8 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         <div>
           <h2 className="text-xl font-semibold">
             {category === "traditional"
-              ? t("settings.addTraditionalService", "添加传统翻译服务")
-              : t("settings.addAiService", "添加 AI 大模型服务")}
+              ? t("settings.addTraditionalService")
+              : t("settings.addAiService")}
           </h2>
         </div>
         <Input
@@ -1061,7 +1061,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           className="max-w-sm"
         />
         {filtered.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t("settings.noServicesToAdd", "没有可添加的服务（全部已添加或搜索无匹配）")}</p>
+          <p className="text-sm text-muted-foreground">{t("settings.noServicesToAdd")}</p>
         ) : (
           <div className="grid grid-cols-2 gap-3">
             {filtered.map((s) => (
@@ -1076,7 +1076,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                 <div className="flex items-center justify-between">
                   <span className="font-medium text-sm">{s.name}</span>
                   {s.comingSoon && (
-                    <span className="text-xs text-muted-foreground">{t("settings.comingSoonTag", "即将支持")}</span>
+                    <span className="text-xs text-muted-foreground">{t("settings.comingSoonTag")}</span>
                   )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-1">
@@ -1109,7 +1109,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       {s.comingSoon ? (
         <Card>
           <CardContent className="py-8 text-center">
-            <p className="text-muted-foreground">{t("settings.comingSoonTag", "即将支持")}</p>
+            <p className="text-muted-foreground">{t("settings.comingSoonTag")}</p>
           </CardContent>
         </Card>
       ) : (
@@ -1118,13 +1118,13 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             <div className="flex items-center gap-4 flex-wrap">
               {s.docUrl && (
                 <a href={s.docUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                  {t("settings.getApiKeyPrefix", "获取")} {s.name} API Key
+                  {t("settings.getApiKeyPrefix")} {s.name} API Key
                   <ExternalLink className="h-3 w-3" />
                 </a>
               )}
               {s.quotaUrl && configuredIds.has(s.id) && (
                 <a href={s.quotaUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-                  查看免费额度余量
+                  {t("settings.viewBalance")}
                   <ExternalLink className="h-3 w-3" />
                 </a>
               )}
@@ -1134,17 +1134,17 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
               <>
                 <div>
                   <label className="text-sm font-medium">API-KEY</label>
-                  <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc", "API 密钥，加密存储在系统密钥环")}</p>
+                  <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc")}</p>
                   <div className="flex gap-2">
                     <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder="API-KEY" disabled={loading} />
                     {secretKey === "••••••••" && (
-                      <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit")}</Button>
                     )}
                   </div>
                 </div>
                 <div>
                   <label className="text-sm font-medium">APPID</label>
-                  <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc", "翻译服务的 App ID / API Key")}</p>
+                  <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc")}</p>
                   <Input value={appId} onChange={(e) => setAppId(e.target.value)} placeholder="APPID" disabled={loading} />
                 </div>
               </>
@@ -1153,17 +1153,17 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                 {s.appIdLabel && (
                   <div>
                     <label className="text-sm font-medium">{s.appIdLabel}</label>
-                    <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc", "翻译服务的 App ID / API Key")}</p>
+                    <p className="text-xs text-muted-foreground mb-1">{t("settings.appIdDesc")}</p>
                     <Input value={appId} onChange={(e) => setAppId(e.target.value)} placeholder={s.appIdPlaceholder} disabled={loading} />
                   </div>
                 )}
                 <div>
-                  <label className="text-sm font-medium">{s.appIdLabel ? t("settings.secretKey", "密钥") : t("settings.apiKey", "API Key")}</label>
-                  <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc", "API 密钥，加密存储在系统密钥环")}</p>
+                  <label className="text-sm font-medium">{s.appIdLabel ? t("settings.secretKey") : t("settings.apiKey")}</label>
+                  <p className="text-xs text-muted-foreground mb-1">{t("settings.secretKeyDesc")}</p>
                   <div className="flex gap-2">
                     <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={s.appIdLabel ? "Secret Key" : "API Key"} disabled={loading} />
                     {secretKey === "••••••••" && (
-                      <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
+                      <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit")}</Button>
                     )}
                   </div>
                 </div>
@@ -1171,25 +1171,25 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             )}
             {s.hasRegion && (
               <div>
-                <label className="text-sm font-medium">{t("settings.region", "区域")} <span className="text-destructive">*</span></label>
-                <p className="text-xs text-muted-foreground mb-1">{t("settings.regionDesc", "Azure 资源区域，如 eastasia、global、japaneast。请填写创建资源时选择的位置")}</p>
+                <label className="text-sm font-medium">{t("settings.region")} <span className="text-destructive">*</span></label>
+                <p className="text-xs text-muted-foreground mb-1">{t("settings.regionDesc")}</p>
                 <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="eastasia / global / japaneast" />
               </div>
             )}
             {/* QPS / 并发上限 */}
             <div>
-              <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
-              <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDescTraditional", "该服务的请求频率上限。免费版通常为 1-5，付费版可按套餐调高。")}</p>
+              <label className="text-sm font-medium">{t("settings.qpsLabel")}</label>
+              <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDescTraditional")}</p>
               <Input type="number" step="0.1" value={qps} onChange={(e) => { const v = parseFloat(e.target.value); setQps(isNaN(v) ? 1 : v); }} min={0.1} disabled={loading} className="w-24" />
             </div>
             {/* 代理 */}
             <div className="flex items-center justify-between border-t pt-3">
               <div>
-                <label className="text-sm font-medium">{t("settings.useProxy", "使用软件代理")}</label>
+                <label className="text-sm font-medium">{t("settings.useProxy")}</label>
                 <p className="text-xs text-muted-foreground">
                   {proxyMode !== "none"
-                    ? t("settings.useProxyDesc", "通过软件配置的代理访问此翻译 API")
-                    : t("settings.useProxyNoProxy", "未配置代理，请在高级设置中先配置代理")}
+                    ? t("settings.useProxyDesc")
+                    : t("settings.useProxyNoProxy")}
                 </p>
               </div>
               <Select
@@ -1198,28 +1198,28 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
               >
                 <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="default">{t("settings.proxyDefault", "跟随")}</SelectItem>
-                  <SelectItem value="true">{t("settings.proxyOn", "启用")}</SelectItem>
-                  <SelectItem value="false">{t("settings.proxyOff", "禁用")}</SelectItem>
+                  <SelectItem value="default">{t("settings.proxyDefault")}</SelectItem>
+                  <SelectItem value="true">{t("settings.proxyOn")}</SelectItem>
+                  <SelectItem value="false">{t("settings.proxyOff")}</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             {/* 操作按钮 */}
             <div className="flex items-center gap-2 border-t pt-3">
-              <Button size="sm" onClick={handleSave} disabled={loading}>{t("settings.save", "保存")}</Button>
+              <Button size="sm" onClick={handleSave} disabled={loading}>{t("settings.save")}</Button>
               <Button size="sm" variant="outline" onClick={handleTest} disabled={loading || testing}>
                 {testing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-                {t("settings.testConnection", "测试连接")}
+                {t("settings.testConnection")}
               </Button>
               {devMode && (
                 <Button size="sm" variant="destructive" onClick={() => setDeleteConfirmOpen(true)} disabled={loading}>
                   <Trash2 className="mr-1 h-4 w-4" />
-                  {t("settings.deleteConfig", "删除配置")}
+                  {t("settings.deleteConfig")}
                 </Button>
               )}
               {testResult === "ok" && (
                 <span className="flex items-center gap-1 text-sm text-green-600">
-                  <Check className="h-4 w-4" /> {t("settings.testSuccess", "连接成功")}
+                  <Check className="h-4 w-4" /> {t("settings.testSuccess")}
                 </span>
               )}
             </div>
@@ -1258,33 +1258,33 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         <CardContent className="space-y-4 pt-4">
           {s.docUrl && (
             <a href={s.docUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
-              {t("settings.getApiKeyPrefix", "获取")} {s.name} API Key
+              {t("settings.getApiKeyPrefix")} {s.name} API Key
               <ExternalLink className="h-3 w-3" />
             </a>
           )}
           {/* API 地址 */}
           <div>
-            <label className="text-sm font-medium">{t("settings.openaiBaseUrl", "API 地址")}</label>
-            <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiBaseUrlDesc", "OpenAI 兼容端点")}</p>
+            <label className="text-sm font-medium">{t("settings.openaiBaseUrl")}</label>
+            <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiBaseUrlDesc")}</p>
             <div className="flex gap-2">
               <Input
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 onBlur={handleBaseUrlBlur}
-                placeholder={t("settings.openaiBaseUrlPlaceholder", "必填，例如 http://localhost:1234/v1")}
+                placeholder={t("settings.openaiBaseUrlPlaceholder")}
                 disabled={loading}
               />
               {s.presetBaseUrl && baseUrl !== s.presetBaseUrl && (
                 <Button size="sm" variant="ghost" onClick={() => { setBaseUrl(s.presetBaseUrl!); lastAutoFetchUrlRef.current = ""; }}>
-                  {t("settings.resetBaseUrl", "重置为默认")}
+                  {t("settings.resetBaseUrl")}
                 </Button>
               )}
             </div>
           </div>
           {/* 模型多选 */}
           <div ref={modelDropdownRef}>
-            <label className="text-sm font-medium">{t("settings.openaiModel", "模型")}</label>
-            <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiModelDesc", "勾选要使用的模型")}</p>
+            <label className="text-sm font-medium">{t("settings.openaiModel")}</label>
+            <p className="text-xs text-muted-foreground mb-1">{t("settings.openaiModelDesc")}</p>
             <div className="flex gap-2">
               <div className="relative flex-1">
                 <div
@@ -1309,7 +1309,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                     value={modelFilter}
                     onChange={(e) => setModelFilter(e.target.value)}
                     onFocus={() => setModelDropdownOpen(true)}
-                    placeholder={selectedModels.length === 0 ? t("settings.openaiModelPlaceholder", "搜索模型名称") : ""}
+                    placeholder={selectedModels.length === 0 ? t("settings.openaiModelPlaceholder") : ""}
                     className="flex-1 border-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                     disabled={loading}
                   />
@@ -1321,7 +1321,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                       if (filtered.length === 0) {
                         return (
                           <button type="button" onClick={() => { setModelDropdownOpen(false); handleRefreshModels(); }} className="w-full px-3 py-2 text-left text-sm text-primary hover:underline">
-                            {modelFilter ? t("settings.openaiNoMatch", "无匹配模型，点击刷新") : t("settings.openaiClickRefresh", "暂无模型，点击刷新")}
+                            {modelFilter ? t("settings.openaiNoMatch") : t("settings.openaiClickRefresh")}
                           </button>
                         );
                       }
@@ -1339,12 +1339,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                             </label>
                             {maybeFree && (
                               <span className="flex-shrink-0 rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium text-green-700 dark:bg-green-900/40 dark:text-green-400">
-                                {t("settings.maybeFree", "可能免费")}
+                                {t("settings.maybeFree")}
                               </span>
                             )}
                             {knownPaid && !maybeFree && (
                               <span className="flex-shrink-0 rounded bg-orange-100 px-1.5 py-0.5 text-[10px] font-medium text-orange-700 dark:bg-orange-900/40 dark:text-orange-400">
-                                {t("settings.paid", "收费")}
+                                {t("settings.paid")}
                               </span>
                             )}
                             {priceUrl && (
@@ -1353,7 +1353,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                                 onClick={(e) => { e.stopPropagation(); e.preventDefault(); openUrl(priceUrl).catch(() => {}); }}
                                 className="flex-shrink-0 cursor-pointer rounded border border-primary/30 bg-primary/5 px-1.5 py-0.5 text-[10px] text-primary transition-colors hover:bg-primary/10 hover:underline"
                               >
-                                {t("settings.viewPrice", "查看价格")}
+                                {t("settings.viewPrice")}
                               </button>
                             )}
                             {selected && (
@@ -1365,7 +1365,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                               >
                                 <option value="qwen3">Qwen3</option>
                                 <option value="deepseek">DeepSeek</option>
-                                <option value="generic">{t("settings.openaiModelTypeGeneric", "通用")}</option>
+                                <option value="generic">{t("settings.openaiModelTypeGeneric")}</option>
                               </select>
                             )}
                           </div>
@@ -1376,7 +1376,7 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
                 )}
               </div>
               <Button size="sm" variant="outline" onClick={handleRefreshModels} disabled={loadingModels}>
-                {loadingModels ? t("settings.openaiLoading", "加载中...") : t("settings.openaiRefreshModels", "刷新模型")}
+                {loadingModels ? t("settings.openaiLoading") : t("settings.openaiRefreshModels")}
               </Button>
             </div>
           </div>
@@ -1384,36 +1384,36 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           <div>
             <label className="text-sm font-medium">
               {s.requiresApiKey
-                ? t("settings.openaiApiKeyRequired", "API Key")
-                : t("settings.openaiApiKey", "API Key（可选）")}
+                ? t("settings.openaiApiKeyRequired")
+                : t("settings.openaiApiKey")}
             </label>
             <p className="text-xs text-muted-foreground mb-1">
               {s.requiresApiKey
-                ? t("settings.openaiApiKeyRequiredDesc", "必填，加密存储在系统密钥环")
-                : t("settings.openaiApiKeyDesc", "局域网部署可留空；云 API 必填，加密存储在系统密钥环")}
+                ? t("settings.openaiApiKeyRequiredDesc")
+                : t("settings.openaiApiKeyDesc")}
             </p>
             <div className="flex gap-2">
-              <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={s.requiresApiKey ? "API Key" : t("settings.openaiApiKeyPlaceholder", "留空表示无认证")} disabled={loading} />
+              <Input type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={s.requiresApiKey ? "API Key" : t("settings.openaiApiKeyPlaceholder")} disabled={loading} />
               {secretKey === "••••••••" && (
-                <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit", "修改")}</Button>
+                <Button size="sm" variant="ghost" onClick={() => setSecretKey("")}>{t("settings.edit")}</Button>
               )}
             </div>
           </div>
           {/* QPS */}
           <div>
-            <label className="text-sm font-medium">{t("settings.qpsLabel", "QPS 上限")}</label>
-            <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDesc", "该服务的并发请求上限。免费版通常较低，付费版可按套餐调高。")}</p>
+            <label className="text-sm font-medium">{t("settings.qpsLabel")}</label>
+            <p className="text-xs text-muted-foreground mb-1">{t("settings.qpsDesc")}</p>
             <Input type="number" step="0.1" value={qps} onChange={(e) => { const v = parseFloat(e.target.value); setQps(isNaN(v) ? 1 : v); }} min={0.1} disabled={loading} className="w-24" />
             {s.id === "gemini" && (
               <p className="text-xs text-muted-foreground mt-1">
-                {t("settings.geminiRateLimitNote", "Google 不同模型的 RPM/TPM/RPD 限制逻辑较复杂，且会动态调整。建议先在 Google AI Studio 查看当前账号的实际速率限制，再设置合适的 QPS。")}
+                {t("settings.geminiRateLimitNote")}
                 {" "}
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); openUrl("https://aistudio.google.com/app/rate-limit?timeRange=last-28-days").catch(() => {}); }}
                   className="cursor-pointer text-primary hover:underline"
                 >
-                  {t("settings.geminiRateLimitLink", "查看当前账号速率限制")}
+                  {t("settings.geminiRateLimitLink")}
                 </button>
               </p>
             )}
@@ -1421,19 +1421,19 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
           {/* TPM 限速（仅有限额的服务商显示） */}
           {s.presetTpm && (
             <div>
-              <label className="text-sm font-medium">{t("settings.tpmLabel", "TPM 上限")}</label>
-              <p className="text-xs text-muted-foreground mb-1">{t("settings.tpmDesc", "每分钟最多 token 数，0 = 不限制")}</p>
+              <label className="text-sm font-medium">{t("settings.tpmLabel")}</label>
+              <p className="text-xs text-muted-foreground mb-1">{t("settings.tpmDesc")}</p>
               <Input type="number" step="1000" value={tpmLimit} onChange={(e) => { const v = parseInt(e.target.value); setTpmLimit(isNaN(v) ? 0 : v); }} min={0} disabled={loading} className="w-32" />
             </div>
           )}
           {/* 代理 */}
           <div className="flex items-center justify-between border-t pt-3">
             <div>
-              <label className="text-sm font-medium">{t("settings.useProxy", "使用软件代理")}</label>
+              <label className="text-sm font-medium">{t("settings.useProxy")}</label>
               <p className="text-xs text-muted-foreground">
                 {proxyMode !== "none"
-                  ? t("settings.useProxyDesc", "通过软件配置的代理访问此翻译 API")
-                  : t("settings.useProxyNoProxy", "未配置代理，请在高级设置中先配置代理")}
+                  ? t("settings.useProxyDesc")
+                  : t("settings.useProxyNoProxy")}
               </p>
             </div>
             <Select
@@ -1442,28 +1442,28 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
             >
               <SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="default">{t("settings.proxyDefault", "跟随")}</SelectItem>
-                <SelectItem value="true">{t("settings.proxyOn", "启用")}</SelectItem>
-                <SelectItem value="false">{t("settings.proxyOff", "禁用")}</SelectItem>
+                <SelectItem value="default">{t("settings.proxyDefault")}</SelectItem>
+                <SelectItem value="true">{t("settings.proxyOn")}</SelectItem>
+                <SelectItem value="false">{t("settings.proxyOff")}</SelectItem>
               </SelectContent>
             </Select>
           </div>
           {/* 操作按钮 */}
           <div className="flex items-center gap-2 border-t pt-3">
-            <Button size="sm" onClick={handleSave} disabled={loading}>{t("settings.save", "保存")}</Button>
+            <Button size="sm" onClick={handleSave} disabled={loading}>{t("settings.save")}</Button>
             <Button size="sm" variant="outline" onClick={handleTest} disabled={loading || testing}>
               {testing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-              {t("settings.testConnection", "测试连接")}
+              {t("settings.testConnection")}
             </Button>
             {devMode && (
               <Button size="sm" variant="destructive" onClick={() => setDeleteConfirmOpen(true)} disabled={loading}>
                 <Trash2 className="mr-1 h-4 w-4" />
-                {t("settings.deleteConfig", "删除配置")}
+                {t("settings.deleteConfig")}
               </Button>
             )}
             {testResult === "ok" && (
               <span className="flex items-center gap-1 text-sm text-green-600">
-                <Check className="h-4 w-4" /> {t("settings.testSuccess", "连接成功")}
+                <Check className="h-4 w-4" /> {t("settings.testSuccess")}
               </span>
             )}
           </div>
@@ -1507,10 +1507,10 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       >
         <span className="flex items-center gap-1 font-medium">
           <Star className="h-4 w-4 text-yellow-500" />
-          {t("settings.officialApi", "官方 API")}
+          {t("settings.officialApi")}
         </span>
         <p className="text-[10px] text-muted-foreground truncate leading-tight mt-0.5">
-          {t("settings.officialApiDesc", "精译·省钱·免费")}
+          {t("settings.officialApiDesc")}
         </p>
       </button>
 
@@ -1538,14 +1538,14 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
       <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t("settings.deleteConfigConfirm", "确认删除配置？")}</DialogTitle>
+            <DialogTitle>{t("settings.deleteConfigConfirm")}</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">{t("settings.deleteConfigDesc", "将清除当前引擎的所有配置和凭据，此操作不可撤销。")}</p>
+          <p className="text-sm text-muted-foreground">{t("settings.deleteConfigDesc")}</p>
           <div className="flex justify-end gap-2 pt-2">
-            <Button size="sm" variant="outline" onClick={() => setDeleteConfirmOpen(false)}>{t("common.cancel", "取消")}</Button>
+            <Button size="sm" variant="outline" onClick={() => setDeleteConfirmOpen(false)}>{t("common.cancel")}</Button>
             <Button size="sm" variant="destructive" onClick={handleDeleteConfig} disabled={deleting}>
               {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-              {t("common.confirm", "确认删除")}
+              {t("common.confirm")}
             </Button>
           </div>
         </DialogContent>
@@ -1601,7 +1601,7 @@ function PlayerSettings() {
     : mpvStage === "downloading" ? t("player.libmpvStageDownloading")
     : mpvStage === "extracting" ? t("player.libmpvStageExtracting")
     : mpvStage === "done" ? t("player.libmpvStageDone")
-    : mpvStage === "failed" ? t("player.libmpvStageFailed", "下载失败")
+    : mpvStage === "failed" ? t("player.libmpvStageFailed")
     : t("player.libmpvStagePreparing");
 
   const ffStageLabel = ffStage === "downloading" ? t("subtitle.ffmpegRequired.downloading")
@@ -1628,7 +1628,7 @@ function PlayerSettings() {
     try {
       await api.deleteFfmpeg();
       await ffRefreshStatus();
-      toast.success(t("settings.ffmpegDeleted", "FFmpeg 已删除"));
+      toast.success(t("settings.ffmpegDeleted"));
     } catch (e: any) {
       toast.error(formatIpcError(e));
     } finally {
@@ -1651,9 +1651,9 @@ function PlayerSettings() {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium">{t("settings.ffmpegStatus", "安装状态")}</p>
+              <p className="text-sm font-medium">{t("settings.ffmpegStatus")}</p>
               <p className="text-xs text-muted-foreground">
-                {ffStatus?.installed ? t("settings.ffmpegInstalled", "已安装") : t("settings.ffmpegNotInstalled", "未安装")}
+                {ffStatus?.installed ? t("settings.ffmpegInstalled") : t("settings.ffmpegNotInstalled")}
               </p>
               {ffStatus?.path && <p className="text-xs text-muted-foreground font-mono mt-1">{ffStatus.path}</p>}
             </div>
@@ -1803,7 +1803,7 @@ function AdvancedSettings() {
     <div className="space-y-4">
       <div>
         <h2 className="text-xl font-semibold">{t("settings.advanced")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.advancedDesc", "缓存清理、右键菜单注册")}</p>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.advancedDesc")}</p>
       </div>
 
       <ProxySettings />
@@ -1829,7 +1829,7 @@ function AdvancedSettings() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">{t("settings.contextMenu", "右键菜单")}</CardTitle>
+          <CardTitle className="text-base">{t("settings.contextMenu")}</CardTitle>
         </CardHeader>
         <CardContent>
           <ContextMenuSettings />
@@ -1895,7 +1895,7 @@ function ProxySettings() {
       const result = await api.testProxy(testUrl);
       setTestResult({
         ok: true,
-        msg: t("settings.proxyTestOk", "连接成功，耗时 {{ms}}ms，状态码 {{status}}", { ms: result.elapsed_ms, status: result.status }),
+        msg: t("settings.proxyTestOk", { ms: result.elapsed_ms, status: result.status }),
       });
     } catch (e: any) {
       setTestResult({ ok: false, msg: formatIpcError(e) });
@@ -1909,13 +1909,13 @@ function ProxySettings() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">{t("settings.proxy", "网络代理")}</CardTitle>
+        <CardTitle className="text-base">{t("settings.proxy")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium">{t("settings.proxyMode", "代理模式")}</p>
-            <p className="text-xs text-muted-foreground">{t("settings.proxyModeDesc", "用于提升部分翻译服务的网络连接稳定性")}</p>
+            <p className="text-sm font-medium">{t("settings.proxyMode")}</p>
+            <p className="text-xs text-muted-foreground">{t("settings.proxyModeDesc")}</p>
           </div>
           <Select value={mode} onValueChange={(v) => {
             setMode(v);
@@ -1923,7 +1923,7 @@ function ProxySettings() {
           }}>
             <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">{t("settings.proxyNone", "无")}</SelectItem>
+              <SelectItem value="none">{t("settings.proxyNone")}</SelectItem>
               <SelectItem value="http">HTTP</SelectItem>
               <SelectItem value="socks5">SOCKS5</SelectItem>
             </SelectContent>
@@ -1934,21 +1934,21 @@ function ProxySettings() {
           <div className="border-t pt-3 space-y-3">
             <div className="grid grid-cols-3 gap-2">
               <div className="col-span-2">
-                <label className="text-xs text-muted-foreground">{t("settings.proxyHost", "主机")}</label>
+                <label className="text-xs text-muted-foreground">{t("settings.proxyHost")}</label>
                 <Input value={host} onChange={(e) => setHost(e.target.value)} placeholder="127.0.0.1" />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground">{t("settings.proxyPort", "端口")}</label>
+                <label className="text-xs text-muted-foreground">{t("settings.proxyPort")}</label>
                 <Input value={port} onChange={(e) => setPort(e.target.value)} placeholder="7890" />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-xs text-muted-foreground">{t("settings.proxyUser", "用户名（可选）")}</label>
+                <label className="text-xs text-muted-foreground">{t("settings.proxyUser")}</label>
                 <Input value={username} onChange={(e) => setUsername(e.target.value)} />
               </div>
               <div>
-                <label className="text-xs text-muted-foreground">{t("settings.proxyPass", "密码（可选）")}</label>
+                <label className="text-xs text-muted-foreground">{t("settings.proxyPass")}</label>
                 <Input
                   type="password"
                   value={password}
@@ -1959,12 +1959,12 @@ function ProxySettings() {
             </div>
             <Button size="sm" disabled={saving} onClick={() => save(mode, host, port, username, password)}>
               {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-              {t("common.save", "保存")}
+              {t("common.save")}
             </Button>
 
             {/* 代理测试 */}
             <div className="border-t pt-3 space-y-2">
-              <label className="text-xs text-muted-foreground">{t("settings.proxyTestUrl", "测试网址")}</label>
+              <label className="text-xs text-muted-foreground">{t("settings.proxyTestUrl")}</label>
               <div className="flex gap-2">
                 <Input
                   value={testUrl}
@@ -1974,7 +1974,7 @@ function ProxySettings() {
                 />
                 <Button size="sm" variant="secondary" disabled={testing} onClick={handleTest}>
                   {testing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-                  {t("settings.proxyTest", "测试连接")}
+                  {t("settings.proxyTest")}
                 </Button>
               </div>
               {testResult && (
@@ -2019,8 +2019,8 @@ function ContextMenuSettings() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-sm font-medium">{t("settings.videoContextMenu", "视频右键菜单")}</p>
-          <p className="text-xs text-muted-foreground">{t("settings.videoContextMenuDesc", "右键视频文件添加\"快速翻译\"选项")}</p>
+          <p className="text-sm font-medium">{t("settings.videoContextMenu")}</p>
+          <p className="text-xs text-muted-foreground">{t("settings.videoContextMenuDesc")}</p>
         </div>
         <Button
           size="sm"
@@ -2034,14 +2034,14 @@ function ContextMenuSettings() {
             refresh();
           }}
         >
-          {videoRegistered ? t("settings.unregister", "注销") : t("settings.register", "注册")}
+          {videoRegistered ? t("settings.unregister") : t("settings.register")}
         </Button>
       </div>
 
       <div className="border-t pt-3 flex items-center justify-between">
         <div>
-          <p className="text-sm font-medium">{t("settings.subtitleContextMenu", "字幕右键菜单")}</p>
-          <p className="text-xs text-muted-foreground">{t("settings.subtitleContextMenuDesc", "右键字幕文件添加\"编辑字幕\"选项")}</p>
+          <p className="text-sm font-medium">{t("settings.subtitleContextMenu")}</p>
+          <p className="text-xs text-muted-foreground">{t("settings.subtitleContextMenuDesc")}</p>
         </div>
         <Button
           size="sm"
@@ -2055,7 +2055,7 @@ function ContextMenuSettings() {
             refresh();
           }}
         >
-          {subtitleRegistered ? t("settings.unregister", "注销") : t("settings.register", "注册")}
+          {subtitleRegistered ? t("settings.unregister") : t("settings.register")}
         </Button>
       </div>
 
@@ -2076,7 +2076,7 @@ function ContextMenuSettings() {
             refresh();
           }}
         >
-          {folderRegistered ? t("settings.unregister", "注销") : t("settings.register", "注册")}
+          {folderRegistered ? t("settings.unregister") : t("settings.register")}
         </Button>
       </div>
     </div>
@@ -2112,13 +2112,13 @@ function DeveloperSettings() {
 
   const handleSaveTestVersion = useCallback(async () => {
     await setTestVersionOverride(versionInput.trim());
-    toast.success(t("settings.testVersionSaved", "测试版本号已保存，点击检查更新生效"));
+    toast.success(t("settings.testVersionSaved"));
   }, [versionInput, setTestVersionOverride, t]);
 
   const handleClearTestVersion = useCallback(async () => {
     setVersionInput("");
     await setTestVersionOverride("");
-    toast.info(t("settings.testVersionCleared", "已清除测试版本号，恢复真实版本"));
+    toast.info(t("settings.testVersionCleared"));
   }, [setTestVersionOverride, t]);
   const [crashDir, setCrashDir] = useState<string>("");
   const [crashCount, setCrashCount] = useState<number>(0);
@@ -2168,16 +2168,16 @@ function DeveloperSettings() {
     try {
       await api.openPath(crashDir);
     } catch (e) {
-      toast.error(t("settings.openCrashDirFailed", "打开目录失败"));
+      toast.error(t("settings.openCrashDirFailed"));
     }
   }, [crashDir, t]);
 
   const handleOpenDevtools = useCallback(async () => {
     try {
       await api.toggleDevtools(true);
-      toast.success(t("settings.devtoolsOpened", "DevTools 已打开"));
+      toast.success(t("settings.devtoolsOpened"));
     } catch (e) {
-      toast.error(t("settings.devtoolsFailed", "打开 DevTools 失败"));
+      toast.error(t("settings.devtoolsFailed"));
     }
   }, [t]);
 
@@ -2186,7 +2186,7 @@ function DeveloperSettings() {
     try {
       await api.openPath(promptFailDir);
     } catch (e) {
-      toast.error(t("settings.openPromptFailDirFailed", "打开目录失败"));
+      toast.error(t("settings.openPromptFailDirFailed"));
     }
   }, [promptFailDir, t]);
 
@@ -2195,7 +2195,7 @@ function DeveloperSettings() {
     try {
       await api.openPath(apiDebugDir);
     } catch (e) {
-      toast.error(t("settings.openApiDebugDirFailed", "打开目录失败"));
+      toast.error(t("settings.openApiDebugDirFailed"));
     }
   }, [apiDebugDir, t]);
 
@@ -2212,9 +2212,9 @@ function DeveloperSettings() {
     try {
       const n = await api.clearCrashLogs();
       refreshCrashCount();
-      toast.success(t("settings.clearLogsOk", "已清空 {{count}} 个日志", { count: n }));
+      toast.success(t("settings.clearLogsOk", { count: n }));
     } catch (e) {
-      toast.error(t("settings.clearLogsFailed", "清空失败"));
+      toast.error(t("settings.clearLogsFailed"));
     }
   }, [refreshCrashCount, t]);
 
@@ -2222,9 +2222,9 @@ function DeveloperSettings() {
     try {
       const n = await api.clearPromptFailLogs();
       refreshPromptFailLogs();
-      toast.success(t("settings.clearLogsOk", "已清空 {{count}} 个日志", { count: n }));
+      toast.success(t("settings.clearLogsOk", { count: n }));
     } catch (e) {
-      toast.error(t("settings.clearLogsFailed", "清空失败"));
+      toast.error(t("settings.clearLogsFailed"));
     }
   }, [refreshPromptFailLogs, t]);
 
@@ -2232,9 +2232,9 @@ function DeveloperSettings() {
     try {
       const n = await api.clearApiDebugLogs();
       api.listApiDebugLogs().then((logs) => setApiDebugCount(logs.length)).catch(() => setApiDebugCount(0));
-      toast.success(t("settings.clearLogsOk", "已清空 {{count}} 个日志", { count: n }));
+      toast.success(t("settings.clearLogsOk", { count: n }));
     } catch (e) {
-      toast.error(t("settings.clearLogsFailed", "清空失败"));
+      toast.error(t("settings.clearLogsFailed"));
     }
   }, [t]);
 
@@ -2246,8 +2246,8 @@ function DeveloperSettings() {
       const content = await api.readPromptFailLog(name);
       setLogContent(content);
     } catch (e) {
-      toast.error(t("settings.readPromptFailFailed", "读取日志失败"));
-      setLogContent(t("settings.readPromptFailFailed", "读取日志失败"));
+      toast.error(t("settings.readPromptFailFailed"));
+      setLogContent(t("settings.readPromptFailFailed"));
     } finally {
       setLoadingLog(false);
     }
@@ -2256,14 +2256,14 @@ function DeveloperSettings() {
   const handleDeleteLog = useCallback(async (name: string) => {
     try {
       await api.deletePromptFailLog(name);
-      toast.success(t("settings.deletePromptFailOk", "已删除"));
+      toast.success(t("settings.deletePromptFailOk"));
       if (selectedLog === name) {
         setSelectedLog(null);
         setLogContent("");
       }
       refreshPromptFailLogs();
     } catch (e) {
-      toast.error(t("settings.deletePromptFailFailed", "删除失败"));
+      toast.error(t("settings.deletePromptFailFailed"));
     }
   }, [selectedLog, refreshPromptFailLogs, t]);
 
@@ -2282,8 +2282,8 @@ function DeveloperSettings() {
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-xl font-semibold">{t("settings.developer", "开发者选项")}</h2>
-        <p className="text-sm text-muted-foreground mt-1">{t("settings.developerDesc", "调试与诊断工具")}</p>
+        <h2 className="text-xl font-semibold">{t("settings.developer")}</h2>
+        <p className="text-sm text-muted-foreground mt-1">{t("settings.developerDesc")}</p>
       </div>
 
       {/* 清除缓存 */}
@@ -2313,10 +2313,10 @@ function DeveloperSettings() {
         <CardContent className="pt-6 space-y-3">
           <div className="flex items-center gap-2">
             <Bug className="h-5 w-5 text-muted-foreground" />
-            <h3 className="text-base font-medium">{t("settings.crashLogs", "崩溃日志")}</h3>
+            <h3 className="text-base font-medium">{t("settings.crashLogs")}</h3>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("settings.crashLogsDesc", "程序崩溃时自动生成日志文件，用于诊断问题。")}
+            {t("settings.crashLogsDesc")}
           </p>
           {crashDir && (
             <p className="text-xs text-muted-foreground font-mono break-all bg-muted/50 rounded px-2 py-1">
@@ -2326,17 +2326,17 @@ function DeveloperSettings() {
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
               {crashCount > 0
-                ? t("settings.crashCount", { count: crashCount, defaultValue: "{{count}} 个崩溃日志" })
-                : t("settings.noCrashes", "暂无崩溃日志")}
+                ? t("settings.crashCount", { count: crashCount })
+                : t("settings.noCrashes")}
             </span>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={handleClearCrashLogs} disabled={!crashDir || crashCount === 0}>
                 <Trash2 className="h-4 w-4 mr-1" />
-                {t("settings.clearLogs", "清空")}
+                {t("settings.clearLogs")}
               </Button>
               <Button size="sm" variant="outline" onClick={handleOpenCrashDir} disabled={!crashDir}>
                 <FolderOpen className="h-4 w-4 mr-1" />
-                {t("settings.openCrashDir", "打开目录")}
+                {t("settings.openCrashDir")}
               </Button>
             </div>
           </div>
@@ -2348,10 +2348,10 @@ function DeveloperSettings() {
         <CardContent className="pt-6 space-y-3">
           <div className="flex items-center gap-2">
             <FileText className="h-5 w-5 text-muted-foreground" />
-            <h3 className="text-base font-medium">{t("settings.promptFailLogs", "Prompt 失败日志")}</h3>
+            <h3 className="text-base font-medium">{t("settings.promptFailLogs")}</h3>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("settings.promptFailLogsDesc", "翻译对齐失败时自动记录发送的 prompt 和模型返回内容，用于诊断翻译问题。")}
+            {t("settings.promptFailLogsDesc")}
           </p>
           {promptFailDir && (
             <p className="text-xs text-muted-foreground font-mono break-all bg-muted/50 rounded px-2 py-1">
@@ -2361,17 +2361,17 @@ function DeveloperSettings() {
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
               {promptFailLogs.length > 0
-                ? t("settings.promptFailCount", { count: promptFailLogs.length, defaultValue: "{{count}} 个失败日志" })
-                : t("settings.noPromptFails", "暂无失败日志")}
+                ? t("settings.promptFailCount", { count: promptFailLogs.length })
+                : t("settings.noPromptFails")}
             </span>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={handleClearPromptFailLogs} disabled={!promptFailDir || promptFailLogs.length === 0}>
                 <Trash2 className="h-4 w-4 mr-1" />
-                {t("settings.clearLogs", "清空")}
+                {t("settings.clearLogs")}
               </Button>
               <Button size="sm" variant="outline" onClick={handleOpenPromptFailDir} disabled={!promptFailDir}>
                 <FolderOpen className="h-4 w-4 mr-1" />
-                {t("settings.openPromptFailDir", "打开目录")}
+                {t("settings.openPromptFailDir")}
               </Button>
             </div>
           </div>
@@ -2432,7 +2432,7 @@ function DeveloperSettings() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-muted-foreground" />
-              <h3 className="text-base font-medium">{t("settings.apiDebugLogs", "翻译日志")}</h3>
+              <h3 className="text-base font-medium">{t("settings.apiDebugLogs")}</h3>
             </div>
             <input
               type="checkbox"
@@ -2443,11 +2443,11 @@ function DeveloperSettings() {
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("settings.apiDebugLogsDesc", "开启后记录所有翻译 API 的请求和响应数据。仅在开发者模式下生效。")}
+            {t("settings.apiDebugLogsDesc")}
           </p>
           {!devMode && (
             <p className="text-xs text-orange-600">
-              {t("settings.apiDebugRequiresDevMode", "需先开启开发者模式才能使用此功能")}
+              {t("settings.apiDebugRequiresDevMode")}
             </p>
           )}
           {apiDebugDir && (
@@ -2458,17 +2458,17 @@ function DeveloperSettings() {
           <div className="flex items-center justify-between">
             <span className="text-xs text-muted-foreground">
               {apiDebugCount > 0
-                ? t("settings.apiDebugCount", { count: apiDebugCount, defaultValue: "{{count}} 个调试日志" })
-                : t("settings.noApiDebugLogs", "暂无调试日志")}
+                ? t("settings.apiDebugCount", { count: apiDebugCount })
+                : t("settings.noApiDebugLogs")}
             </span>
             <div className="flex gap-2">
               <Button size="sm" variant="outline" onClick={handleClearApiDebugLogs} disabled={!apiDebugDir || apiDebugCount === 0}>
                 <Trash2 className="h-4 w-4 mr-1" />
-                {t("settings.clearLogs", "清空")}
+                {t("settings.clearLogs")}
               </Button>
               <Button size="sm" variant="outline" onClick={handleOpenApiDebugDir} disabled={!apiDebugDir}>
                 <FolderOpen className="h-4 w-4 mr-1" />
-                {t("settings.openApiDebugDir", "打开文件夹")}
+                {t("settings.openApiDebugDir")}
               </Button>
             </div>
           </div>
@@ -2481,7 +2481,7 @@ function DeveloperSettings() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Languages className="h-5 w-5 text-muted-foreground" />
-              <h3 className="text-base font-medium">{t("settings.namePrecision", "人名精译")}</h3>
+              <h3 className="text-base font-medium">{t("settings.namePrecision")}</h3>
             </div>
             <input
               type="checkbox"
@@ -2491,23 +2491,23 @@ function DeveloperSettings() {
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("settings.namePrecisionDesc", "翻译前自动扫描字幕提取人名，建立统一译名表注入每个翻译批次，保证跨批次人名一致。同时要求 AI 在译文中标记人名，翻译后自动检测不一致并修正。")}
+            {t("settings.namePrecisionDesc")}
           </p>
           <div className="space-y-1 text-xs text-muted-foreground">
-            <p>• {t("settings.namePrecisionFlow1", "预扫描：翻译前用一次 API 调用从全部字幕中提取人名，按模型大小自动分段")}</p>
-            <p>• {t("settings.namePrecisionFlow2", "译名表注入：提取的人名表注入每个翻译批次的 system prompt，所有批次使用同一份译名表")}</p>
-            <p>• {t("settings.namePrecisionFlow3", "人名标记：AI 在译文中用 <name=Kaleb>卡莱布</name> 标记人名，翻译后自动检测不一致")}</p>
-            <p>• {t("settings.namePrecisionFlow4", "后处理修正：发现同一人名的多个译名时，按频率选定标准译名，全局替换并剥离标签")}</p>
+            <p>• {t("settings.namePrecisionFlow1")}</p>
+            <p>• {t("settings.namePrecisionFlow2")}</p>
+            <p>• {t("settings.namePrecisionFlow3")}</p>
+            <p>• {t("settings.namePrecisionFlow4")}</p>
           </div>
           <div className="space-y-1 text-xs">
             <p className="text-orange-600">
-              {t("settings.namePrecisionCost", "额外开销：翻译前多一次 API 调用（约 3-15 秒），翻译时多约 5% token 消耗（人名标记标签）")}
+              {t("settings.namePrecisionCost")}
             </p>
             <p className="text-green-600">
-              {t("settings.namePrecisionBenefit", "优点：彻底解决跨批次人名翻译不一致问题，尤其适合教学/纪录片等分批引入人名的长视频")}
+              {t("settings.namePrecisionBenefit")}
             </p>
             <p className="text-muted-foreground">
-              {t("settings.namePrecisionNote", "仅 AI 翻译引擎支持。启用后退出开发模式仍保持启用，可在下方开关随时关闭。")}
+              {t("settings.namePrecisionNote")}
             </p>
           </div>
         </CardContent>
@@ -2518,14 +2518,14 @@ function DeveloperSettings() {
         <CardContent className="pt-6 space-y-3">
           <div className="flex items-center gap-2">
             <Terminal className="h-5 w-5 text-muted-foreground" />
-            <h3 className="text-base font-medium">{t("settings.devtoolsTitle", "开发者工具")}</h3>
+            <h3 className="text-base font-medium">{t("settings.devtoolsTitle")}</h3>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("settings.devtoolsDesc", "打开浏览器开发者工具，查看控制台日志、网络请求和元素。")}
+            {t("settings.devtoolsDesc")}
           </p>
           <Button size="sm" variant="outline" onClick={handleOpenDevtools}>
             <Terminal className="h-4 w-4 mr-1" />
-            {t("settings.openDevtools", "打开 DevTools")}
+            {t("settings.openDevtools")}
           </Button>
         </CardContent>
       </Card>
@@ -2535,10 +2535,10 @@ function DeveloperSettings() {
         <CardContent className="pt-6 space-y-3">
           <div className="flex items-center gap-2">
             <RefreshCw className="h-5 w-5 text-muted-foreground" />
-            <h3 className="text-base font-medium">{t("settings.updateChannel", "更新通道")}</h3>
+            <h3 className="text-base font-medium">{t("settings.updateChannel")}</h3>
           </div>
           <p className="text-sm text-muted-foreground">
-            {t("settings.updateChannelDesc", "选择更新检查的通道。稳定版只收到正式发布，每日构建收到最新开发构建。")}
+            {t("settings.updateChannelDesc")}
           </p>
           <div className="flex items-center gap-3">
             <Select
@@ -2549,13 +2549,13 @@ function DeveloperSettings() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="stable">{t("settings.updateChannelStable", "稳定版")}</SelectItem>
-                <SelectItem value="nightly">{t("settings.updateChannelNightly", "每日构建")}</SelectItem>
+                <SelectItem value="stable">{t("settings.updateChannelStable")}</SelectItem>
+                <SelectItem value="nightly">{t("settings.updateChannelNightly")}</SelectItem>
               </SelectContent>
             </Select>
             {updateChannel === "nightly" && (
               <span className="text-xs text-orange-600">
-                {t("settings.updateChannelNightlyWarn", "可能不稳定，仅供测试")}
+                {t("settings.updateChannelNightlyWarn")}
               </span>
             )}
             <Button
@@ -2566,17 +2566,17 @@ function DeveloperSettings() {
               className="ml-auto"
             >
               {updateChecking ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-              {t("settings.checkUpdate", "检查更新")}
+              {t("settings.checkUpdate")}
             </Button>
           </div>
           {channelCheckResult === "latest" && (
             <p className="text-xs text-green-600">
-              {t("settings.updateLatest", "当前已是最新版本")}
+              {t("settings.updateLatest")}
             </p>
           )}
           {channelCheckResult === "failed" && (
             <p className="text-xs text-red-600">
-              {t("settings.updateCheckFailed", "检查更新失败，请稍后重试")}
+              {t("settings.updateCheckFailed")}
             </p>
           )}
 
@@ -2584,16 +2584,16 @@ function DeveloperSettings() {
           <div className="space-y-2 pt-2 border-t">
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">
-                {t("settings.testVersion", "测试版本号")}
+                {t("settings.testVersion")}
               </span>
               {testVersionOverride && (
                 <span className="text-xs text-blue-600">
-                  {t("settings.testVersionActive", "当前生效")}: {testVersionOverride}
+                  {t("settings.testVersionActive")}: {testVersionOverride}
                 </span>
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              {t("settings.testVersionDesc", "填入版本号模拟旧版本，测试更新流程。留空恢复真实版本。")}
+              {t("settings.testVersionDesc")}
             </p>
             <div className="flex items-center gap-2">
               <Input
@@ -2603,18 +2603,18 @@ function DeveloperSettings() {
                 className="w-40"
               />
               <Button size="sm" variant="outline" onClick={handleSaveTestVersion} disabled={!versionInput.trim()}>
-                {t("settings.testVersionSave", "保存")}
+                {t("settings.testVersionSave")}
               </Button>
               {testVersionOverride && (
                 <Button size="sm" variant="ghost" onClick={handleClearTestVersion}>
-                  {t("settings.testVersionClear", "清除")}
+                  {t("settings.testVersionClear")}
                 </Button>
               )}
             </div>
           </div>
 
           <p className="text-xs text-muted-foreground">
-            {t("settings.updateChannelNote", "切换后下次检查更新时生效（手动检查或重启后自动检查）。")}
+            {t("settings.updateChannelNote")}
           </p>
         </CardContent>
       </Card>

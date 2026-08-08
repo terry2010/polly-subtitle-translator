@@ -222,7 +222,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
         "batch-queue-complete",
         (e) => {
           toast.success(
-            `批量翻译完成：共 ${e.payload.total} 个，成功 ${e.payload.done}，跳过 ${e.payload.skipped}，失败 ${e.payload.failed}`
+            i18n.t("batch.queueComplete", { total: e.payload.total, done: e.payload.done, skipped: e.payload.skipped, failed: e.payload.failed })
           );
         }
       )
@@ -257,7 +257,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   submitFiles: async (paths) => {
     try {
       const ids = await api.batchTranslateFiles(paths);
-      toast.success(`已添加 ${ids.length} 个文件到批量翻译队列`);
+      toast.success(i18n.t("batch.filesAdded", { count: ids.length }));
       await get().refreshStatus();
     } catch (e: any) {
       toast.error(formatIpcError(e));
@@ -267,7 +267,7 @@ export const useBatchStore = create<BatchState>((set, get) => ({
   submitSubtitleFiles: async (paths) => {
     try {
       const ids = await api.batchTranslateFiles(paths);
-      toast.success(`已添加 ${ids.length} 个字幕文件到批量翻译队列`);
+      toast.success(i18n.t("batch.subtitlesAdded", { count: ids.length }));
       await get().refreshStatus();
     } catch (e: any) {
       toast.error(formatIpcError(e));

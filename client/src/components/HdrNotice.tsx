@@ -31,7 +31,7 @@ export function HdrNotice() {
         </span>
         {hdrInfo.is_dolby_vision && (
           <span className="ml-2 text-xs text-orange-600">
-            Dolby Vision 内容可能需要兼容播放器
+            {t("player.dolbyVisionNotice")}
           </span>
         )}
       </div>

@@ -102,7 +102,7 @@ function SortableRow({
       <Input
         value={item.title}
         onChange={(e) => onTitleChange(e.target.value)}
-        placeholder={t("subtitle.streamTitlePlaceholder", "字幕标题")}
+        placeholder={t("subtitle.streamTitlePlaceholder")}
         className="h-7 flex-1 text-xs"
         disabled={item.isGraphic}
       />
@@ -121,8 +121,8 @@ function SortableRow({
         className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
         onClick={onExport}
         disabled={exporting || item.isGraphic}
-        aria-label={t("common.export", "导出")}
-        title={item.isGraphic ? t("subtitle.graphicSubtitleNoExport", "图形字幕不支持导出") : t("common.export", "导出")}
+        aria-label={t("common.export")}
+        title={item.isGraphic ? t("subtitle.graphicSubtitleNoExport") : t("common.export")}
       >
         {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
       </button>
@@ -131,7 +131,7 @@ function SortableRow({
       <button
         className="flex-shrink-0 text-muted-foreground hover:text-destructive transition-colors"
         onClick={onRemove}
-        aria-label={t("common.delete", "删除")}
+        aria-label={t("common.delete")}
       >
         <Trash2 className="h-4 w-4" />
       </button>
@@ -301,13 +301,13 @@ export function SubtitleStreamEditorDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{t("subtitle.streamEditor", "编辑字幕流")}</DialogTitle>
+          <DialogTitle>{t("subtitle.streamEditor")}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
           {items.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-8">
-              {t("subtitle.streamEditEmpty", "所有字幕流已被删除，请至少保留一条")}
+              {t("subtitle.streamEditEmpty")}
             </p>
           ) : (
             <DndContext
@@ -341,24 +341,24 @@ export function SubtitleStreamEditorDialog({
         {/* 底部按钮 */}
         <div className="flex justify-end gap-2 pt-2 border-t">
           <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
-            {t("common.cancel", "取消")}
+            {t("common.cancel")}
           </Button>
           {confirming ? (
             <>
               <span className="text-xs text-destructive self-center mr-2">
-                {t("subtitle.streamEditConfirmHint", "此操作不可撤销，确认要保存吗？")}
+                {t("subtitle.streamEditConfirmHint")}
               </span>
               <Button variant="outline" size="sm" onClick={() => setConfirming(false)}>
-                {t("common.no", "否")}
+                {t("common.no")}
               </Button>
               <Button size="sm" variant="destructive" onClick={handleSave} disabled={saving}>
                 {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
-                {t("common.confirm", "确认保存")}
+                {t("common.confirm")}
               </Button>
             </>
           ) : (
             <Button size="sm" onClick={() => setConfirming(true)} disabled={!hasChanges || saving}>
-              {t("common.save", "保存")}
+              {t("common.save")}
             </Button>
           )}
         </div>

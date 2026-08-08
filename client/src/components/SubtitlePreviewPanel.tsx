@@ -11,7 +11,7 @@ import { useTranslateStore } from "../stores/translateStore";
 import { useVideoStore } from "../stores/videoStore";
 import { useDevModeStore } from "../stores/devModeStore";
 import { AutoTextarea } from "./AutoTextarea";
-import { api } from "../lib/api";
+import { api, formatIpcError } from "../lib/api";
 import { useOfficialTranslateStore } from "../stores/officialTranslateStore";
 import { error } from "../lib/logger";
 import type { SubtitleEntry } from "../lib/ipc-types";
@@ -104,9 +104,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   const [offsetRowIndex, setOffsetRowIndex] = useState<number | null>(null);
   const [offsetValue, setOffsetValue] = useState("");
   const [offsetEndIndex, setOffsetEndIndex] = useState("");
-  const [offsetAppliedMsg, setOffsetAppliedMsg] = useState<string | null>(null);
+  const [offsetAppliedMsg, setOffsetAppliedMsg] = useState<{ text: string; hasWarning: boolean } | null>(null);
   // 已应用过偏移的行 → 偏移提示消息（永久显示）
-  const [offsetAppliedRows, setOffsetAppliedRows] = useState<Map<number, string>>(new Map());
+  const [offsetAppliedRows, setOffsetAppliedRows] = useState<Map<number, { text: string; hasWarning: boolean }>>(new Map());
   // 已应用过偏移的行 → 上次填入的偏移值和结束编号（再次打开时恢复）
   const [offsetLastInput, setOffsetLastInput] = useState<Map<number, { value: string; endIndex: string }>>(new Map());
   // 超出视频时长确认弹窗
@@ -367,7 +367,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   const commitOffset = useCallback((offsetMs: number, fromIndex: number, toIndex: number, offsetSec: number) => {
     store.applyTimeOffset(offsetMs, fromIndex, toIndex);
     // 构建提示消息
-    const msgs: string[] = [`已偏移 ${offsetSec > 0 ? "+" : ""}${offsetSec} 秒`];
+    const msgs: { text: string; hasWarning: boolean }[] = [
+      { text: t("subtitle.offsetSec", { delta: `${offsetSec > 0 ? "+" : ""}${offsetSec}` }), hasWarning: false },
+    ];
     // 本地计算裁剪和重叠（基于偏移前的 file）
     if (file) {
       let clippedCount = 0;
@@ -388,14 +390,14 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           break;
         }
       }
-      if (clippedCount > 0) msgs.push(`${clippedCount} 条开始时间裁剪到 0`);
-      if (overlapCount > 0) msgs.push(`${overlapCount} 条开始时间早于上一条`);
+      if (clippedCount > 0) msgs.push({ text: t("subtitle.clippedCount", { count: clippedCount }), hasWarning: true });
+      if (overlapCount > 0) msgs.push({ text: t("subtitle.overlapCount", { count: overlapCount }), hasWarning: true });
     }
-    const msgStr = msgs.join("，");
-    setOffsetAppliedRows((prev) => new Map(prev).set(fromIndex, msgStr));
+    const msgStr = msgs.map((m) => m.text).join(t("common.separator"));
+    setOffsetAppliedRows((prev) => new Map(prev).set(fromIndex, { text: msgStr, hasWarning: msgs.some((m) => m.hasWarning) }));
     setOffsetLastInput((prev) => new Map(prev).set(fromIndex, { value: offsetValue, endIndex: offsetEndIndex }));
-    setOffsetAppliedMsg(msgStr);
-  }, [file, store, computeOffsetEntries, offsetValue, offsetEndIndex]);
+    setOffsetAppliedMsg({ text: msgStr, hasWarning: msgs.some((m) => m.hasWarning) });
+  }, [file, store, computeOffsetEntries, offsetValue, offsetEndIndex, t]);
 
   // 执行时间轴偏移：先本地检查，再决定是否应用
   const handleApplyOffset = useCallback(() => {
@@ -485,7 +487,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
   const handleResetClick = useCallback(() => {
     const steps = store.undoStack.length;
     if (steps === 0) {
-      toast.info(t("subtitle.resetNoChanges", "没有需要重置的修改"));
+      toast.info(t("subtitle.resetNoChanges"));
       return;
     }
     setResetSteps(steps);
@@ -503,7 +505,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
     setEditingIndex(null);
     setShowFindReplace(false);
     setResetDialogOpen(false);
-    toast.success(t("subtitle.resetDone", "已重置为初始状态"));
+    toast.success(t("subtitle.resetDone"));
   }, [store, t]);
 
   // 右键菜单处理
@@ -549,10 +551,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           translated: result.translated_text,
           failed: false,
         });
-        toast.success(t("subtitle.translateOneSuccess", "单条翻译完成"));
+        toast.success(t("subtitle.translateOneSuccess"));
       } catch (e: any) {
         error("官方单条翻译失败:", e);
-        toast.error(typeof e === "string" ? e : (e?.message || "单条翻译失败"));
+        toast.error(typeof e === "string" ? e : formatIpcError(e as any));
       }
       return;
     }
@@ -574,7 +576,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       );
     } catch (e: any) {
       error("翻译单条失败:", e);
-      toast.error(typeof e === "string" ? e : (e?.message || "翻译单条失败"));
+      toast.error(typeof e === "string" ? e : formatIpcError(e as any));
     }
   }, [file, translateStore, store, closeContextMenu, t]);
 
@@ -698,8 +700,8 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
     return (
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <div className="text-center">
-          <p className="text-sm">{t("subtitle.empty", "未加载字幕")}</p>
-          <p className="mt-1 text-xs opacity-60">{t("subtitle.emptyHint", "请打开字幕文件或从视频提取字幕")}</p>
+          <p className="text-sm">{t("subtitle.empty")}</p>
+          <p className="mt-1 text-xs opacity-60">{t("subtitle.emptyHint")}</p>
         </div>
       </div>
     );
@@ -719,7 +721,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
         <Button size="sm" variant="ghost" onClick={() => setShowFindReplace(!showFindReplace)} className="h-7 px-2">
           <Search className="h-3.5 w-3.5" />
         </Button>
-        <Button size="sm" variant="ghost" onClick={handleResetClick} disabled={store.undoStack.length === 0} className="h-7 px-2" title={t("subtitle.reset", "重置")}>
+        <Button size="sm" variant="ghost" onClick={handleResetClick} disabled={store.undoStack.length === 0} className="h-7 px-2" title={t("subtitle.reset")}>
           <RotateCcw className="h-3.5 w-3.5" />
         </Button>
         {/* 开发者模式：翻译状态统计图标 */}
@@ -814,7 +816,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
               size="sm"
               variant="ghost"
               className="h-7 w-7 p-0"
-              title={t("subtitle.exportSourceTxt", "导出源语言字幕（txt）")}
+              title={t("subtitle.exportSourceTxt")}
               onClick={async () => {
                 try {
                   const outputPath = await withPlayerHidden(() => save({
@@ -830,9 +832,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       return `[${start} --> ${end}] ${e.text}`;
                     });
                   await writeTextFile(outputPath, lines.join("\n"));
-                  toast.success(t("subtitle.exportSourceTxtOk", "已导出源语言字幕"));
+                  toast.success(t("subtitle.exportSourceTxtOk"));
                 } catch (e) {
-                  toast.error(t("subtitle.exportFailed", "导出失败") + ": " + String(e));
+                  toast.error(t("subtitle.exportFailed") + ": " + String(e));
                 }
               }}
             >
@@ -842,7 +844,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
               size="sm"
               variant="ghost"
               className="h-7 w-7 p-0"
-              title={t("subtitle.exportTranslatedTxt", "导出翻译后字幕（txt）")}
+              title={t("subtitle.exportTranslatedTxt")}
               onClick={async () => {
                 try {
                   const outputPath = await withPlayerHidden(() => save({
@@ -858,9 +860,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       return `[${start} --> ${end}] ${e.translated || e.text}`;
                     });
                   await writeTextFile(outputPath, lines.join("\n"));
-                  toast.success(t("subtitle.exportTranslatedTxtOk", "已导出翻译后字幕"));
+                  toast.success(t("subtitle.exportTranslatedTxtOk"));
                 } catch (e) {
-                  toast.error(t("subtitle.exportFailed", "导出失败") + ": " + String(e));
+                  toast.error(t("subtitle.exportFailed") + ": " + String(e));
                 }
               }}
             >
@@ -877,10 +879,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             className="h-7 px-2 text-xs"
             onClick={() => store.swapOriginalTranslated()}
             disabled={!file.entries.some((e) => e.translated)}
-            title={t("subtitle.swapOriginalTranslated", "切换原译")}
+            title={t("subtitle.swapOriginalTranslated")}
           >
             <ArrowLeftRight className="mr-1 h-3.5 w-3.5" />
-            {t("subtitle.swapOriginalTranslated", "切换原译")}
+            {t("subtitle.swapOriginalTranslated")}
           </Button>
         )}
         {/* 拆分字幕 / 取消拆分 */}
@@ -890,10 +892,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             variant="ghost"
             className="h-7 px-2 text-xs"
             onClick={() => store.unsplitBilingual()}
-            title={t("subtitle.unsplitBilingual", "取消拆分")}
+            title={t("subtitle.unsplitBilingual")}
           >
             <SplitSquareHorizontal className="mr-1 h-3.5 w-3.5" />
-            {t("subtitle.unsplitBilingual", "取消拆分")}
+            {t("subtitle.unsplitBilingual")}
           </Button>
         ) : (
           bilingualDetect && (
@@ -902,10 +904,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
               variant="ghost"
               className="h-7 px-2 text-xs"
               onClick={() => store.splitBilingual()}
-              title={t("subtitle.splitBilingual", "拆分字幕")}
+              title={t("subtitle.splitBilingual")}
             >
               <SplitSquareHorizontal className="mr-1 h-3.5 w-3.5" />
-              {t("subtitle.splitBilingual", "拆分字幕")}
+              {t("subtitle.splitBilingual")}
             </Button>
           )
         )}
@@ -921,7 +923,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           disabled={!file.entries.some((e) => e.translated)}
         >
           <Eraser className="mr-1 h-3.5 w-3.5" />
-          {t("subtitle.clearTranslations", "清除翻译")}
+          {t("subtitle.clearTranslations")}
         </Button>
         {/* 预览模式选择 */}
         <select
@@ -929,9 +931,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           onChange={(e) => setPreviewMode(e.target.value as PreviewMode)}
           className="h-7 rounded border border-input bg-transparent px-2 text-xs"
         >
-          <option value="original">{t("subtitle.modeOriginal", "原文")}</option>
-          <option value="bilingual">{t("subtitle.modeBilingual", "双语")}</option>
-          <option value="translated">{t("subtitle.modeTranslated", "仅译文")}</option>
+          <option value="original">{t("subtitle.modeOriginal")}</option>
+          <option value="bilingual">{t("subtitle.modeBilingual")}</option>
+          <option value="translated">{t("subtitle.modeTranslated")}</option>
         </select>
         <div className="w-px h-4 bg-border mx-1" />
         {/* 已编辑条目计数 + 跳转按钮 */}
@@ -960,7 +962,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
               size="sm"
               variant="ghost"
               className="h-7 w-7 p-0 text-blue-600 hover:text-blue-700 relative"
-              title={t("subtitle.jumpToEdited", "跳转到已编辑条目")}
+              title={t("subtitle.jumpToEdited")}
               onClick={jumpToNextEdited}
             >
               <Pencil className="h-4 w-4" />
@@ -972,7 +974,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
         })()}
         <Button size="sm" onClick={handleSave} className="h-7">
           <Save className="mr-1 h-3.5 w-3.5" />
-          {t("subtitle.save", "保存")}
+          {t("subtitle.save")}
         </Button>
       </div>
 
@@ -984,14 +986,14 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           onMouseLeave={() => { isMouseOverPanelRef.current = false; uiState.mouseInSubtitleEditor = false; }}
         >
           <Input
-            placeholder={t("subtitle.find", "查找")}
+            placeholder={t("subtitle.find")}
             value={store.findQuery}
             onChange={(e) => store.setFindQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") store.findNext(); }}
             className="h-7 w-28 text-xs"
           />
           <Input
-            placeholder={t("subtitle.replace", "替换")}
+            placeholder={t("subtitle.replace")}
             value={store.replaceQuery}
             onChange={(e) => store.setReplaceQuery(e.target.value)}
             className="h-7 w-28 text-xs"
@@ -1002,24 +1004,24 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             onChange={(e) => store.setFindTarget(e.target.value as "all" | "translated" | "original")}
             className="h-7 rounded border border-input bg-transparent px-1 text-xs"
           >
-            <option value="all">{t("subtitle.findTargetAll", "全部")}</option>
-            <option value="translated">{t("subtitle.findTargetTranslated", "译文")}</option>
-            <option value="original">{t("subtitle.findTargetOriginal", "原文")}</option>
+            <option value="all">{t("subtitle.findTargetAll")}</option>
+            <option value="translated">{t("subtitle.findTargetTranslated")}</option>
+            <option value="original">{t("subtitle.findTargetOriginal")}</option>
           </select>
           {/* 查找按钮 */}
           <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => store.findNext()}>
-            {t("subtitle.findBtn", "查找")}
+            {t("subtitle.findBtn")}
           </Button>
           {/* 替换按钮 */}
           <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => store.replaceCurrent()} disabled={store.findMatchEntryIndex == null}>
-            {t("subtitle.replaceOne", "替换")}
+            {t("subtitle.replaceOne")}
           </Button>
           {/* 全部替换 */}
           <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => {
             const n = store.replaceAll();
-            toast.success(t("subtitle.replacedCount", "已替换 {{count}} 条", { count: n }));
+            toast.success(t("subtitle.replacedCount", { count: n }));
           }}>
-            {t("subtitle.replaceAll", "全部替换")}
+            {t("subtitle.replaceAll")}
           </Button>
           {/* 匹配计数 */}
           {store.findMatchCount > 0 && (
@@ -1030,10 +1032,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           {/* 上一个/下一个 */}
           {store.findMatchCount > 1 && (
             <div className="flex gap-0.5">
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => store.findPrev()} title={t("subtitle.findPrev", "上一个")}>
+              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => store.findPrev()} title={t("subtitle.findPrev")}>
                 <ChevronUp className="h-3.5 w-3.5" />
               </Button>
-              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => store.findNext()} title={t("subtitle.findNext", "下一个")}>
+              <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => store.findNext()} title={t("subtitle.findNext")}>
                 <ChevronDown className="h-3.5 w-3.5" />
               </Button>
             </div>
@@ -1090,7 +1092,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     <button
                       onClick={(e) => { e.stopPropagation(); handlePlayFromHere(entry.index); }}
                       className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary hover:text-primary-foreground"
-                      title={t("subtitle.playFromHereHint", "从该字幕开始时刻播放视频")}
+                      title={t("subtitle.playFromHereHint")}
                     >
                       <Play className="h-3 w-3 translate-x-[0.5px]" />
                     </button>
@@ -1103,7 +1105,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                           else openOffsetPanel(entry.index);
                         }}
                         className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/60 transition-opacity hover:bg-primary hover:text-primary-foreground ${offsetRowIndex === entry.index ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
-                        title={t("subtitle.timeOffset", "时间轴偏移")}
+                        title={t("subtitle.timeOffset")}
                       >
                         <Clock className="h-3 w-3" />
                       </button>
@@ -1113,7 +1115,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       <button
                         onClick={(e) => { e.stopPropagation(); handleInsertEntry(entry.index); }}
                         className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-muted-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-primary hover:text-primary-foreground"
-                        title={t("subtitle.insertBelow", "在下方新增字幕")}
+                        title={t("subtitle.insertBelow")}
                       >
                         <Plus className="h-3 w-3" />
                       </button>
@@ -1128,7 +1130,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                         onClick={(e) => { e.stopPropagation(); commitEdit(); }}
                       >
                         <Check className="h-3 w-3 mr-0.5" />
-                        {t("common.done", "完成")}
+                        {t("common.done")}
                       </Button>
                       {editingField === "original" && entry.pre_edit_text != null && (
                         <Button
@@ -1142,16 +1144,16 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                           }}
                         >
                           <RotateCcw className="h-3 w-3 mr-0.5" />
-                          {t("subtitle.restore", "恢复")}
+                          {t("subtitle.restore")}
                         </Button>
                       )}
                       <Button
                         size="sm"
                         variant="outline"
                         className="h-5 px-2 text-xs"
-                        onClick={(e) => { e.stopPropagation(); cancelEdit(entry.index); toast.warning(t("subtitle.editCancelled", "编辑已取消")); }}
+                        onClick={(e) => { e.stopPropagation(); cancelEdit(entry.index); toast.warning(t("subtitle.editCancelled")); }}
                       >
-                        {t("common.cancel", "取消")}
+                        {t("common.cancel")}
                       </Button>
                       <Button
                         size="sm"
@@ -1185,7 +1187,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                           value={entry.text}
                           onChange={(val) => store.editOriginalText(entry.index, val)}
                           className="text-xs px-1 py-0.5 flex-1 resize-none rounded-none rounded-b-sm border-0 border-b border-blue-300 bg-transparent shadow-none focus-visible:ring-0 focus-visible:bg-transparent"
-                          placeholder={t("subtitle.original", "原文")}
+                          placeholder={t("subtitle.original")}
                           onClick={(e) => e.stopPropagation()}
                           onContextMenu={(e) => e.stopPropagation()}
                           onKeyDown={(e) => {
@@ -1219,7 +1221,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                           value={entry.translated}
                           onChange={(val) => store.updateEntry(entry.index, { translated: val })}
                           className="text-xs px-1 py-0.5 flex-1 resize-none rounded-none rounded-b-sm border-0 border-b border-primary/50 bg-transparent shadow-none focus-visible:ring-0 focus-visible:bg-transparent"
-                          placeholder={t("subtitle.translated", "译文")}
+                          placeholder={t("subtitle.translated")}
                           onClick={(e) => e.stopPropagation()}
                           onContextMenu={(e) => e.stopPropagation()}
                           onKeyDown={(e) => {
@@ -1247,7 +1249,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       onClick={(e) => { e.stopPropagation(); store.undoDelete(entry.index); }}
                     >
                       <RotateCcw className="h-3 w-3 mr-0.5" />
-                      {t("subtitle.undoDelete", "撤销删除")}
+                      {t("subtitle.undoDelete")}
                     </Button>
                   </div>
                 ) : (
@@ -1257,7 +1259,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       <div className="flex items-center gap-1">
                         <p
                           className="text-xs line-clamp-1 cursor-text hover:bg-primary/10 rounded px-1 -mx-1 flex-1"
-                          title={t("subtitle.editOriginalHint", "点击编辑原文（编辑后需重新翻译）")}
+                          title={t("subtitle.editOriginalHint")}
                           onClick={(e) => {
                             e.stopPropagation();
                             beginEditOriginal(entry.index);
@@ -1277,7 +1279,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                               });
                             }}
                             className="flex h-4 w-4 flex-shrink-0 items-center justify-center rounded text-blue-600 hover:bg-blue-100"
-                            title={t("subtitle.edited", "已编辑")}
+                            title={t("subtitle.edited")}
                           >
                             <Pencil className="h-3 w-3" />
                           </button>
@@ -1299,7 +1301,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                         className="text-xs text-muted-foreground/50 line-clamp-1 cursor-text hover:bg-primary/10 rounded px-1 -mx-1 italic"
                         onClick={(e) => { e.stopPropagation(); beginEdit(entry.index, entry.translated || ""); }}
                       >
-                        {t("subtitle.pending", "(待翻译)")}
+                        {t("subtitle.pending")}
                       </p>
                     )}
                   </div>
@@ -1310,7 +1312,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     className="mt-1.5 flex items-center gap-2 rounded bg-muted/40 px-2 py-1.5"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    <span className="text-xs text-muted-foreground flex-shrink-0">偏移(秒)</span>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">{t("subtitle.offsetSeconds")}</span>
                     <Input
                       type="number"
                       value={offsetValue}
@@ -1319,7 +1321,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       className="h-6 w-20 text-xs"
                       onKeyDown={(e) => { if (e.key === "Enter") handleApplyOffset(); }}
                     />
-                    <span className="text-xs text-muted-foreground flex-shrink-0">至编号</span>
+                    <span className="text-xs text-muted-foreground flex-shrink-0">{t("subtitle.offsetEndIndex")}</span>
                     <Input
                       type="number"
                       value={offsetEndIndex}
@@ -1327,10 +1329,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       className="h-6 w-16 text-xs"
                     />
                     <Button size="sm" className="h-6 text-xs" onClick={handleApplyOffset} disabled={!offsetValue}>
-                      {t("subtitle.applyOffset", "应用偏移")}
+                      {t("subtitle.applyOffset")}
                     </Button>
                     {offsetAppliedMsg && (
-                      <span className={`text-xs ${offsetAppliedMsg.includes("裁剪") || offsetAppliedMsg.includes("早于") ? "text-orange-600" : "text-green-600"}`}>{offsetAppliedMsg}</span>
+                      <span className={`text-xs ${offsetAppliedMsg.hasWarning ? "text-orange-600" : "text-green-600"}`}>{offsetAppliedMsg.text}</span>
                     )}
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0 ml-auto" onClick={closeOffsetPanel}>
                       <X className="h-3 w-3" />
@@ -1344,8 +1346,8 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Clock className="h-3 w-3 text-muted-foreground" />
-                    <span className={offsetAppliedRows.get(entry.index)?.includes("裁剪") || offsetAppliedRows.get(entry.index)?.includes("早于") ? "text-orange-600" : "text-green-600"}>
-                      {offsetAppliedRows.get(entry.index)}
+                    <span className={offsetAppliedRows.get(entry.index)?.hasWarning ? "text-orange-600" : "text-green-600"}>
+                      {offsetAppliedRows.get(entry.index)?.text}
                     </span>
                   </div>
                 )}
@@ -1374,7 +1376,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     >
                       {/* 开始时间滑块 */}
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16">开始时间</span>
+                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16">{t("subtitle.startTime")}</span>
                         <input
                           type="range"
                           min={startMin}
@@ -1391,7 +1393,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       </div>
                       {/* 结束时间滑块 */}
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16">结束时间</span>
+                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16">{t("subtitle.endTime")}</span>
                         <input
                           type="range"
                           min={endMin}
@@ -1410,32 +1412,32 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                       <div className="flex items-center gap-2">
                         <Button size="sm" className="h-6 text-xs bg-green-600 hover:bg-green-700" onClick={handleInsertDone}>
                           <Check className="h-3 w-3 mr-0.5" />
-                          {t("common.done", "完成")}
+                          {t("common.done")}
                         </Button>
                         <Button size="sm" variant="outline" className="h-6 text-xs" onClick={handleInsertCancel}>
-                          {t("common.cancel", "取消")}
+                          {t("common.cancel")}
                         </Button>
                       </div>
                       {/* 原文编辑 */}
                       <div className="flex items-start gap-2">
-                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16 pt-1">原文</span>
+                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16 pt-1">{t("subtitle.original")}</span>
                         <AutoTextarea
                           value={insertText}
                           onChange={setInsertText}
                           className="text-xs py-1 flex-1 resize-none"
-                          placeholder={t("subtitle.original", "原文")}
+                          placeholder={t("subtitle.original")}
                           onClick={(e) => e.stopPropagation()}
                           onContextMenu={(e) => e.stopPropagation()}
                         />
                       </div>
                       {/* 译文编辑 */}
                       <div className="flex items-start gap-2">
-                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16 pt-1">译文</span>
+                        <span className="text-xs text-muted-foreground flex-shrink-0 w-16 pt-1">{t("subtitle.translated")}</span>
                         <AutoTextarea
                           value={insertTranslated}
                           onChange={setInsertTranslated}
                           className="text-xs py-1 flex-1 resize-none"
-                          placeholder={t("subtitle.translated", "译文")}
+                          placeholder={t("subtitle.translated")}
                           onClick={(e) => e.stopPropagation()}
                           onContextMenu={(e) => e.stopPropagation()}
                         />
@@ -1453,9 +1455,9 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                     >
                       <Plus className="h-3 w-3 text-blue-500" />
                       <span className="text-green-600">
-                        已新增 · {formatTimecode(saved.start_ms)} → {formatTimecode(saved.end_ms)}
+                        {t("subtitle.inserted", { start: formatTimecode(saved.start_ms), end: formatTimecode(saved.end_ms) })}
                       </span>
-                      <span className="text-muted-foreground/50">点击重新编辑</span>
+                      <span className="text-muted-foreground/50">{t("subtitle.clickReEdit")}</span>
                     </div>
                   );
                 })()}
@@ -1475,10 +1477,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent"
             onClick={() => handlePlayFromHere(contextMenu.entryIndex)}
-            title={t("subtitle.playFromHereHint", "从该字幕开始时刻播放视频")}
+            title={t("subtitle.playFromHereHint")}
           >
             <Play className="h-3.5 w-3.5" />
-            {t("subtitle.playFromHere", "从此处播放")}
+            {t("subtitle.playFromHere")}
           </button>
           <div className="my-1 h-px bg-border" />
           <button
@@ -1488,8 +1490,8 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           >
             <Languages className="h-3.5 w-3.5" />
             {file.entries.find((e) => e.index === contextMenu.entryIndex)?.translated
-              ? t("subtitle.retranslateOne", "重新翻译字幕")
-              : t("subtitle.translateOne", "翻译此条字幕")}
+              ? t("subtitle.retranslateOne")
+              : t("subtitle.translateOne")}
           </button>
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent"
@@ -1500,7 +1502,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             }}
           >
             <Edit3 className="h-3.5 w-3.5" />
-            {t("subtitle.editTranslation", "编辑译文")}
+            {t("subtitle.editTranslation")}
           </button>
           <div className="my-1 h-px bg-border" />
           <button
@@ -1508,7 +1510,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             onClick={() => handleCopyOriginal(contextMenu.entryIndex)}
           >
             <Copy className="h-3.5 w-3.5" />
-            {t("subtitle.copyOriginal", "复制原文")}
+            {t("subtitle.copyOriginal")}
           </button>
           <button
             className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-xs hover:bg-accent disabled:opacity-50"
@@ -1516,7 +1518,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             disabled={!file.entries.find((e) => e.index === contextMenu.entryIndex)?.translated}
           >
             <Copy className="h-3.5 w-3.5" />
-            {t("subtitle.copyTranslated", "复制译文")}
+            {t("subtitle.copyTranslated")}
           </button>
           <div className="my-1 h-px bg-border" />
           <button
@@ -1524,7 +1526,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
             onClick={() => handleDeleteEntry(contextMenu.entryIndex)}
           >
             <Trash2 className="h-3.5 w-3.5" />
-            {t("subtitle.deleteEntry", "删除此条")}
+            {t("subtitle.deleteEntry")}
           </button>
         </div>
       )}
@@ -1539,19 +1541,19 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       {offsetExceedDialog && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
           <div className="rounded-lg border bg-popover p-5 shadow-lg max-w-sm">
-            <p className="text-sm font-medium mb-2">{t("subtitle.offsetExceedTitle", "字幕超出视频时长")}</p>
+            <p className="text-sm font-medium mb-2">{t("subtitle.offsetExceedTitle")}</p>
             <p className="text-xs text-muted-foreground mb-4">
-              {t("subtitle.offsetExceedMsg", "{{count}} 条字幕的结束时间超出视频时长 {{seconds}} 秒，是否仍然应用？", { count: offsetExceedDialog.count, seconds: offsetExceedDialog.maxExceedSec.toFixed(1) })}
+              {t("subtitle.offsetExceedMsg", { count: offsetExceedDialog.count, seconds: offsetExceedDialog.maxExceedSec.toFixed(1) })}
             </p>
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="outline" onClick={() => {
                 // 取消：不应用偏移，直接关闭弹窗
                 setOffsetExceedDialog(null);
               }}>
-                {t("common.cancel", "取消")}
+                {t("common.cancel")}
               </Button>
               <Button size="sm" onClick={handleForceApplyOffset}>
-                {t("subtitle.forceApply", "仍然应用")}
+                {t("subtitle.forceApply")}
               </Button>
             </div>
           </div>
@@ -1562,16 +1564,16 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       {resetDialogOpen && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40">
           <div className="rounded-lg border bg-popover p-5 shadow-lg max-w-sm">
-            <p className="text-sm font-medium mb-2">{t("subtitle.resetTitle", "重置字幕")}</p>
+            <p className="text-sm font-medium mb-2">{t("subtitle.resetTitle")}</p>
             <p className="text-xs text-muted-foreground mb-4">
-              {t("subtitle.resetConfirm", "已执行的 {{count}} 步操作将被撤销，字幕将恢复为初始加载状态。确定要重置吗？", { count: resetSteps })}
+              {t("subtitle.resetConfirm", { count: resetSteps })}
             </p>
             <div className="flex justify-end gap-2">
               <Button size="sm" variant="outline" onClick={() => setResetDialogOpen(false)}>
-                {t("common.cancel", "取消")}
+                {t("common.cancel")}
               </Button>
               <Button size="sm" variant="destructive" onClick={handleResetConfirm}>
-                {t("subtitle.resetConfirmBtn", "确认重置")}
+                {t("subtitle.resetConfirmBtn")}
               </Button>
             </div>
           </div>

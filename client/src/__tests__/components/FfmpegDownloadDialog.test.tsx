@@ -87,7 +87,7 @@ describe("FfmpegDownloadDialog - 下载", () => {
       eventHandler?.({ payload: { stage: "downloading", progress: 50, speed_mbps: 2, eta_secs: 30 } });
     });
     await waitFor(() => {
-      expect(screen.getByText("请稍候...")).toBeInTheDocument();
+      expect(screen.getByText("ffmpeg.pleaseWait")).toBeInTheDocument();
     });
   });
 
