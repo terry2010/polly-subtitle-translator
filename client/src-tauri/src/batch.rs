@@ -1968,6 +1968,29 @@ pub(crate) fn spawn_batch_worker(
     });
 }
 
+/// 将翻译结果按 index 匹配回写到字幕条目。
+///
+/// 不能用位置下标：`translate_entries_full` 会跳过含 `\p1` 绘图指令的条目不产生结果，
+/// 且取消/异常批次整批被跳过，导致 `translations.len() < entries.len()`。
+/// 若用 enumerate 位置回写，跳过点之后的译文会整体前移一位，静默污染输出文件。
+fn apply_translations_to_entries(
+    entries: &mut [subtitle::SubtitleEntry],
+    translations: &[translate::TranslateEntry],
+) {
+    let mut tr_by_index: std::collections::HashMap<usize, &translate::TranslateEntry> =
+        std::collections::HashMap::with_capacity(translations.len());
+    for tr in translations {
+        tr_by_index.insert(tr.index, tr);
+    }
+    for entry in entries.iter_mut() {
+        if let Some(tr) = tr_by_index.get(&entry.index) {
+            entry.translated = tr.translated.clone();
+            entry.failed = tr.failed;
+            entry.from_cache = tr.from_cache;
+        }
+    }
+}
+
 /// process_task 处理单个文件的全流程
 async fn process_task(
     app: tauri::AppHandle,
@@ -2277,13 +2300,7 @@ async fn process_task(
 
     match result {
         Ok(translate_result) => {
-            for (i, entry) in subtitle_file.entries.iter_mut().enumerate() {
-                if let Some(tr) = translate_result.translations.get(i) {
-                    entry.translated = tr.translated.clone();
-                    entry.failed = tr.failed;
-                    entry.from_cache = tr.from_cache;
-                }
-            }
+            apply_translations_to_entries(&mut subtitle_file.entries, &translate_result.translations);
             task.done_entries = translate_result.translations.iter().filter(|t| !t.failed).count();
             task.cached_entries = translate_result.cached_count;
             task.failed_entries = translate_result.translations.iter().filter(|t| t.failed).count();
@@ -2638,6 +2655,34 @@ mod tests {
         assert_eq!(task.status, BatchStatus::Queued);
         assert_eq!(task.source_path_type, PathType::Video);
         assert_eq!(task.total_entries, 0);
+    }
+
+    #[test]
+    fn test_apply_translations_index_based() {
+        // 模拟 translate_entries_full 跳过 \p1 条目（index=2 无结果）后按位置回写会错位：
+        // entries:  [0, 1, 2(\p1), 3, 4]
+        // results:  [0, 1, 3, 4]（index=2 被跳过，未产生结果）
+        let mut entries = vec![
+            subtitle::SubtitleEntry { index: 0, start_ms: 0, end_ms: 1000, text: "A".into(), translated: String::new(), style: None, failed: false, from_cache: false, pre_edit_text: None },
+            subtitle::SubtitleEntry { index: 1, start_ms: 1000, end_ms: 2000, text: "B".into(), translated: String::new(), style: None, failed: false, from_cache: false, pre_edit_text: None },
+            subtitle::SubtitleEntry { index: 2, start_ms: 2000, end_ms: 3000, text: "{\\p1}drawing".into(), translated: String::new(), style: None, failed: false, from_cache: false, pre_edit_text: None },
+            subtitle::SubtitleEntry { index: 3, start_ms: 3000, end_ms: 4000, text: "D".into(), translated: String::new(), style: None, failed: false, from_cache: false, pre_edit_text: None },
+            subtitle::SubtitleEntry { index: 4, start_ms: 4000, end_ms: 5000, text: "E".into(), translated: String::new(), style: None, failed: false, from_cache: false, pre_edit_text: None },
+        ];
+        let translations = vec![
+            translate::TranslateEntry { index: 0, original: "A".into(), translated: "甲".into(), from_cache: false, failed: false, pre_edit_text: None },
+            translate::TranslateEntry { index: 1, original: "B".into(), translated: "乙".into(), from_cache: false, failed: false, pre_edit_text: None },
+            translate::TranslateEntry { index: 3, original: "D".into(), translated: "丁".into(), from_cache: false, failed: false, pre_edit_text: None },
+            translate::TranslateEntry { index: 4, original: "E".into(), translated: "戊".into(), from_cache: false, failed: false, pre_edit_text: None },
+        ];
+
+        apply_translations_to_entries(&mut entries, &translations);
+
+        assert_eq!(entries[0].translated, "甲", "index=0 应回写译文");
+        assert_eq!(entries[1].translated, "乙", "index=1 应回写译文");
+        assert_eq!(entries[2].translated, "", "被跳过的 \\p1 条目应保持原文（译文为空）");
+        assert_eq!(entries[3].translated, "丁", "index=3 应回写自己的译文而非错位到 C 的位置");
+        assert_eq!(entries[4].translated, "戊", "index=4 应回写自己的译文");
     }
 }
 
