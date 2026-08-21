@@ -590,7 +590,7 @@ impl PlaceholderProtector {
         }
         // 按占位符长度降序替换，避免短占位符是长占位符的前缀导致误替换
         let mut sorted = self.placeholders.iter().collect::<Vec<_>>();
-        sorted.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        sorted.sort_by_key(|(k, _)| std::cmp::Reverse(k.len()));
         for (placeholder, original) in &sorted {
             result = result.replace(placeholder, original);
         }
@@ -714,6 +714,7 @@ pub(crate) fn strip_remaining_placeholders(s: &str, strategy: PlaceholderStrateg
 /// 回退到行对齐时 JSON 语法会被当作译文文本，导致译文中出现：
 /// - 完整 JSON 包装：[{"n": 1, "t": "让我们看看发生了什么事。"}]
 /// - JSON 语法残留：译文末尾出现 '},\n  { 等字符
+///
 /// 此函数提取 JSON 中的实际文本，剥离 JSON 语法残留。
 pub(crate) fn clean_json_leak(s: &str) -> String {
     let trimmed = s.trim();

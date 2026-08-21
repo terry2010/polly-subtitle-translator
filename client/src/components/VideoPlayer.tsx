@@ -11,7 +11,7 @@ import { platform } from "@tauri-apps/plugin-os";
 import { useVideoStore } from "../stores/videoStore";
 import { Film, Play, Pause, Loader2, Download, Volume2, VolumeX, X, FolderOpen, Info, ChevronRight, MonitorPlay, Languages } from "lucide-react";
 import { Button } from "./ui/button";
-import { uiState } from "../lib/utils";
+import { uiState, formatEta } from "../lib/utils";
 import { useTranslation } from "react-i18next";
 import { useLibmpvStore } from "../stores/libmpvStore";
 import { useSubtitleStore } from "../stores/subtitleStore";
@@ -115,14 +115,7 @@ const SpeedSelect = memo(function SpeedSelect({
   );
 });
 
-/// 格式化剩余时间
-function formatEta(secs: number, t: (key: string, options?: any) => string): string {
-  if (secs <= 0) return "--";
-  if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
-  const m = Math.floor(secs / 60);
-  const s = Math.ceil(secs % 60);
-  return t("settings.etaMinSecs", { m, s });
-}
+/// 格式化剩余时间（已抽到 lib/utils.ts，此处保留导入）
 
 /// 模块级标志：player_init 是否正在进行中
 /// 防止 HMR 重挂载或 React StrictMode 双调用导致并发 player_init

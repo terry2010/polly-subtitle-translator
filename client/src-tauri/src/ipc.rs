@@ -523,7 +523,7 @@ pub async fn extract_subtitle(
 
 /// cancel_extract_subtitle：取消正在进行的字幕提取
 #[tauri::command]
-pub fn cancel_extract_subtitle() -> Result<(), ()> {
+pub fn cancel_extract_subtitle() -> Result<(), String> {
     ffmpeg::cancel_extraction();
     Ok(())
 }
@@ -782,6 +782,7 @@ pub async fn get_supported_target_langs(
 /// 编辑原文后 entry.text 变了，但 file_hash 必须保持 H1，
 /// 否则 source_edit_cache 查不到、翻译缓存 key 与历史缓存隔离。
 /// 如果未传 file_hash，返回 error（不再 fallback 计算）。
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn translate_subtitle(
     entries: Vec<subtitle::SubtitleEntry>,
@@ -930,14 +931,14 @@ pub async fn translate_subtitle(
                     &provider_name_for_cache,
                     &file_hash_for_cache,
                 );
-                let _ = db.set_translate_cache(
+                if let Err(e) = db.set_translate_cache(
                     &cache_key,
                     &entry.original,
                     corrected,
                     &source_lang,
                     &target_lang,
                     &provider_name_for_cache,
-                );
+                ) { tracing::warn!("DB 写入失败 (set_translate_cache): {}", e); }
             }
         }
         // 统一音效括号【】→[]（对所有人名标记模式的译文都生效）
@@ -1040,6 +1041,7 @@ pub fn cancel_translate(cancel_token: State<'_, CancelToken>) -> IpcResult<()> {
 
 /// extract_names：从字幕文本中预扫描提取人名（仅 AI 翻译支持）
 /// 返回人名译名表，用于注入翻译 prompt 保证跨 batch 一致性
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn extract_names(
     texts: Vec<String>,
@@ -1156,6 +1158,7 @@ pub async fn extract_names(
 /// get_cached_translations：查询已缓存的翻译结果（不调用 API）
 /// file_hash: 前端必须传入原始文件的 hash（H1），与 translate_subtitle 一致。
 /// entries 应该是已应用 source_edit 的 corrected entries（由前端在 loadSubtitle 中处理）。
+#[allow(clippy::too_many_arguments)]
 /// 不再查 source_edit_cache，只查 translate_cache（source_edit 恢复由 get_source_edits 独立处理）。
 #[tauri::command]
 pub async fn get_cached_translations(
@@ -1182,6 +1185,7 @@ pub async fn get_cached_translations(
 }
 
 /// get_cached_translations 内部逻辑（不带 State 包装，供测试调用）
+#[allow(clippy::too_many_arguments)]
 pub fn get_cached_translations_inner(
     entries: Vec<subtitle::SubtitleEntry>,
     source_lang: &str,
@@ -1254,6 +1258,7 @@ pub fn get_cached_translations_inner(
 
 /// test_translate_connection：测试翻译 API 连接
 /// 返回 TestConnectionResult（OpenAi 包含原文+译文，其他 provider 字段为 None）
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn test_translate_connection(
     provider: String,
@@ -1349,6 +1354,7 @@ pub async fn test_translate_connection(
 /// - `use_proxy_override = Some(false)`：用户明确选了"禁用代理" → 直连（ProxyConfig::default）
 /// - `use_proxy_override = Some(true)`：用户明确选了"启用代理" → 用全局代理
 /// - `use_proxy_override = None`：用户选了"跟随"或未设置 → 查数据库，数据库也无则用全局代理
+///
 /// `service_id` 用于 AI 服务（如 "deepseek"），`provider_fallback` 用于传统引擎（如 "baidu"）。
 fn resolve_effective_proxy(
     db: &Database,
@@ -1377,7 +1383,7 @@ fn resolve_effective_proxy(
             tracing::info!("代理决策: 数据库={}→禁用，使用直连", use_proxy_key);
             ProxyConfig::default()
         }
-        Some("true") | _ => {
+        _ => {
             tracing::info!("代理决策: 数据库={}→启用/跟随，使用全局代理", use_proxy_key);
             ProxyConfig::load_from_db(db)
         }
@@ -1967,7 +1973,7 @@ pub fn list_prompt_fail_logs_cmd(app: tauri::AppHandle) -> IpcResult<Vec<PromptF
             }
         }
         // 按修改时间倒序（最新的在前）
-        entries.sort_by(|a, b| b.modified.cmp(&a.modified));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
         entries
     });
     ipc_result(result)
@@ -2117,7 +2123,7 @@ pub fn list_api_debug_logs_cmd(app: tauri::AppHandle) -> IpcResult<Vec<PromptFai
             }
         }
         // 按修改时间降序（最新的在前）
-        entries.sort_by(|a, b| b.modified.cmp(&a.modified));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.modified));
         entries
     });
     ipc_result(result)
@@ -2606,10 +2612,10 @@ pub fn set_proxy(
     password: Option<String>,
     db: State<'_, Database>,
 ) -> IpcResult<()> {
-    let _ = db.set_config("proxy_mode", &mode);
-    let _ = db.set_config("proxy_host", &host);
-    let _ = db.set_config("proxy_port", &port);
-    let _ = db.set_config("proxy_user", &username.clone().unwrap_or_default());
+    if let Err(e) = db.set_config("proxy_mode", &mode) { tracing::warn!("DB 写入失败 (proxy_mode): {}", e); }
+    if let Err(e) = db.set_config("proxy_host", &host) { tracing::warn!("DB 写入失败 (proxy_host): {}", e); }
+    if let Err(e) = db.set_config("proxy_port", &port) { tracing::warn!("DB 写入失败 (proxy_port): {}", e); }
+    if let Err(e) = db.set_config("proxy_user", &username.clone().unwrap_or_default()) { tracing::warn!("DB 写入失败 (proxy_user): {}", e); }
     // 密码走 credentials 表，非敏感的 host/port/user 走 config 表
     if let Some(pw) = password {
         if !pw.is_empty() && pw != "••••••••" {
@@ -2657,8 +2663,8 @@ pub fn get_translate_use_proxy(provider: String, db: State<'_, Database>) -> Ipc
 pub fn set_translate_use_proxy(provider: String, value: Option<bool>, db: State<'_, Database>) -> IpcResult<()> {
     let key = format!("translate_{}_use_proxy", provider);
     match value {
-        None => { let _ = db.delete_config(&key); }
-        Some(v) => { let _ = db.set_config(&key, if v { "true" } else { "false" }); }
+        None => { if let Err(e) = db.delete_config(&key) { tracing::warn!("DB 写入失败 (delete_config): {}", e); } }
+        Some(v) => { if let Err(e) = db.set_config(&key, if v { "true" } else { "false" }) { tracing::warn!("DB 写入失败 (set_config): {}", e); } }
     }
     tracing::info!("translate_use_proxy: provider={}, value={:?}", provider, value);
     ipc_result(Ok(()))
@@ -3016,7 +3022,7 @@ pub async fn download_and_install_update(
                 if let Some(cl) = content_length { total_size = cl; }
             }
             if last_emit.elapsed() > std::time::Duration::from_millis(200) {
-                let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+                let pct = (downloaded * 100).checked_div(total_size).map(|v| v as u8).unwrap_or(0);
                 let elapsed = download_start.elapsed().as_secs_f64();
                 let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
                 let speed_mb = speed_bps / 1024.0 / 1024.0;
@@ -3075,7 +3081,7 @@ pub async fn batch_translate_files(
     if let Some(cfg) = &config {
         let _ = batch_queue.tx.try_send(batch::BatchCmd::UpdateConfig(cfg.clone()));
         if let Ok(json) = serde_json::to_string(cfg) {
-            let _ = db.set_config("batch_config", &json);
+            if let Err(e) = db.set_config("batch_config", &json) { tracing::warn!("DB 写入失败 (batch_config): {}", e); }
         }
     }
 
@@ -3280,7 +3286,7 @@ pub async fn start_folder_watch(
     // 持久化到 DB
     let config_to_save = batch_queue.config.lock().unwrap().clone();
     if let Ok(json) = serde_json::to_string(&config_to_save) {
-        let _ = db.set_config("batch_config", &json);
+        if let Err(e) = db.set_config("batch_config", &json) { tracing::warn!("DB 写入失败 (batch_config): {}", e); }
     }
 
     let current_config = batch_queue.config.lock().unwrap().clone();
@@ -3349,7 +3355,7 @@ pub async fn scan_existing_files(
         }
         let config_to_save = batch_queue.config.lock().unwrap().clone();
         if let Ok(json) = serde_json::to_string(&config_to_save) {
-            let _ = db.set_config("batch_config", &json);
+            if let Err(e) = db.set_config("batch_config", &json) { tracing::warn!("DB 写入失败 (batch_config): {}", e); }
         }
     }
 
@@ -3738,14 +3744,14 @@ pub async fn translate_official(
                     provider_name,
                     file_hash,
                 );
-                let _ = db.set_translate_cache(
+                if let Err(e) = db.set_translate_cache(
                     &cache_key,
                     &entry.text,
                     &entry.translated,
                     source_lang,
                     target_lang,
                     provider_name,
-                );
+                ) { tracing::warn!("DB 写入失败 (set_translate_cache): {}", e); }
                 saved_count += 1;
             }
         }
@@ -4086,20 +4092,6 @@ mod tests {
         let db = Database::open(&path).unwrap();
         db.migrate().unwrap();
         db
-    }
-
-    fn make_entry(i: usize, text: &str) -> subtitle::SubtitleEntry {
-        subtitle::SubtitleEntry {
-            index: i,
-            start_ms: 0,
-            end_ms: 1000,
-            text: text.to_string(),
-            translated: String::new(),
-            style: None,
-            failed: false,
-            from_cache: false,
-            pre_edit_text: None,
-        }
     }
 
     /// T20: get_source_edits + get_cached_translations 集成：编辑恢复 + 缓存命中

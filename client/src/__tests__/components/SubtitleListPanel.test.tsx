@@ -24,6 +24,7 @@ vi.mock("../../lib/api", () => ({
 vi.mock("../../lib/utils", () => ({
   withPlayerHidden: vi.fn((fn: () => Promise<any>) => fn()),
   cn: vi.fn((...args: any[]) => args.filter(Boolean).join(" ")),
+  formatTimecode: vi.fn((ms: number) => `00:00:0${Math.floor(ms / 1000)},${String(ms % 1000).padStart(3, "0")}`),
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({

@@ -14,6 +14,11 @@ export function log(...args: unknown[]): void {
   if (devModeEnabled) console.log(...args);
 }
 
+/** 开发者模式下输出信息 */
+export function info(...args: unknown[]): void {
+  if (devModeEnabled) console.info(...args);
+}
+
 /** 开发者模式下输出警告 */
 export function warn(...args: unknown[]): void {
   if (devModeEnabled) console.warn(...args);

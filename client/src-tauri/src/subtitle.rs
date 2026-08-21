@@ -1609,11 +1609,10 @@ fn build_entry_text(entry: &SubtitleEntry, options: &ExportOptions) -> String {
             // 合并内部换行为空格，避免多行译文/原文导致重新导入时语言检测混乱
             let collapse = |s: &str| -> String {
                 cleanup_cjk_spaces(
-                    &strip_inline_ass_and_html_tags(s)
+                    strip_inline_ass_and_html_tags(s)
                         .replace('\n', " ")
                         .replace("\\N", " ")
-                        .trim()
-                        .to_string(),
+                        .trim(),
                 )
                 .to_string()
             };
@@ -1828,6 +1827,7 @@ fn render_ass_with_options(file: &SubtitleFile, options: &ExportOptions) -> Stri
 /// 必须写齐 3 个颜色占位（SecondaryColour/OutlineColour/BackColour），否则从 Bold 起字段错位。
 /// Bold/Italic/Underline 用 -1（真）/ 0（假），符合 ASS 标准（部分播放器只认 -1）。
 /// outline_color → OutlineColour（描边颜色），shadow_color → BackColour（阴影颜色）
+#[allow(clippy::too_many_arguments)]
 fn format_style_line(
     name: &str,
     size: u32,

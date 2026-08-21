@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -81,14 +81,13 @@ fn verify_downloaded_file(path: &Path, expected_ext: &str, label: &str) -> Resul
                 });
             }
         }
-        "tar.xz" => {
+        "tar.xz"
             // xz: \xfd7zXZ\x00
-            if &bytes[..6] != b"\xfd7zXZ\x00" {
+            if &bytes[..6] != b"\xfd7zXZ\x00" => {
                 return Err(AppError::FfmpegDownloadExtractFailed {
                     detail: format!("{} tar.xz 文件 magic bytes 不匹配", label),
                 });
             }
-        }
         _ => {}
     }
     // 计算 SHA256 并记录日志
@@ -99,17 +98,16 @@ fn verify_downloaded_file(path: &Path, expected_ext: &str, label: &str) -> Resul
     Ok(hash)
 }
 
-/// 全局提取取消标志：设为 true 时，正在运行的提取会尽快终止并返回错误
-static EXTRACT_CANCELLED: AtomicBool = AtomicBool::new(false);
+/// 全局提取取消代际计数器：每次取消时递增。
+/// 使用代际计数器而非简单 bool，避免并发提取互相干扰：
+/// - 新提取开始时记录当前代际，仅当代际变化时才判定为被取消
+/// - 取消操作递增代际，只影响在此之后检查的提取
+/// - 新提取不会被先前的取消影响（因为它记录的是最新代际）
+static CANCEL_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// 取消所有正在进行的字幕提取（杀死 ffmpeg 进程）
 pub fn cancel_extraction() {
-    EXTRACT_CANCELLED.store(true, Ordering::Relaxed);
-}
-
-/// 重置取消标志（新的提取开始前调用）
-fn reset_cancel_flag() {
-    EXTRACT_CANCELLED.store(false, Ordering::Relaxed);
+    CANCEL_GENERATION.fetch_add(1, Ordering::Relaxed);
 }
 
 /// 杀死 ffmpeg 进程
@@ -399,7 +397,7 @@ fn download_ffmpeg_macos(
                         })?;
                         downloaded += n as u64;
                         if last_emit.elapsed() > std::time::Duration::from_millis(200) {
-                            let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+                            let pct = (downloaded * 100).checked_div(total_size).map(|v| v as u8).unwrap_or(0);
                             let elapsed = download_start.elapsed().as_secs_f64();
                             let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
                             let speed_mb = speed_bps / 1024.0 / 1024.0;
@@ -595,7 +593,7 @@ fn download_ffmpeg_inner(
         })?;
         downloaded += n as u64;
         if last_emit.elapsed() > std::time::Duration::from_millis(200) {
-            let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+            let pct = (downloaded * 100).checked_div(total_size).map(|v| v as u8).unwrap_or(0);
             let elapsed = download_start.elapsed().as_secs_f64();
             let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
             let speed_mb = speed_bps / 1024.0 / 1024.0;
@@ -1211,8 +1209,8 @@ pub fn extract_subtitle_stream(
     duration_sec: Option<f64>,
     on_progress: Option<&dyn Fn(f64)>,
 ) -> Result<(), AppError> {
-    // 重置取消标志（新的提取开始）
-    reset_cancel_flag();
+    // 记录当前取消代际：仅当此后的取消操作递增了代际时，本次提取才被取消
+    let my_generation = CANCEL_GENERATION.load(Ordering::Relaxed);
     let ffmpeg = find_ffmpeg(ffmpeg_custom_path)?;
 
     if !Path::new(video_path).exists() {
@@ -1273,8 +1271,8 @@ pub fn extract_subtitle_stream(
     let timeout = Duration::from_secs(300); // NAS 慢，5 分钟超时
 
     for line_result in stdout_reader.lines() {
-        // 检查取消
-        if EXTRACT_CANCELLED.load(Ordering::Relaxed) {
+        // 检查取消：代际变化意味着有新的取消请求
+        if CANCEL_GENERATION.load(Ordering::Relaxed) != my_generation {
             tracing::info!("字幕提取被取消，杀死 ffmpeg 进程");
             kill_ffmpeg(child_id);
             return Err(AppError::FfmpegExtractCancelled);

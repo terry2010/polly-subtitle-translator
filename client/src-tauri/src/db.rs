@@ -57,7 +57,13 @@ impl Database {
     where
         F: FnOnce(&Connection) -> Result<R, AppError>,
     {
-        let conn = self.conn.lock().expect("数据库互斥锁中毒");
+        // Mutex 中毒时恢复而非 panic：单次 panic 不应导致整个应用永久不可用。
+        // SQLite 连接本身是 C 库状态，Rust 侧 panic 不会破坏其内部一致性，
+        // 恢复中毒的锁让后续 DB 操作可以继续，避免桌面应用必须重启。
+        let conn = self.conn.lock().unwrap_or_else(|poisoned| {
+            tracing::warn!("数据库互斥锁中毒，已恢复（可能由先前 panic 引起）");
+            poisoned.into_inner()
+        });
         f(&conn)
     }
 
@@ -622,6 +628,7 @@ impl Database {
     /// 1. 译文=原文（AI 未实际翻译，原样返回）
     /// 2. 目标语言是中文但译文无 CJK 字符（且原文也无 CJK）
     /// 3. 音效标记类型不一致（AI 错位翻译）
+    ///
     /// 用 Rust 逐条判断，避免 SQLite GLOB 对 Unicode 范围支持不完整。
     pub fn purge_fake_translate_cache(&self) -> Result<usize, AppError> {
         fn has_cjk_chars(s: &str) -> bool {

@@ -316,6 +316,7 @@ pub fn log_stream_to_file(file: &std::sync::Mutex<std::fs::File>, text: &str) {
 
 /// 记录 prompt 失败日志（翻译对齐失败时调用）
 /// 将 system prompt、user prompt、模型返回内容写入单独日志文件
+#[allow(clippy::too_many_arguments)]
 pub fn log_prompt_fail(
     provider: &str,
     model: &str,

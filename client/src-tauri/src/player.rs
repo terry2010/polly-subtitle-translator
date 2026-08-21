@@ -276,14 +276,13 @@ fn verify_downloaded_archive(path: &Path, expected_ext: &str, label: &str) -> Re
                 });
             }
         }
-        "tar.gz" => {
+        "tar.gz"
             // gzip: \x1f\x8b
-            if bytes[0] != 0x1f || bytes[1] != 0x8b {
+            if (bytes[0] != 0x1f || bytes[1] != 0x8b) => {
                 return Err(AppError::PlayerDownloadExtractFailed {
                     detail: format!("{} tar.gz 文件 magic bytes 不匹配", label),
                 });
             }
-        }
         _ => {}
     }
     // 计算 SHA256 并记录日志
@@ -447,7 +446,7 @@ fn download_libmpv_inner(
         downloaded += n as u64;
         // 每 200ms emit 一次进度
         if last_emit.elapsed() > std::time::Duration::from_millis(200) {
-            let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+            let pct = (downloaded * 100).checked_div(total_size).map(|v| v as u8).unwrap_or(0);
             let elapsed = download_start.elapsed().as_secs_f64();
             let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
             let speed_mb = speed_bps / 1024.0 / 1024.0;
@@ -546,19 +545,41 @@ fn find_file(dir: &Path, name: &str) -> Option<std::path::PathBuf> {
 }
 
 /// 使用系统默认播放器打开视频文件（降级路径）
+/// 跨平台实现：Windows 用 explorer.exe（避免 cmd.exe 命令注入风险），
+/// macOS 用 open，Linux 用 xdg-open。直接传参给系统命令，不经过 shell 解释器。
 pub fn open_in_system_player(video_path: &str) -> Result<(), AppError> {
-    let mut cmd = std::process::Command::new("cmd");
-    cmd.args(["/C", "start", "", video_path]);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let mut cmd = std::process::Command::new("explorer.exe");
+        cmd.arg(video_path);
         cmd.creation_flags(CREATE_NO_WINDOW);
+        let status = cmd.status()
+            .map_err(|e| AppError::PlayerLoadFailed { detail: format!("{} ({})", video_path, e) })?;
+        if !status.success() {
+            return Err(AppError::PlayerLoadFailed { detail: video_path.to_string() });
+        }
     }
-    let status = cmd.status()
-        .map_err(|e| AppError::PlayerLoadFailed { detail: format!("{} ({})", video_path, e) })?;
-    if !status.success() {
-        return Err(AppError::PlayerLoadFailed { detail: video_path.to_string() });
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("open")
+            .arg(video_path)
+            .status()
+            .map_err(|e| AppError::PlayerLoadFailed { detail: format!("{} ({})", video_path, e) })?;
+        if !status.success() {
+            return Err(AppError::PlayerLoadFailed { detail: video_path.to_string() });
+        }
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let status = std::process::Command::new("xdg-open")
+            .arg(video_path)
+            .status()
+            .map_err(|e| AppError::PlayerLoadFailed { detail: format!("{} ({})", video_path, e) })?;
+        if !status.success() {
+            return Err(AppError::PlayerLoadFailed { detail: video_path.to_string() });
+        }
     }
     Ok(())
 }
@@ -2009,7 +2030,7 @@ fn download_libmpv_macos(
         })?;
         downloaded += n as u64;
         if last_emit.elapsed() > std::time::Duration::from_millis(200) {
-            let pct = if total_size > 0 { (downloaded * 100 / total_size) as u8 } else { 0 };
+            let pct = (downloaded * 100).checked_div(total_size).map(|v| v as u8).unwrap_or(0);
             let elapsed = download_start.elapsed().as_secs_f64();
             let speed_bps = if elapsed > 0.0 { downloaded as f64 / elapsed } else { 0.0 };
             let speed_mb = speed_bps / 1024.0 / 1024.0;
@@ -2379,7 +2400,7 @@ mod macos {
                 tracing::info!("MpvVideoView rightMouseDown 被调用");
                 use tauri::Emitter;
                 // 获取点击位置在窗口中的坐标
-                let location: (f64, f64) = unsafe { msg_send![event as *mut Object, locationInWindow] };
+                let location: (f64, f64) = unsafe { msg_send![event, locationInWindow] };
                 // 转换为屏幕坐标
                 let ns_window: *mut Object = unsafe { msg_send![_this as *const Object as *mut Object, window] };
                 if ns_window.is_null() { return; }
@@ -2462,7 +2483,7 @@ mod macos {
             // sendEvent: 在事件到达任何 view 之前被调用，是最可靠的拦截点。
             extern "C" fn send_event(this: &Object, _sel: Sel, event: *mut Object) {
                 unsafe {
-                    let event_type: usize = msg_send![event as *mut Object, type];
+                    let event_type: usize = msg_send![event, type];
                     // NSEventTypeLeftMouseDown = 1
                     if event_type == 1 {
                         tracing::info!("MpvFloatingWindow sendEvent: leftMouseDown");
@@ -2489,7 +2510,7 @@ mod macos {
                     if event_type == 3 {
                         tracing::info!("MpvFloatingWindow sendEvent: rightMouseDown");
                         use tauri::Emitter;
-                        let location: (f64, f64) = msg_send![event as *mut Object, locationInWindow];
+                        let location: (f64, f64) = msg_send![event, locationInWindow];
                         let ns_window = this as *const Object as *mut Object;
                         let ns_screen: *mut Object = msg_send![ns_window, screen];
                         if !ns_screen.is_null() {

@@ -25,27 +25,13 @@ import {
   hexToAssColor,
   stripExt,
   fileDir,
+  looksLikeSoundEffect,
 } from "../lib/utils";
 
 interface ExportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   file: SubtitleFile; // 调用方保证非 null（见 §5.2 条件渲染）
-}
-
-/// 判断文本是否为音效/环境声标记，如 [clattering continues] / [碰撞声持续]
-function looksLikeSoundEffect(s: string): boolean {
-  // 先去掉 ASS 定位/样式标签（如 {\an8}），与 translate.rs 的实现一致
-  const stripped = s.replace(/\{[^}]*\}/g, "");
-  const t = stripped.trim();
-  if (!t) return false;
-  if (t.startsWith("[") && t.endsWith("]")) return true;
-  const m = t.match(/^\s*\[[^\]]+\]\s*(.*)$/);
-  if (m) {
-    const rest = m[1].trim();
-    if (rest && rest.startsWith("[") && rest.endsWith("]")) return true;
-  }
-  return false;
 }
 
 type FormatKind = "srt" | "ass" | "vtt";

@@ -269,6 +269,7 @@ impl TranslateProvider {
         user_config.min(qps).max(1)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "baidu" => Some(TranslateProvider::Baidu),
@@ -1513,6 +1514,7 @@ impl<'a> TranslateScheduler<'a> {
     }
 
     /// 带进度回调 + 单条完成回调的翻译
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub async fn translate_entries_full(
         &self,
         entries: &[crate::subtitle::SubtitleEntry],
@@ -1636,7 +1638,7 @@ impl<'a> TranslateScheduler<'a> {
                         any_failed = true;
                         break;
                     }
-                    match self.translate_with_retry(&[seg.clone()], source_lang, target_lang).await {
+                    match self.translate_with_retry(std::slice::from_ref(seg), source_lang, target_lang).await {
                         Ok(tr) if !tr.is_empty() && !tr[0].is_empty() => {
                             combined.push_str(&tr[0]);
                         }
@@ -1756,10 +1758,9 @@ impl<'a> TranslateScheduler<'a> {
         // 致命错误（余额不足/接口未授权/每日限额/认证失败）：记录后中止所有批次并返回
         let mut fatal_error: Option<AppError> = None;
         if !to_translate.is_empty() {
-            let (short_entries, long_entries): (
-                Vec<(usize, String, String, PlaceholderProtector)>,
-                Vec<(usize, String, String, PlaceholderProtector)>,
-            ) = to_translate.into_iter().partition(|(_, _, t, _)| t.len() < short_text_threshold);
+            type TranslateItem = (usize, String, String, PlaceholderProtector);
+            let (short_entries, long_entries): (Vec<TranslateItem>, Vec<TranslateItem>) =
+                to_translate.into_iter().partition(|(_, _, t, _)| t.len() < short_text_threshold);
             let mut batches: Vec<Vec<(usize, String, String, PlaceholderProtector)>> = Vec::new();
             batches.extend(long_entries.chunks(long_batch_size).map(|c| c.to_vec()));
             batches.extend(short_entries.chunks(short_batch_size).map(|c| c.to_vec()));
@@ -1793,7 +1794,14 @@ impl<'a> TranslateScheduler<'a> {
                 join_set.spawn(async move {
                     // 在 task 内部获取信号量，不阻塞 spawn 循环
                     // 这样 while join_next 循环能立即开始处理已完成的结果
-                    let _permit = semaphore.acquire_owned().await.unwrap();
+                    // 信号量获取失败（信号量被关闭）时返回空结果而非 panic
+                    let _permit = match semaphore.acquire_owned().await {
+                        Ok(p) => p,
+                        Err(_) => {
+                            tracing::error!("翻译批次 {} 信号量获取失败", batch_idx + 1);
+                            return (batch_idx, Ok(vec![]));
+                        }
+                    };
                     if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
                         return (batch_idx, Ok(vec![]));
                     }

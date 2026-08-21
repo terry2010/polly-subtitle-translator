@@ -315,7 +315,7 @@ fn fail_task(
         }
     }
     if let Some(db) = db {
-        let _ = db.upsert_batch_task(&updated_task);
+        if let Err(e) = db.upsert_batch_task(&updated_task) { tracing::warn!("DB 写入失败 (upsert_batch_task): {}", e); }
     }
     let _ = app.emit(
         "batch-file-error",
@@ -348,7 +348,7 @@ fn skip_task(
         }
     }
     if let Some(db) = db {
-        let _ = db.upsert_batch_task(&updated_task);
+        if let Err(e) = db.upsert_batch_task(&updated_task) { tracing::warn!("DB 写入失败 (upsert_batch_task): {}", e); }
     }
     let _ = app.emit(
         "batch-file-skipped",
@@ -1109,9 +1109,11 @@ async fn wait_for_tail_marker(
         }
         tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
 
-        let file_size = match std::fs::metadata(path) {
-            Ok(m) => m.len(),
-            Err(_) => return FileReadiness::NotReady,
+        // 使用 spawn_blocking 避免阻塞 async runtime（NAS/网络路径下 metadata 可能耗时数百毫秒）
+        let path_owned = path.to_string();
+        let file_size = match tokio::task::spawn_blocking(move || std::fs::metadata(&path_owned).map(|m| m.len())).await {
+            Ok(Ok(len)) => len,
+            _ => return FileReadiness::NotReady,
         };
         if file_size < 1024 {
             continue;
@@ -1661,7 +1663,7 @@ pub(crate) fn spawn_batch_worker(
                     {
                         let db = app.state::<Database>();
                         if let Some(task) = tasks.lock().unwrap().iter().find(|t| t.id == task_id).cloned() {
-                            let _ = db.upsert_batch_task(&task);
+                            if let Err(e) = db.upsert_batch_task(&task) { tracing::warn!("DB 写入失败 (upsert_batch_task): {}", e); }
                         }
                     }
                     let _ = app.emit(
@@ -1675,7 +1677,7 @@ pub(crate) fn spawn_batch_worker(
                     {
                         let db = app.state::<Database>();
                         if let Some(task) = tasks.lock().unwrap().iter().find(|t| t.id == task_id).cloned() {
-                            let _ = db.upsert_batch_task(&task);
+                            if let Err(e) = db.upsert_batch_task(&task) { tracing::warn!("DB 写入失败 (upsert_batch_task): {}", e); }
                         }
                     }
                     // 重新调度
@@ -1702,7 +1704,7 @@ pub(crate) fn spawn_batch_worker(
                     {
                         let db = app.state::<Database>();
                         if let Some(task) = tasks.lock().unwrap().iter().find(|t| t.id == task_id).cloned() {
-                            let _ = db.upsert_batch_task(&task);
+                            if let Err(e) = db.upsert_batch_task(&task) { tracing::warn!("DB 写入失败 (upsert_batch_task): {}", e); }
                         }
                     }
                     // 强制调度该任务（忽略暂停状态和工作时间段）
@@ -1726,7 +1728,7 @@ pub(crate) fn spawn_batch_worker(
                     // 从 DB 删除
                     {
                         let db = app.state::<Database>();
-                        let _ = db.delete_batch_task(&task_id);
+                        if let Err(e) = db.delete_batch_task(&task_id) { tracing::warn!("DB 写入失败 (delete_batch_task): {}", e); }
                     }
                     // 通知前端移除该任务
                     let _ = app.emit(
@@ -1762,7 +1764,7 @@ pub(crate) fn spawn_batch_worker(
                     {
                         let db = app.state::<Database>();
                         for id in &removed_ids {
-                            let _ = db.delete_batch_task(id);
+                            if let Err(e) = db.delete_batch_task(id) { tracing::warn!("DB 写入失败 (delete_batch_task): {}", e); }
                         }
                     }
                     tasks.lock().unwrap().retain(|t| {
@@ -1926,7 +1928,7 @@ pub(crate) fn spawn_batch_worker(
                         };
                         {
                             let db = app.state::<Database>();
-                            let _ = db.upsert_batch_task(&task);
+                            if let Err(e) = db.upsert_batch_task(&task) { tracing::warn!("DB 写入失败 (upsert_batch_task): {}", e); }
                         }
                         tasks.lock().unwrap().push(task.clone());
                         emit_batch_event(&app, "batch-task-added", &task);
@@ -2113,7 +2115,7 @@ async fn process_task(
         let task_id = task.id.clone();
         let progress_cb = Box::new(move |pct: f64| {
             // pct 是 0-100 的百分比，转为 0-1 范围以与翻译进度统一
-            let ratio = (pct / 100.0).min(1.0).max(0.0);
+            let ratio = (pct / 100.0).clamp(0.0, 1.0);
             let _ = app_clone.emit("batch-file-progress", serde_json::json!({
                 "id": &task_id,
                 "stage": "extracting",
@@ -2253,7 +2255,7 @@ async fn process_task(
                     *t = failed_task.clone();
                 }
             }
-            let _ = db.upsert_batch_task(&failed_task);
+            if let Err(e) = db.upsert_batch_task(&failed_task) { tracing::warn!("DB 写入失败 (upsert_batch_task): {}", e); }
             let _ = app.emit(
                 "batch-file-error",
                 serde_json::json!({ "id": &task.id, "error": &err_msg }),

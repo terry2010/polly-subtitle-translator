@@ -90,17 +90,26 @@ function safeParseIpcError(s: string): IpcError {
 }
 
 /// 将 IpcError 转为可读消息（用 i18n 翻译错误码）
-export function formatIpcError(error: IpcError): string {
-  const key = `error.${error.code}`;
-  const translated = i18n.t(key, error.args ?? {});
+/// 接受 unknown 类型以安全处理 catch 块中可能为 null/undefined/string/Error 的值
+export function formatIpcError(error: IpcError | unknown): string {
+  // 防御 null/undefined/非对象输入，避免访问 .code 时 TypeError
+  if (!error || typeof error !== "object") {
+    return String(error ?? "");
+  }
+  const err = error as IpcError;
+  if (!err.code) {
+    return String(error);
+  }
+  const key = `error.${err.code}`;
+  const translated = i18n.t(key, err.args ?? {});
   if (translated !== key) return translated;
   // i18n 没有找到 key，fallback：优先显示 args.message，其次 detail
-  const args = error.args as Record<string, unknown> | undefined;
+  const args = err.args as Record<string, unknown> | undefined;
   const message = args?.message as string | undefined;
   const detail = args?.detail as string | undefined;
   if (message) return message;
-  if (detail) return `${error.code}: ${detail}`;
-  return error.code;
+  if (detail) return `${err.code}: ${detail}`;
+  return err.code;
 }
 
 /// 判断 IpcError 是否为超时错误

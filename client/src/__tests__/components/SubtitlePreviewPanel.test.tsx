@@ -41,6 +41,8 @@ vi.mock("../../lib/utils", () => ({
   buildSubtitleTitle: vi.fn(() => "title"),
   hexToAssColor: vi.fn(() => "&H00FFFFFF"),
   assColorToCss: vi.fn(() => "#ffffff"),
+  formatTimecode: vi.fn((ms: number) => `00:00:0${Math.floor(ms / 1000)},${String(ms % 1000).padStart(3, "0")}`),
+  looksLikeSoundEffect: vi.fn(() => false),
 }));
 
 vi.mock("@tanstack/react-virtual", () => ({

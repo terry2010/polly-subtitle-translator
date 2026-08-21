@@ -339,6 +339,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 /// WebSocket 推送消息类型（联调文档 01-P0 第 155-243 行）
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
+#[allow(clippy::large_enum_variant)]
 enum WsAuthMessage {
     #[serde(rename = "session_created")]
     SessionCreated { session_id: String },
@@ -807,9 +808,6 @@ async fn start_token_refresh_loop_with_config(
 
 // === SECTION 7: 应用启动 auth 初始化 + GET /auth/me（FP-P0-5）===
 
-/// GET /auth/me 响应体（联调文档 01-P0 第 425-440 行）
-/// 与 UserInfo 结构一致，直接复用 UserInfo 反序列化
-
 /// 应用启动时的 auth 初始化结果
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthInitResult {
@@ -1123,6 +1121,7 @@ pub fn generate_idempotency_key() -> String {
 /// 根据原始字幕文件路径 + 字幕格式，构造上传用的文件名。
 /// - 有 source_path：取 basename，把扩展名替换为字幕格式扩展名（如 movie.mkv.srt → movie.srt）
 /// - 无 source_path：兜底 "subtitle.{ext}"
+///
 /// 这样后端记录的 filename 是真实视频名，而非 "subtitle.srt"。
 pub fn build_upload_filename(source_path: Option<&str>, file_format: &str) -> String {
     let ext = match file_format.to_lowercase().as_str() {
@@ -1213,8 +1212,8 @@ pub async fn submit_translate(
                     .get("X-Job-Id")
                     .and_then(|v| v.to_str().ok())
                     .map(|s| s.to_string());
-                if job_id.is_some() {
-                    tracing::info!("SSE 流式响应: job_id={}", job_id.as_ref().unwrap());
+                if let Some(ref jid) = job_id {
+                    tracing::info!("SSE 流式响应: job_id={}", jid);
                 } else {
                     tracing::warn!("SSE 流式响应: 缺少 X-Job-Id header，无法取消任务");
                 }
@@ -1653,6 +1652,7 @@ pub struct TranslateEntryResult {
 /// - `job_id`: 可选，上次全文翻译的 job_id（服务端复用 TM/KNP 上下文）
 /// - `model`: 翻译档位
 /// - `idempotency_key`: 幂等键
+#[allow(clippy::too_many_arguments)]
 pub async fn submit_translate_one(
     db: &Database,
     client: &reqwest::Client,
@@ -1863,6 +1863,7 @@ pub trait SseEventHandler: Send + Sync {
 /// 联调文档 02-P1 第 343-350 行：
 /// - 心跳 30s 一次，收到后重置看门狗
 /// - 60s 无任何事件（含心跳）则判定连接异常
+///
 /// 返回 result 事件中的 TranslateResult（如果有）
 pub async fn handle_sse_stream(
     response: reqwest::Response,

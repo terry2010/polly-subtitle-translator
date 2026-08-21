@@ -19,8 +19,8 @@ import { useDevModeStore } from "../stores/devModeStore";
 import { useAuthStore } from "../stores/authStore";
 import { useOfficialTranslateStore } from "../stores/officialTranslateStore";
 import { api, formatIpcError, isTimeoutError, isDailyLimitError, isInsufficientBalanceError } from "../lib/api";
-import { warn, error as logError } from "../lib/logger";
-import { withPlayerHidden } from "../lib/utils";
+import { warn, error as logError, info as logInfo } from "../lib/logger";
+import { withPlayerHidden, formatEta as formatEtaUtil } from "../lib/utils";
 import { SERVICES, encodeAiSelectValue, decodeAiSelectValue, isMaybeFreeModel, getModelPriceUrl } from "../lib/services";
 import { SubtitlePreviewPanel } from "../components/SubtitlePreviewPanel";
 import { SearchDialog } from "../components/SearchDialog";
@@ -198,6 +198,17 @@ export default function MainView() {
   // refs for promise-based dialog flow
   const glossaryConfirmedRef = useRef(false);
   const nameExtractCancelledRef = useRef(false);
+  // 跟踪译名表确认轮询的 interval，组件卸载时清理避免内存泄漏
+  const glossaryIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // 组件卸载时清理轮询 interval，防止导航离开后 interval 持续运行
+  useEffect(() => {
+    return () => {
+      if (glossaryIntervalRef.current) {
+        clearInterval(glossaryIntervalRef.current);
+        glossaryIntervalRef.current = null;
+      }
+    };
+  }, []);
   // 自动翻译模式：弹窗弹出后翻译已在后台进行，弹窗关闭时不中止翻译
   const glossaryAutoModeRef = useRef(false);
   // 自动模式下翻译是否已完成（用于弹窗按钮状态）
@@ -845,7 +856,7 @@ export default function MainView() {
         };
         const oldName = getProviderName(oldProvider, oldServiceId, oldModel);
         const newName = getProviderName(effectiveProvider, effectiveServiceId, effectiveModel);
-        console.info(`[MainView] 翻译引擎已切换: ${oldName} -> ${newName}`);
+        logInfo(`[MainView] 翻译引擎已切换: ${oldName} -> ${newName}`);
       }
     });
   }, [isLoggedIn]);
@@ -1222,9 +1233,11 @@ export default function MainView() {
                 const checkInterval = setInterval(() => {
                   if (!useTranslateStore.getState().glossaryDialogOpen) {
                     clearInterval(checkInterval);
+                    glossaryIntervalRef.current = null;
                     resolve(glossaryConfirmedRef.current);
                   }
                 }, 200);
+                glossaryIntervalRef.current = checkInterval;
               });
               if (!confirmed) {
                 translateStore.setExtractingNames(false);
@@ -1294,13 +1307,7 @@ export default function MainView() {
     return `${h}:${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
   };
 
-  const formatEta = (secs: number) => {
-    if (secs <= 0) return "--";
-    if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
-    const m = Math.floor(secs / 60);
-    const s = Math.ceil(secs % 60);
-    return t("settings.etaMinSecs", { m, s });
-  };
+  const formatEta = (secs: number) => formatEtaUtil(secs, t);
 
   const formatSize = (bytes: number | null) => {
     if (!bytes) return "--";

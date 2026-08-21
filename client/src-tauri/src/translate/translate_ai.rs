@@ -37,6 +37,7 @@ impl ModelType {
     }
 
     /// 从 serde 字符串构造（用于从 db config 读取的值）
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "qwen3" => Some(ModelType::Qwen3),
@@ -561,7 +562,7 @@ impl TpmController {
                 let expire_sec = ts + 60;
                 let wait_sec = expire_sec.saturating_sub(now);
                 // 至少等 0.5 秒，最多等 10 秒（避免过长阻塞）
-                return (wait_sec.max(1).min(10) * 1000) as u64;
+                return wait_sec.clamp(1, 10) * 1000;
             }
         }
         // 理论上不会走到这里：所有记录都过期后窗口必然为空
@@ -990,7 +991,7 @@ impl OpenAiProvider {
             if e.is_timeout() {
                 AppError::TranslateTimeout {
                     provider: self.service_name.clone(),
-                    timeout_secs: timeout_secs,
+                    timeout_secs,
                 }
             } else {
                 AppError::TranslateNetworkError {
@@ -1180,13 +1181,23 @@ impl OpenAiProvider {
                     if json_str.trim() == "[DONE]" { continue; }
 
                     if let Ok(chunk_json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                        let delta_obj = &chunk_json["choices"][0]["delta"];
+                        // 安全访问 choices[0]：部分 API 在心跳/keepalive chunk 中返回 "choices": []，
+                        // 直接索引会 panic（数组越界），这里用链式 get 跳过空 chunk
+                        let choices_arr = match chunk_json.get("choices").and_then(|c| c.as_array()) {
+                            Some(c) if !c.is_empty() => c,
+                            _ => continue,
+                        };
+                        let choice0 = &choices_arr[0];
+                        let delta_obj = match choice0.get("delta") {
+                            Some(d) => d,
+                            None => continue,
+                        };
 
                         // 记录每个 chunk 的结构（即使 content 为空），方便调试 thinking 问题
                         // 当模型在 thinking 但不返回 reasoning_content 时，会发送大量空 content delta
                         let has_reasoning = delta_obj.get("reasoning_content").is_some();
                         let content_str = delta_obj["content"].as_str().unwrap_or("");
-                        let finish_reason = chunk_json["choices"][0].get("finish_reason").and_then(|v| v.as_str()).unwrap_or("");
+                        let finish_reason = choice0.get("finish_reason").and_then(|v| v.as_str()).unwrap_or("");
                         if has_reasoning {
                             // reasoning_content chunk：内容在下面单独记录
                         } else if content_str.is_empty() && finish_reason.is_empty() {
@@ -1589,7 +1600,7 @@ impl TranslateProviderTrait for OpenAiProvider {
             if e.is_timeout() {
                 AppError::TranslateTimeout {
                     provider: self.service_name.clone(),
-                    timeout_secs: timeout_secs,
+                    timeout_secs,
                 }
             } else {
                 AppError::TranslateNetworkError {
@@ -1730,13 +1741,23 @@ impl TranslateProviderTrait for OpenAiProvider {
                     if json_str.trim() == "[DONE]" { continue; }
 
                     if let Ok(chunk_json) = serde_json::from_str::<serde_json::Value>(json_str) {
-                        let delta_obj = &chunk_json["choices"][0]["delta"];
+                        // 安全访问 choices[0]：部分 API 在心跳/keepalive chunk 中返回 "choices": []，
+                        // 直接索引会 panic（数组越界），这里用链式 get 跳过空 chunk
+                        let choices_arr = match chunk_json.get("choices").and_then(|c| c.as_array()) {
+                            Some(c) if !c.is_empty() => c,
+                            _ => continue,
+                        };
+                        let choice0 = &choices_arr[0];
+                        let delta_obj = match choice0.get("delta") {
+                            Some(d) => d,
+                            None => continue,
+                        };
 
                         // 记录每个 chunk 的结构（即使 content 为空），方便调试 thinking 问题
                         // 当模型在 thinking 但不返回 reasoning_content 时，会发送大量空 content delta
                         let has_reasoning = delta_obj.get("reasoning_content").is_some();
                         let content_str = delta_obj["content"].as_str().unwrap_or("");
-                        let finish_reason = chunk_json["choices"][0].get("finish_reason").and_then(|v| v.as_str()).unwrap_or("");
+                        let finish_reason = choice0.get("finish_reason").and_then(|v| v.as_str()).unwrap_or("");
                         if has_reasoning {
                             // reasoning_content chunk：内容在下面单独记录
                         } else if content_str.is_empty() && finish_reason.is_empty() {
@@ -1923,6 +1944,7 @@ pub(crate) fn get_model_batch_sizes(model: &str) -> (usize, Vec<usize>) {
 /// 每一级只重试仍然失败的条目，已成功的不重试
 /// 返回 Vec<String>，失败的条目用空字符串占位（长度始终等于输入）
 /// 遇到致命错误（余额不足/接口未授权/每日限额/认证失败）时立即返回 Err，不再降级重试
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn translate_batch_with_fallback(
     provider: &dyn TranslateProviderTrait,
     texts: &[String],
@@ -2458,6 +2480,7 @@ fn is_pure_ascii(s: &str) -> bool {
 /// - 译名同时含 CJK 字符和小写拉丁词（≥3 连续小写字母）
 /// - 且不是品牌名格式（`EnglishName（中文翻译）`，括号分隔）
 /// - 全大写缩写（如 CEO、DNA）不视为混合翻译
+///
 /// 返回 true 表示是坏的混合翻译，应过滤
 fn is_bad_mixed_latin_chinese(s: &str) -> bool {
     let has_cjk = s.chars().any(is_chinese_char);
@@ -3002,7 +3025,7 @@ fn merge_extracted_names(segment_results: &[SegmentNameResult]) -> Vec<Extracted
         .collect();
 
     // 按英文名排序，输出稳定
-    merged.sort_by(|a, b| a.english.to_lowercase().cmp(&b.english.to_lowercase()));
+    merged.sort_by_key(|a| a.english.to_lowercase());
     merged
 }
 
@@ -3187,6 +3210,7 @@ fn filter_names_not_in_text(names: Vec<ExtractedName>, texts: &[String]) -> Vec<
 /// 从字幕文本中提取人名（分段并发扫描 + 合并去重）
 /// 返回统一的人名译名表
 /// app_handle: 用于向前端发送进度事件（extract-names-progress）
+#[allow(clippy::too_many_arguments)]
 pub async fn extract_names_from_subtitles(
     provider: std::sync::Arc<dyn TranslateProviderTrait + Send + Sync>,
     texts: &[String],
@@ -3217,7 +3241,7 @@ pub async fn extract_names_from_subtitles(
     const DEFAULT_MAX_LINES_PER_SEGMENT: usize = 150;
     let (translation_batch_size, _) = get_model_batch_sizes(model);
     let max_lines_per_segment = translation_batch_size.min(DEFAULT_MAX_LINES_PER_SEGMENT);
-    let segment_budget = max_input_tokens.saturating_sub(2000).max(1000).min(3500);
+    let segment_budget = max_input_tokens.saturating_sub(2000).clamp(1000, 3500);
     let mut segments: Vec<Vec<String>> = Vec::new();
     let mut current: Vec<String> = Vec::new();
     let mut current_tokens = 0usize;
@@ -3287,7 +3311,14 @@ pub async fn extract_names_from_subtitles(
         let completed_count = completed_count.clone();
         let app_handle = app_handle.clone();
         join_set.spawn(async move {
-            let _permit = semaphore.acquire_owned().await.unwrap();
+            // 信号量获取失败（信号量被关闭）时返回空结果而非 panic
+            let _permit = match semaphore.acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::error!("人名预扫描段 {} 信号量获取失败", idx + 1);
+                    return SegmentNameResult { segment_idx: idx, names: Vec::new(), timeout_error: None };
+                }
+            };
             // 取消检查：获取信号量后检查取消标志
             if cancel_counter.load(std::sync::atomic::Ordering::Relaxed) != my_gen {
                 tracing::info!("人名预扫描段 {} 已取消", idx + 1);
@@ -3330,7 +3361,7 @@ pub async fn extract_names_from_subtitles(
                     match result {
                         Ok(c) => { content = Some(c); break; }
                         Err(AppError::TranslateRateLimit { retry_after, .. }) => {
-                            let wait = retry_after.unwrap_or(30).min(60) as u64;
+                            let wait = retry_after.unwrap_or(30).min(60);
                             tracing::warn!(
                                 "人名预扫描段 {} 被限流（第 {} 次重试），等待 {} 秒",
                                 idx + 1, attempt + 1, wait
@@ -3711,7 +3742,7 @@ pub fn post_process_name_tags(
             alternatives: Vec::new(),
         })
         .collect();
-    final_glossary.sort_by(|a, b| a.english.to_lowercase().cmp(&b.english.to_lowercase()));
+    final_glossary.sort_by_key(|a| a.english.to_lowercase());
 
     NameConsistencyResult {
         final_glossary,

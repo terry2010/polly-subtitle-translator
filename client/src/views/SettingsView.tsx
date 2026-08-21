@@ -23,7 +23,7 @@ import { useAuthStore } from "../stores/authStore";
 import { api, formatIpcError, isTimeoutError, isInsufficientBalanceError } from "../lib/api";
 import type { PromptFailLogEntry } from "../lib/ipc-types";
 import { warn } from "../lib/logger";
-import { cn } from "../lib/utils";
+import { cn, formatEta } from "../lib/utils";
 
 // 批量翻译页面懒加载（仅开发者模式进入 batch tab 时才加载）
 const BatchView = lazy(() => import("./BatchView"));
@@ -1557,15 +1557,6 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
 // === SECTION 3 END ===
 
 // === 播放器设置 ===
-
-/// 格式化剩余时间
-function formatEta(secs: number, t: (key: string, options?: any) => string): string {
-  if (secs <= 0) return "--";
-  if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
-  const m = Math.floor(secs / 60);
-  const s = Math.ceil(secs % 60);
-  return t("settings.etaMinSecs", { m, s });
-}
 
 function PlayerSettings() {
   const { t } = useTranslation();

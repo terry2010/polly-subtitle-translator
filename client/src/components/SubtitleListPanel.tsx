@@ -9,17 +9,8 @@ import { ScrollArea } from "./ui/scroll-area";
 import { useSubtitleStore } from "../stores/subtitleStore";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type { SubtitleEntry } from "../lib/ipc-types";
-import { withPlayerHidden } from "../lib/utils";
+import { withPlayerHidden, formatTimecode } from "../lib/utils";
 import { RestoreOriginalDialog } from "./RestoreOriginalDialog";
-
-function formatTimecode(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const millis = ms % 1000;
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")},${millis.toString().padStart(3, "0")}`;
-}
 
 export function SubtitleListPanel() {
   const { t } = useTranslation();

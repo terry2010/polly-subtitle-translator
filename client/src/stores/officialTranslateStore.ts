@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { toast } from "sonner";
 import { api, formatIpcError } from "../lib/api";
+import { warn } from "../lib/logger";
 import type {
   OfficialTranslateParams,
   OfficialTranslateResponse,
@@ -109,7 +110,7 @@ export const useOfficialTranslateStore = create<OfficialTranslateState>((set, ge
         // SSE error 事件不含 token_balance，需调 GET /auth/me 更新余额
         // 联调文档 02-P1 第 251-258 行
         useAuthStore.getState().fetchUserInfo().catch((e) => {
-          console.warn("error 后刷新余额失败:", e);
+          warn("error 后刷新余额失败:", e);
         });
       }
     );
@@ -187,7 +188,7 @@ export const useOfficialTranslateStore = create<OfficialTranslateState>((set, ge
         toast.info(i18n.t("translate.officialCancelled", { completed: result.completed_lines, total: result.total_lines }) + (result.refunded ? i18n.t("translate.officialRefunded", { count: result.refunded }) : ""));
       }
     } catch (e: any) {
-      console.warn("取消官方翻译失败:", e);
+      warn("取消官方翻译失败:", e);
       // 即使后端取消失败，前端也重置状态
     } finally {
       // 清理 listeners + 重置状态

@@ -8,6 +8,7 @@ import { Loader2, Download, AlertCircle, CheckCircle2, RefreshCw } from "lucide-
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { api, formatIpcError } from "../lib/api";
+import { formatEta } from "../lib/utils";
 
 interface UpdateDialogProps {
   open: boolean;
@@ -17,15 +18,6 @@ interface UpdateDialogProps {
 }
 
 type Stage = "prompt" | "downloading" | "done" | "failed";
-
-/// 格式化剩余时间
-function formatEta(secs: number, t: (key: string, options?: any) => string): string {
-  if (secs <= 0) return "--";
-  if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
-  const m = Math.floor(secs / 60);
-  const s = Math.ceil(secs % 60);
-  return t("settings.etaMinSecs", { m, s });
-}
 
 export function UpdateDialog({ open, version, notes, onClose }: UpdateDialogProps) {
   const { t } = useTranslation();

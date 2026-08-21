@@ -33,6 +33,44 @@ export function formatDuration(ms: number): string {
   return `${seconds}s`;
 }
 
+/** 格式化剩余时间（ETA）：秒 → i18n 翻译的 "xx分yy秒" / "yy秒" */
+export function formatEta(secs: number, t: (key: string, options?: any) => string): string {
+  if (secs <= 0) return "--";
+  if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
+  const m = Math.floor(secs / 60);
+  const s = Math.ceil(secs % 60);
+  return t("settings.etaMinSecs", { m, s });
+}
+
+/** 格式化时间码（SRT 风格：HH:MM:SS,mmm），用于字幕条目时间戳显示 */
+export function formatTimecode(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const millis = ms % 1000;
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")},${millis.toString().padStart(3, "0")}`;
+}
+
+/** 判断文本是否为音效/环境声标记，如 [clattering continues] / [碰撞声持续]
+ *  与 translate.rs 的实现保持一致 */
+export function looksLikeSoundEffect(s: string): boolean {
+  // 先去掉 ASS 定位/样式标签（如 {\an8}），与 translate.rs 的实现一致
+  // 否则含 {\an8} 前缀的音效标记（如 {\an8}[phone buzzing]）会被误判为非音效标记，
+  // 导致翻译时 isUntranslated 与导出往返后 isUntranslated 不一致
+  const stripped = s.replace(/\{[^}]*\}/g, "");
+  const t = stripped.trim();
+  if (!t) return false;
+  if (t.startsWith("[") && t.endsWith("]")) return true;
+  // 去掉 [Name] 前缀后，剩余部分仍被 [] 包裹
+  const m = t.match(/^\s*\[[^\]]+\]\s*(.*)$/);
+  if (m) {
+    const rest = m[1].trim();
+    if (rest && rest.startsWith("[") && rest.endsWith("]")) return true;
+  }
+  return false;
+}
+
 /**
  * 模块级 UI 状态（不触发 re-render，用 ref 语义跨组件共享）。
  * 用于：原生 <select> 展开时暂停字幕自动滚动，避免滚动动画导致下拉菜单被浏览器收起。

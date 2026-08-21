@@ -8,6 +8,7 @@ import { Loader2, Download, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "./ui/dialog";
 import { Button } from "./ui/button";
 import { api, formatIpcError } from "../lib/api";
+import { formatEta } from "../lib/utils";
 
 interface FfmpegDownloadDialogProps {
   open: boolean;
@@ -16,15 +17,6 @@ interface FfmpegDownloadDialogProps {
 }
 
 type Stage = "idle" | "downloading" | "extracting" | "done" | "failed";
-
-/// 格式化剩余时间：秒 → "xx分yy秒" / "yy秒"
-function formatEta(secs: number, t: (key: string, options?: any) => string): string {
-  if (secs <= 0) return "--";
-  if (secs < 60) return t("settings.etaSecs", { count: Math.ceil(secs) });
-  const m = Math.floor(secs / 60);
-  const s = Math.ceil(secs % 60);
-  return t("settings.etaMinSecs", { m, s });
-}
 
 export function FfmpegDownloadDialog({ open, onDownloaded, onCancel }: FfmpegDownloadDialogProps) {
   const { t } = useTranslation();
