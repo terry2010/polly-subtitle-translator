@@ -106,7 +106,12 @@ export const useOfficialTranslateStore = create<OfficialTranslateState>((set, ge
       (event) => {
         const { error_code, message } = event.payload;
         set({ status: "error", error: message || error_code });
-        toast.error(message || error_code);
+        // 取消是用户主动操作，用 info 而非 error 提示
+        if (error_code === "cancelled") {
+          toast.info(message || error_code);
+        } else {
+          toast.error(message || error_code);
+        }
         // SSE error 事件不含 token_balance，需调 GET /auth/me 更新余额
         // 联调文档 02-P1 第 251-258 行
         useAuthStore.getState().fetchUserInfo().catch((e) => {
@@ -132,7 +137,11 @@ export const useOfficialTranslateStore = create<OfficialTranslateState>((set, ge
       }
     );
     const unlistenDone = await listen("official-translate-done", () => {
-      set({ status: "completed" });
+      // 仅 translating 态允许置 completed：error/cancelled 终态后 [DONE] 仍会到达，
+      // 用户 cancel() 后 status 已被重置为 idle，均不得覆盖
+      if (get().status === "translating") {
+        set({ status: "completed" });
+      }
     });
 
     set({
@@ -142,6 +151,11 @@ export const useOfficialTranslateStore = create<OfficialTranslateState>((set, ge
     try {
       const params: OfficialTranslateParams = { file, model };
       const result = await api.translateOfficial(params);
+      // SSE error/cancelled 后流正常结束、translateOfficial 返回无译文的结果，
+      // 不得覆盖 error 状态把失败任务显示为"完成"；用户 cancel() 后 status=idle 同理
+      if (get().status !== "translating") {
+        return;
+      }
       set({ result, status: "completed" });
 
       // 余额同步：result 中的 token_balance/bonus_balance 更新 authStore

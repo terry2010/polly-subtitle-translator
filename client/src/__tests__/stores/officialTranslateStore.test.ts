@@ -16,6 +16,7 @@ vi.mock("../../lib/api", () => ({
 vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
+    info: vi.fn(),
   },
 }));
 
@@ -224,5 +225,70 @@ describe("officialTranslateStore", () => {
     // 验证 fetchUserInfo 被调用
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(useAuthStore.getState().fetchUserInfo).toHaveBeenCalled();
+  });
+
+  it("SSE error 后 [DONE] 和 resolve 不覆盖 error 状态", async () => {
+    // FP6 reviewer：error 终态后 [DONE]/translateOfficial resolve 不得把 status 改回 completed
+    const { listen } = await import("@tauri-apps/api/event");
+    const mockListen = listen as any;
+
+    let errorCallback: ((event: { payload: OfficialTranslateError }) => void) | null = null;
+    let doneCallback: ((e: any) => void) | null = null;
+    mockListen.mockImplementation((event: string, cb: (e: any) => void) => {
+      if (event === "official-translate-error") errorCallback = cb;
+      if (event === "official-translate-done") doneCallback = cb;
+      return Promise.resolve(() => {});
+    });
+
+    let resolveTranslate: (value: any) => void;
+    (api.translateOfficial as any).mockReturnValue(
+      new Promise((resolve) => { resolveTranslate = resolve; })
+    );
+
+    // translate 返回前模拟 SSE error 到达（流尚未结束）
+    const translatePromise = useOfficialTranslateStore.getState().translate(mockFile);
+    // 等 listeners 注册完成
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    errorCallback!({
+      payload: { phase: "translate", step: "translate", error_code: "translate_failed", message: "LLM 超时" },
+    });
+    // error 之后 [DONE] 到达，随后流关闭、translateOfficial resolve
+    doneCallback!(null);
+    resolveTranslate!({ entries: [], tokens_used: 0, cost: 0, token_balance: null, bonus_balance: null });
+    await translatePromise;
+
+    const state = useOfficialTranslateStore.getState();
+    expect(state.status).toBe("error");
+    expect(state.error).toBe("LLM 超时");
+    expect(state.result).toBeNull();
+  });
+
+  it("cancelled 事件用 toast.info 而非 toast.error", async () => {
+    const { listen } = await import("@tauri-apps/api/event");
+    const mockListen = listen as any;
+
+    let errorCallback: ((event: { payload: OfficialTranslateError }) => void) | null = null;
+    mockListen.mockImplementation((event: string, cb: (e: any) => void) => {
+      if (event === "official-translate-error") errorCallback = cb;
+      return Promise.resolve(() => {});
+    });
+
+    let resolveTranslate: (value: any) => void;
+    (api.translateOfficial as any).mockReturnValue(
+      new Promise((resolve) => { resolveTranslate = resolve; })
+    );
+
+    const translatePromise = useOfficialTranslateStore.getState().translate(mockFile);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    errorCallback!({
+      payload: { phase: "", step: "", error_code: "cancelled", message: "任务已取消" },
+    });
+    resolveTranslate!({ entries: [], tokens_used: 0, cost: 0, token_balance: null, bonus_balance: null });
+    await translatePromise;
+
+    const { toast } = await import("sonner");
+    expect(toast.info).toHaveBeenCalledWith("任务已取消");
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(useOfficialTranslateStore.getState().status).toBe("error");
   });
 });

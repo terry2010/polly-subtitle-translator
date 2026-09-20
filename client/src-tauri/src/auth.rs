@@ -1517,13 +1517,26 @@ pub async fn list_jobs(
             .json()
             .await
             .map_err(|e| TranslateError::ParseError(format!("解析任务列表响应失败: {}", e)))?;
-        // 后端返回 { code, data: { jobs, total, page, page_size } }
-        let data = body.get("data").ok_or_else(|| {
-            TranslateError::ParseError("响应缺少 data 字段".to_string())
-        })?;
-        let result: ListJobsResult = serde_json::from_value(data.clone())
+        // 后端实际返回 { items, total, page, page_size }（无 data 包裹，与 dashboard-app 一致）
+        // 兼容 { data: { jobs, ... } } 旧格式以防后端回滚
+        let items = body
+            .get("items")
+            .or_else(|| body.get("data").and_then(|d| d.get("jobs")))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]));
+        let total = body
+            .get("total")
+            .or_else(|| body.get("data").and_then(|d| d.get("total")))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        let jobs: Vec<JobListItem> = serde_json::from_value(items)
             .map_err(|e| TranslateError::ParseError(format!("解析任务列表失败: {}", e)))?;
-        Ok(result)
+        Ok(ListJobsResult {
+            jobs,
+            total,
+            page: page.unwrap_or(1),
+            page_size: page_size.unwrap_or(20),
+        })
     } else {
         let body = resp.text().await.unwrap_or_default();
         Err(TranslateError::ServerError {
@@ -1824,13 +1837,37 @@ pub fn parse_sse_event(raw: &str) -> Option<SseEvent> {
         return Some(SseEvent::Partial { subtitles, current, total });
     }
 
-    // error
-    if payload.get("error").is_some() {
+    // error（两种形状：裸 {"error":"..."} 或 design §7.4 的 {"type":"error","error":"...",...}）
+    if payload.get("error").is_some()
+        || payload.get("type").and_then(|v| v.as_str()) == Some("error")
+    {
         let phase = payload.get("phase").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let step = payload.get("step").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let error_code = payload.get("error").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
+        let error_code = payload.get("error").and_then(|v| v.as_str())
+            .unwrap_or("translate_failed").to_string();
         let message = payload.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string();
         return Some(SseEvent::Error { phase, step, error_code, message });
+    }
+
+    // cancelled：终态，映射为 Error(error_code="cancelled")，前端展示"任务已取消"
+    if payload.get("type").and_then(|v| v.as_str()) == Some("cancelled") {
+        let message = payload.get("message").and_then(|v| v.as_str())
+            .unwrap_or("任务已取消").to_string();
+        return Some(SseEvent::Error {
+            phase: String::new(),
+            step: String::new(),
+            error_code: "cancelled".to_string(),
+            message,
+        });
+    }
+
+    // cancelling / paused：非终态 keep-alive 事件（后端每轮轮询各发一条），
+    // 映射为 Heartbeat 重置 watchdog，使流在暂停/取消结算期间保持存活
+    if matches!(
+        payload.get("type").and_then(|v| v.as_str()),
+        Some("cancelling") | Some("paused")
+    ) {
+        return Some(SseEvent::Heartbeat);
     }
 
     // progress
@@ -3749,6 +3786,58 @@ mod tests {
         }
     }
 
+    /// FP6: design §7.4 error 事件形状 {"type":"error","error":...,"task_id":...,"status":"failed"}
+    #[test]
+    fn test_parse_sse_error_v5_contract() {
+        let event = parse_sse_event("data: {\"type\":\"error\",\"error\":\"translate_failed\",\"task_id\":42,\"status\":\"failed\",\"message\":\"LLM 超时\"}");
+        match event {
+            Some(SseEvent::Error { error_code, message, .. }) => {
+                assert_eq!(error_code, "translate_failed");
+                assert_eq!(message, "LLM 超时");
+            }
+            other => panic!("期望 Error，实际: {:?}", other),
+        }
+    }
+
+    /// FP6: 旧形状 {"type":"error","message":...}（无 error 字段）也应识别为 Error
+    #[test]
+    fn test_parse_sse_error_type_only() {
+        let event = parse_sse_event("data: {\"type\":\"error\",\"message\":\"翻译失败\"}");
+        match event {
+            Some(SseEvent::Error { error_code, message, .. }) => {
+                assert_eq!(error_code, "translate_failed");
+                assert_eq!(message, "翻译失败");
+            }
+            other => panic!("期望 Error，实际: {:?}", other),
+        }
+    }
+
+    /// FP6: cancelled 终态事件映射为 Error(error_code="cancelled")
+    #[test]
+    fn test_parse_sse_cancelled() {
+        let event = parse_sse_event("data: {\"type\":\"cancelled\",\"task_id\":42,\"status\":\"cancelled\",\"message\":\"任务已取消\"}");
+        match event {
+            Some(SseEvent::Error { error_code, message, .. }) => {
+                assert_eq!(error_code, "cancelled");
+                assert_eq!(message, "任务已取消");
+            }
+            other => panic!("期望 Error，实际: {:?}", other),
+        }
+    }
+
+    /// FP6: cancelling/paused 非终态事件映射为 Heartbeat（保持流存活）
+    #[test]
+    fn test_parse_sse_cancelling_paused_keepalive() {
+        assert!(matches!(
+            parse_sse_event("data: {\"type\":\"cancelling\",\"task_id\":42,\"status\":\"canceling\",\"message\":\"任务正在取消...\"}"),
+            Some(SseEvent::Heartbeat)
+        ));
+        assert!(matches!(
+            parse_sse_event("data: {\"type\":\"paused\",\"task_id\":42,\"status\":\"paused\",\"message\":\"任务已暂停\"}"),
+            Some(SseEvent::Heartbeat)
+        ));
+    }
+
     #[test]
     fn test_parse_sse_progress_polish_step() {
         // 精品档润色阶段
@@ -4141,6 +4230,32 @@ mod tests {
         assert_eq!(result.jobs.len(), 1);
         assert_eq!(result.jobs[0].job_id, "uuid-1");
         assert_eq!(result.jobs[0].status, "completed");
+
+        clear_access_token().await;
+    }
+
+    /// FP5: 后端实际返回 { items, total, page, page_size }（无 data 包裹），验证新形状解析。
+    #[tokio::test]
+    async fn test_list_jobs_items_shape() {
+        let _guard = test_lock();
+        clear_access_token().await;
+        let db = test_db();
+        set_access_token("at-test".to_string(), 3600).await;
+
+        let mock_body = r#"{"items":[{"job_id":"42","filename":"ep01.srt","status":"running","source_language":"en","target_language":"zh","total_entries":3,"completed_entries":1,"estimated_points":3,"consumed_points":1,"frozen_points":3,"created_at":"2024-01-01T00:00:00Z"}],"total":1,"page":1,"page_size":20}"#;
+        let (addr, _, _) = start_mock_server_with_capture(200, "OK", mock_body.to_string()).await;
+        db.set_config("zimufan_api_base_url", &format!("http://{}", addr)).unwrap();
+
+        let client = reqwest::Client::new();
+        let result = list_jobs(&db, &client, None, None, None).await;
+
+        assert!(result.is_ok(), "list_jobs items 形状应解析成功: {:?}", result.err());
+        let result = result.unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.jobs.len(), 1);
+        assert_eq!(result.jobs[0].job_id, "42");
+        assert_eq!(result.jobs[0].status, "running");
+        assert_eq!(result.jobs[0].total_entries, 3);
 
         clear_access_token().await;
     }

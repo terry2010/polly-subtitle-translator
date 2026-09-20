@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS credentials (
 "#,
 },
 Migration {
-    version: 2,
+    version: 6,
     sql: r#"
 -- 批量翻译任务持久化
 CREATE TABLE IF NOT EXISTS batch_tasks (
@@ -1149,11 +1149,11 @@ mod tests {
         let db = test_db();
         // 再次执行 migrate 不应报错
         db.migrate().unwrap();
-        // schema_migrations 应有 v1、v2、v3、v4、v5 五条
+        // schema_migrations 应有 v1、v2、v3、v4、v5、v6 六条
         let count: i64 = db.with_conn(|conn| {
             Ok(conn.query_row::<i64, _, _>("SELECT COUNT(*) FROM schema_migrations", [], |row| row.get(0))?)
         }).unwrap();
-        assert_eq!(count, 5);
+        assert_eq!(count, 6);
     }
 
     // === SECTION 9 END ===
