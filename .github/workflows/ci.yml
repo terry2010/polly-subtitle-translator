@@ -5,7 +5,7 @@ jobs:
     runs-on: macos-latest
     defaults:
       run:
-        working-directory: src-tauri
+        working-directory: client/src-tauri
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
