@@ -92,6 +92,7 @@ pub enum AiService {
     Ernie,
     Ollama,
     Lmstudio,
+    Omlx,
     Custom,
 }
 
@@ -114,6 +115,7 @@ impl AiService {
             "ernie" => AiService::Ernie,
             "ollama" => AiService::Ollama,
             "lmstudio" => AiService::Lmstudio,
+            "omlx" => AiService::Omlx,
             "custom" => AiService::Custom,
             _ => {
                 tracing::warn!("未知 AI 服务 id: {}，回退为 Custom", id);
@@ -145,6 +147,7 @@ impl AiService {
             AiService::Ernie => "文心一言",
             AiService::Ollama => "Ollama",
             AiService::Lmstudio => "LM Studio",
+            AiService::Omlx => "oMLX",
             AiService::Custom => "自定义端点",
         }
     }
@@ -181,6 +184,7 @@ impl AiService {
             AiService::Ernie => "ernie",
             AiService::Ollama => "ollama",
             AiService::Lmstudio => "lmstudio",
+            AiService::Omlx => "omlx",
             AiService::Custom => "custom",
         }
     }

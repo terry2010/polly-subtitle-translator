@@ -785,15 +785,6 @@ fn build_provider_name(cfg: &BatchConfig) -> String {
     }
 }
 
-/// 获取 provider 的默认限流策略（用于 scheduler 构造）
-fn get_rate_limit(provider: &str) -> translate::RateLimitPolicy {
-    if let Some(prov) = translate::TranslateProvider::from_str(provider) {
-        prov.rate_limit_policy()
-    } else {
-        translate::RateLimitPolicy::Concurrency(3)
-    }
-}
-
 // === SECTION 3 END ===
 
 // === SECTION 3.5: 文件就绪检查（三级检测策略）===
@@ -2272,10 +2263,13 @@ async fn process_task(
     let provider_name = build_provider_name(&cfg);
     let file_hash = subtitle::compute_subtitle_hash(&subtitle_file.entries);
     let model_for_scheduler = cfg.model.clone().unwrap_or_default();
+    // 使用 resolved.rate_limit：含 per-service 用户配置（translate_openai_{sid}_qps），
+    // 原 get_rate_limit 只取 provider 默认值，会静默忽略用户配置的 QPS/并发上限
+    let rate_limit = resolved.rate_limit;
 
     let scheduler = translate::TranslateScheduler::new(db.inner(), resolved.instance, provider_name, model_for_scheduler)
         .with_file_hash(file_hash)
-        .with_concurrency_and_rate_limit(cfg.entry_concurrency, get_rate_limit(&cfg.provider));
+        .with_concurrency_and_rate_limit(cfg.entry_concurrency, rate_limit);
 
     let app_clone = app.clone();
     let task_id = task.id.clone();

@@ -465,6 +465,12 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
   // 官方 API 始终默认显示，无需开发者模式
 
   // 根据模型 id 自动识别 model_type
+  // 本地 MLX 推理服务（LM Studio / oMLX / Ollama）跑在 localhost/127.0.0.1，
+  // 其流量绝不应走系统/软件代理——否则会被 Clash 等代理拦截返回 502。
+  // 这类服务默认把 use_proxy 锁定为绕过（none），除非用户主动切换。
+  const isLocalMlProvider = (id: string): boolean =>
+    id === "lmstudio" || id === "omlx" || id === "ollama";
+
   const autoDetectModelTypeStr = useCallback((m: string): string => {
     const lower = m.toLowerCase();
     if (lower.includes("qwen3")) return "qwen3";
@@ -614,7 +620,20 @@ export function TranslateApiSettings({ listContainer }: { listContainer: HTMLDiv
         }
         if (savedQps) setQps(parseFloat(savedQps) || currentService.presetQps || 5);
         if (savedSecret) setSecretKey("••••••••");
-        setUseProxy(savedUseProxy === "true" ? true : savedUseProxy === "false" ? false : null);
+        // 本地 MLX 推理服务（LM Studio / oMLX / Ollama）：默认把 use_proxy 锁定为绕过（禁用）。
+         // 这类服务跑在 localhost/127.0.0.1，走系统/软件代理会被 Clash 等拦截返回 502。
+         // 仅当用户已手动配置过代理时，才尊重其手动选择；否则一律强制绕过。
+         if (currentService && currentService.category === "ai" && isLocalMlProvider(currentService.id)) {
+           if (savedUseProxy == null) {
+             // 用户尚未手动配置：写入 "false" 强制绕过，并界面显示为禁用。
+             api.setConfig(`translate_openai_${currentService.id}_use_proxy`, "false").catch(() => {});
+             setUseProxy(false);
+           } else {
+             setUseProxy(savedUseProxy === "true" ? true : false);
+           }
+         } else {
+           setUseProxy(savedUseProxy === "true" ? true : savedUseProxy === "false" ? false : null);
+         }
         // TPM：有保存值用保存值，否则用 preset 默认值
         setTpmLimit(savedTpm ? parseInt(savedTpm) || 0 : (currentService.presetTpm || 0));
         if (savedSelected) {

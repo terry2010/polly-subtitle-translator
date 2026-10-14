@@ -5203,7 +5203,7 @@ mod tests {
         let known_ids = [
             "deepseek", "zhipu", "siliconflow", "groq", "qwen", "doubao",
             "hunyuan", "lingyi", "kimi", "openai", "azure_openai",
-            "gemini", "ernie", "ollama", "lmstudio",
+            "gemini", "ernie", "ollama", "lmstudio", "omlx",
         ];
         for id in known_ids {
             assert_ne!(
