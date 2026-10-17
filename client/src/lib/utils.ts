@@ -42,6 +42,16 @@ export function formatEta(secs: number, t: (key: string, options?: any) => strin
   return t("settings.etaMinSecs", { m, s });
 }
 
+/** 格式化耗时（自动进位）：秒 → "xx秒" / "xx分yy秒" / "x时yy分zz秒"（i18n），秒保留真实小数 */
+export function formatElapsed(secs: number, t: (key: string, options?: any) => string): string {
+  const total = Math.max(0, secs);
+  if (total < 60) return t("common.durSecs", { count: Number(total.toFixed(2)) });
+  const m = Math.floor(total / 60);
+  const s = Number((total % 60).toFixed(2));
+  if (m < 60) return t("common.durMinSecs", { m, s });
+  return t("common.durHourMinSecs", { h: Math.floor(m / 60), m: m % 60, s });
+}
+
 /** 格式化时间码（SRT 风格：HH:MM:SS,mmm），用于字幕条目时间戳显示 */
 export function formatTimecode(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);

@@ -229,7 +229,8 @@ export function SubtitleStreamEditorDialog({
       });
       if (!outputPath) return; // 用户取消
 
-      await api.extractSubtitle(videoPath, item.originalIndex, outputPath);
+      const outExt = outputPath.split(".").pop()?.toLowerCase() ?? "srt";
+      await api.extractSubtitle(videoPath, item.originalIndex, item.language || "sub", outExt, outputPath);
       toast.success(t("subtitle.streamExportSuccess"));
     } catch (e) {
       error("字幕流导出失败:", e);

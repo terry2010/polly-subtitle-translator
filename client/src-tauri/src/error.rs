@@ -89,6 +89,9 @@ pub enum AppError {
     #[error("Subtitle extraction timed out ({timeout}s)")]
     FfmpegExtractTimeout { timeout: u64 },
 
+    #[error("Subtitle extraction stalled (no output for {idle}s)")]
+    FfmpegExtractStalled { idle: u64 },
+
     #[error("Subtitle stream is empty or contains no text")]
     FfmpegExtractEmptyStream,
 
@@ -451,6 +454,9 @@ impl AppError {
 
             FfmpegExtractTimeout { timeout } => IpcError::new("ffmpeg.extractTimeout", Severity::Recoverable)
                 .with_args(serde_json::json!({ "timeout": timeout })),
+
+            FfmpegExtractStalled { idle } => IpcError::new("ffmpeg.extractStalled", Severity::Recoverable)
+                .with_args(serde_json::json!({ "idle": idle })),
 
             FfmpegExtractEmptyStream => IpcError::new("ffmpeg.extractEmptyStream", Severity::Recoverable),
 
@@ -818,6 +824,11 @@ mod tests {
     #[test]
     fn test_err_ffmpeg_extract_timeout() {
         assert_ipc_with_arg(AppError::FfmpegExtractTimeout { timeout: 30 }, "ffmpeg.extractTimeout", Severity::Recoverable, "timeout", &serde_json::json!(30));
+    }
+
+    #[test]
+    fn test_err_ffmpeg_extract_stalled() {
+        assert_ipc_with_arg(AppError::FfmpegExtractStalled { idle: 120 }, "ffmpeg.extractStalled", Severity::Recoverable, "idle", &serde_json::json!(120));
     }
 
     #[test]

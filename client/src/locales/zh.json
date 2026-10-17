@@ -43,7 +43,10 @@
     "separator": "，",
     "noMatch": "无匹配结果",
     "copiedToast": "已复制",
-    "copyFailed": "复制失败"
+    "copyFailed": "复制失败",
+    "durSecs": "{{count}}秒",
+    "durMinSecs": "{{m}}分{{s}}秒",
+    "durHourMinSecs": "{{h}}时{{m}}分{{s}}秒"
   },
   "video": {
     "openTitle": "打开视频文件",
@@ -212,7 +215,8 @@
     "startTime": "开始时间",
     "endTime": "结束时间",
     "clickReEdit": "点击重新编辑",
-    "inserted": "已新增 · {{start}} → {{end}}"
+    "inserted": "已新增 · {{start}} → {{end}}",
+    "reextract": "重新提取"
   },
   "translate": {
     "title": "翻译",
@@ -274,7 +278,7 @@
     "officialCancelled": "已取消翻译，已完成 {{completed}}/{{total}} 行",
     "officialRefunded": "，退还 {{count}} 点数",
     "aiLabel": "AI翻译 - {{name}}",
-    "statTime": "耗时: {{secs}}秒",
+    "statTime": "耗时: {{time}}",
     "statChars": "字数: {{n}}",
     "statCharCount": "{{n}} 字",
     "statSpeed": "{{speed}} 字/秒",
@@ -777,6 +781,7 @@
       "extractFailed": "字幕提取失败：{{detail}}",
       "extractCancelled": "字幕提取已取消",
       "extractTimeout": "字幕提取超时（{{timeout}}秒），可能字幕流过大或 ffmpeg 卡住",
+      "extractStalled": "字幕提取停滞（{{idle}}秒无输出），可能网络中断或 ffmpeg 卡死",
       "extractEmptyStream": "字幕流为空或不包含文本内容",
       "noStreamsKept": "至少保留一条字幕流",
       "mergeFailed": "字幕合并失败：{{detail}}",

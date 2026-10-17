@@ -5,6 +5,7 @@ import {
   formatTime,
   formatBytes,
   formatDuration,
+  formatElapsed,
   toFileLangCode,
   buildSubtitleTitle,
   stripExt,
@@ -74,6 +75,27 @@ describe("utils - formatDuration", () => {
 });
 
 // === SECTION 5 END ===
+
+describe("utils - formatElapsed", () => {
+  // mock t：返回 "key|{参数}" 便于断言 key 与插值参数
+  const t = (key: string, o?: any) => `${key}|${JSON.stringify(o)}`;
+
+  it("不足 1 分钟只显示秒", () => {
+    expect(formatElapsed(45.4, t)).toBe('common.durSecs|{"count":45.4}');
+  });
+
+  it("分钟级进位", () => {
+    expect(formatElapsed(739.14, t)).toBe('common.durMinSecs|{"m":12,"s":19.14}');
+  });
+
+  it("小时级进位", () => {
+    expect(formatElapsed(7385, t)).toBe('common.durHourMinSecs|{"h":2,"m":3,"s":5}');
+  });
+
+  it("负数归零", () => {
+    expect(formatElapsed(-5, t)).toBe('common.durSecs|{"count":0}');
+  });
+});
 
 describe("utils - 语言代码", () => {
   it("toFileLangCode", () => {

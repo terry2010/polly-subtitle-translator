@@ -25,6 +25,12 @@ fn ffmpeg_download_dir() -> Option<PathBuf> {
     APP_DATA_DIR.get().map(|d| d.join("ffmpeg"))
 }
 
+/// 获取字幕提取缓存目录：app_data_dir/extract_cache/，按需创建
+pub fn extract_cache_dir() -> Option<PathBuf> {
+    let dir = APP_DATA_DIR.get()?.join("extract_cache");
+    std::fs::create_dir_all(&dir).ok().map(|_| dir)
+}
+
 /// 在 Windows release 模式下隐藏子进程控制台窗口
 #[cfg(windows)]
 fn no_window(mut cmd: Command) -> Command {
@@ -1221,7 +1227,10 @@ pub fn extract_subtitle_stream(
 
     // 路径规范化：反斜杠 → 正斜杠，避免 ffmpeg 在 Windows 上遇到 ".mkv\" 模式时报错
     let ffmpeg_video_path = normalize_path_for_ffmpeg(video_path);
-    let ffmpeg_output_path = normalize_path_for_ffmpeg(output_path);
+    // 输出到 .part 临时文件，验证成功后 rename 为正式文件，
+    // 防止取消/崩溃留下的半成品被当作有效提取结果（缓存场景尤其关键）
+    let part_path = format!("{}.part", output_path);
+    let ffmpeg_output_path = normalize_path_for_ffmpeg(&part_path);
 
     // 根据输出扩展名选择字幕编码器，保留 ass/vtt 原格式
     let subtitle_codec = subtitle_codec_for_path(output_path);
@@ -1235,12 +1244,17 @@ pub fn extract_subtitle_stream(
     let mut child = no_window(Command::new(&ffmpeg))
         .args([
             "-y",
+            "-nostdin",
             "-progress", "pipe:1",
             "-i",
             &ffmpeg_video_path,
             "-map",
             &format!("0:{}", stream_index),
             "-c:s",
+            subtitle_codec,
+            // .part 后缀使 ffmpeg 无法按扩展名推断输出格式，需显式指定
+            // （srt/ass/webvtt 编码器名与 muxer 名一致）
+            "-f",
             subtitle_codec,
             &ffmpeg_output_path,
         ])
@@ -1252,7 +1266,7 @@ pub fn extract_subtitle_stream(
         })?;
 
     let child_id = child.id();
-    let mut stdout = child.stdout.take().expect("stdout piped");
+    let stdout = child.stdout.take().expect("stdout piped");
     let mut stderr = child.stderr.take().expect("stderr piped");
 
     // 子线程：读 stderr 收集错误信息
@@ -1264,40 +1278,65 @@ pub fn extract_subtitle_stream(
         let _ = err_tx.send(buf);
     });
 
-    // 主线程：逐行读 stdout 解析进度，同时检查取消/超时
-    use std::io::BufRead;
-    let stdout_reader = std::io::BufReader::new(&mut stdout);
-    let start = std::time::Instant::now();
-    let timeout = Duration::from_secs(300); // NAS 慢，5 分钟超时
+    // stdout 读取必须放在独立线程：lines() 是阻塞调用，直接放主循环里，
+    // ffmpeg 卡死（无任何输出）时取消/超时检查永远不会执行
+    let (line_tx, line_rx) = mpsc::channel::<std::io::Result<String>>();
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stdout).lines() {
+            if line_tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
 
-    for line_result in stdout_reader.lines() {
+    let start = std::time::Instant::now();
+    let mut last_activity = start;
+    // 停滞检测：ffmpeg 正常运行时 -progress 按固定间隔持续输出，
+    // 超过该时长没有任何 stdout 输出即判定卡死（如 NAS 连接断开）
+    let stall_timeout = Duration::from_secs(120);
+    // 绝对上限 = 300s 基础 + 按文件大小 / 5MB/s 保底吞吐估算。
+    // MKV 字幕与音视频交错存储，提取需顺序读完整个文件；
+    // 27GB NAS 文件约需 ~90 分钟，小文件仍约 300s
+    let file_size = std::fs::metadata(video_path).map(|m| m.len()).unwrap_or(0);
+    let timeout = Duration::from_secs(300) + Duration::from_secs(file_size / (5 * 1024 * 1024));
+
+    loop {
         // 检查取消：代际变化意味着有新的取消请求
         if CANCEL_GENERATION.load(Ordering::Relaxed) != my_generation {
             tracing::info!("字幕提取被取消，杀死 ffmpeg 进程");
             kill_ffmpeg(child_id);
             return Err(AppError::FfmpegExtractCancelled);
         }
-        // 检查超时
+        // 停滞检测：有输出就视为存活，允许慢速读取无限进行
+        if last_activity.elapsed() >= stall_timeout {
+            tracing::error!("字幕提取停滞（{}秒无输出），杀死 ffmpeg 进程", stall_timeout.as_secs());
+            kill_ffmpeg(child_id);
+            return Err(AppError::FfmpegExtractStalled { idle: stall_timeout.as_secs() });
+        }
+        // 检查绝对超时（兜底）
         if start.elapsed() >= timeout {
             tracing::error!("字幕提取超时（{}秒），杀死 ffmpeg 进程", timeout.as_secs());
             kill_ffmpeg(child_id);
             return Err(AppError::FfmpegExtractTimeout { timeout: timeout.as_secs() });
         }
 
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
-
-        // 解析 -progress 输出：out_time_us=12345678 或 out_time=00:00:12.345
-        if let Some(progress) = parse_ffmpeg_progress(&line, duration_sec) {
-            if let Some(cb) = on_progress {
-                cb(progress);
+        match line_rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(Ok(line)) => {
+                last_activity = std::time::Instant::now();
+                // 解析 -progress 输出：out_time_us=12345678 或 out_time=00:00:12.345
+                if let Some(progress) = parse_ffmpeg_progress(&line, duration_sec) {
+                    if let Some(cb) = on_progress {
+                        cb(progress);
+                    }
+                }
+                // progress=end 表示完成
+                if line.starts_with("progress=end") {
+                    break;
+                }
             }
-        }
-        // progress=end 表示完成
-        if line.starts_with("progress=end") {
-            break;
+            Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
     }
 
@@ -1319,12 +1358,15 @@ pub fn extract_subtitle_stream(
         });
     }
 
-    // 检查输出文件是否为空（ffmpeg 可能成功退出但输出空文件）
-    let output_path_obj = Path::new(output_path);
-    if !output_path_obj.exists() || output_path_obj.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
+    // 检查 .part 文件是否为空（ffmpeg 可能成功退出但输出空文件）
+    let part_path_obj = Path::new(&part_path);
+    if !part_path_obj.exists() || part_path_obj.metadata().map(|m| m.len()).unwrap_or(0) == 0 {
         tracing::warn!("字幕提取完成但输出文件为空: {}", output_path);
         return Err(AppError::FfmpegExtractEmptyStream);
     }
+
+    // 原子重命名 .part → 正式文件
+    std::fs::rename(&part_path, output_path).map_err(AppError::Io)?;
 
     tracing::info!("字幕提取成功: {} -> {}", video_path, output_path);
     Ok(())
@@ -1334,6 +1376,92 @@ pub fn extract_subtitle_stream(
 pub fn get_file_size(path: &str) -> Result<u64, AppError> {
     let meta = std::fs::metadata(path).map_err(AppError::Io)?;
     Ok(meta.len())
+}
+
+/// OpenSubtitles Hash (OSHash)：file_size + 首尾各 64KB 按 u64 LE 求和（wrapping）。
+/// 恒定读 128KB + 2 次 seek，与文件大小无关的 O(1) 成本，
+/// 用于 NAS 大文件的快速身份识别（如字幕提取缓存 key）。
+/// 注意：非密码学 hash，只是求和校验，不能用于完整性校验。
+/// 参考：https://github.com/opensubtitles/oshash
+pub fn compute_oshash(path: &str) -> Result<String, AppError> {
+    use std::io::{Read, Seek, SeekFrom};
+    const CHUNK: usize = 64 * 1024;
+
+    let mut file = std::fs::File::open(path).map_err(AppError::Io)?;
+    let size = file.metadata().map_err(AppError::Io)?.len();
+    // 官方规范要求最小 128KB；视频文件必然满足
+    if size < (2 * CHUNK) as u64 {
+        return Err(AppError::Io(std::io::Error::other(format!(
+            "file too small for oshash (min 128KB): {} bytes",
+            size
+        ))));
+    }
+
+    let mut hash: u64 = size;
+    let mut buf = [0u8; CHUNK];
+    let sum_chunk = |file: &mut std::fs::File, buf: &mut [u8; CHUNK]| -> Result<u64, AppError> {
+        file.read_exact(buf).map_err(AppError::Io)?;
+        let mut sum = 0u64;
+        for w in buf.chunks_exact(8) {
+            sum = sum.wrapping_add(u64::from_le_bytes(w.try_into().unwrap()));
+        }
+        Ok(sum)
+    };
+
+    hash = hash.wrapping_add(sum_chunk(&mut file, &mut buf)?);
+    file.seek(SeekFrom::Start(size - CHUNK as u64)).map_err(AppError::Io)?;
+    hash = hash.wrapping_add(sum_chunk(&mut file, &mut buf)?);
+
+    // 官方规范：16 位小写 hex，必须补零
+    Ok(format!("{:016x}", hash))
+}
+
+/// 视频文件双 hash：一次 open、四次采样，产出 OSHash + 中段采样 hash。
+/// - oshash：标准 OpenSubtitles Hash（size + 头64K + 尾64K），可对接 OpenSubtitles API
+/// - midhash：size + 33%处64K + 66%处64K，补齐 OSHash 的中段盲区
+/// 缓存 key 建议用 oshash + midhash 拼接；两者分开存储还能区分
+/// "不同文件"（oshash 变）与"同文件中段被改"（oshash 同、midhash 变）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoHash {
+    pub oshash: String,
+    pub midhash: String,
+}
+
+pub fn compute_video_hash(path: &str) -> Result<VideoHash, AppError> {
+    use std::io::{Read, Seek, SeekFrom};
+    const CHUNK: usize = 64 * 1024;
+
+    let mut file = std::fs::File::open(path).map_err(AppError::Io)?;
+    let size = file.metadata().map_err(AppError::Io)?.len();
+    if size < (2 * CHUNK) as u64 {
+        return Err(AppError::Io(std::io::Error::other(format!(
+            "file too small for video hash (min 128KB): {} bytes",
+            size
+        ))));
+    }
+
+    // 读指定偏移处 64KB 并按 u64 LE 求和；offset 已保证 [0, size-64KB]
+    let sum_at = |file: &mut std::fs::File, offset: u64| -> Result<u64, AppError> {
+        file.seek(SeekFrom::Start(offset)).map_err(AppError::Io)?;
+        let mut buf = [0u8; CHUNK];
+        file.read_exact(&mut buf).map_err(AppError::Io)?;
+        let mut sum = 0u64;
+        for w in buf.chunks_exact(8) {
+            sum = sum.wrapping_add(u64::from_le_bytes(w.try_into().unwrap()));
+        }
+        Ok(sum)
+    };
+
+    let max_off = size - CHUNK as u64;
+    let head = sum_at(&mut file, 0)?;
+    let p33 = sum_at(&mut file, (size * 33 / 100).min(max_off))?;
+    let p66 = sum_at(&mut file, (size * 66 / 100).min(max_off))?;
+    let tail = sum_at(&mut file, max_off)?;
+
+    Ok(VideoHash {
+        oshash: format!("{:016x}", size.wrapping_add(head).wrapping_add(tail)),
+        midhash: format!("{:016x}", size.wrapping_add(p33).wrapping_add(p66)),
+    })
 }
 
 /// 获取指定路径所在磁盘的剩余空间（字节）
@@ -1974,6 +2102,162 @@ mod tests {
         std::fs::write(&tmp, &data).unwrap();
         let result = verify_downloaded_file(&tmp, "gz", "test");
         assert!(result.is_ok(), "合法 gzip magic bytes 应通过");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// 手工按规范计算 oshash 期望值，验证实现正确性
+    fn oshash_expected(data: &[u8]) -> String {
+        let mut h: u64 = data.len() as u64;
+        for w in data[..65536].chunks_exact(8) {
+            h = h.wrapping_add(u64::from_le_bytes(w.try_into().unwrap()));
+        }
+        for w in data[data.len() - 65536..].chunks_exact(8) {
+            h = h.wrapping_add(u64::from_le_bytes(w.try_into().unwrap()));
+        }
+        format!("{:016x}", h)
+    }
+
+    #[test]
+    fn test_compute_oshash_matches_spec() {
+        let tmp = std::env::temp_dir().join("zimufan_oshash_test.bin");
+        // 200KB 确定性内容，含 u64 溢出场景（大数值累加）
+        let data: Vec<u8> = (0..200 * 1024).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&tmp, &data).unwrap();
+
+        let hash = compute_oshash(tmp.to_str().unwrap()).unwrap();
+        assert_eq!(hash, oshash_expected(&data));
+        assert_eq!(hash.len(), 16);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_compute_oshash_rename_stable() {
+        let dir = std::env::temp_dir();
+        let p1 = dir.join("zimufan_oshash_a.bin");
+        let p2 = dir.join("zimufan_oshash_b.bin");
+        let data: Vec<u8> = (0..150 * 1024).map(|i| (i % 253) as u8).collect();
+        std::fs::write(&p1, &data).unwrap();
+        std::fs::write(&p2, &data).unwrap();
+
+        // 相同内容不同文件名 → 相同 hash（与文件名无关是 OSHash 的设计特性）
+        let h1 = compute_oshash(p1.to_str().unwrap()).unwrap();
+        let h2 = compute_oshash(p2.to_str().unwrap()).unwrap();
+        assert_eq!(h1, h2);
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    #[test]
+    fn test_compute_oshash_middle_differs_same_hash() {
+        // 已知局限：中间内容不同但大小+首尾相同 → hash 相同（非密码学 hash）
+        let dir = std::env::temp_dir();
+        let p1 = dir.join("zimufan_oshash_m1.bin");
+        let p2 = dir.join("zimufan_oshash_m2.bin");
+        let mut d1 = vec![0u8; 150 * 1024];
+        let mut d2 = d1.clone();
+        // 150KB 文件未采样区为 (65536, 153600-65536=88064)，取 76800 确保在中间盲区
+        d1[75 * 1024] = 0xAA;
+        d2[75 * 1024] = 0xBB;
+        std::fs::write(&p1, &d1).unwrap();
+        std::fs::write(&p2, &d2).unwrap();
+
+        assert_eq!(
+            compute_oshash(p1.to_str().unwrap()).unwrap(),
+            compute_oshash(p2.to_str().unwrap()).unwrap()
+        );
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    #[test]
+    fn test_compute_oshash_too_small_rejected() {
+        let tmp = std::env::temp_dir().join("zimufan_oshash_small.bin");
+        std::fs::write(&tmp, vec![0u8; 1000]).unwrap();
+        assert!(compute_oshash(tmp.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_compute_oshash_size_change_differs() {
+        // 内容前 64KB 相同但大小不同 → hash 不同（size 参与计算）
+        let dir = std::env::temp_dir();
+        let p1 = dir.join("zimufan_oshash_s1.bin");
+        let p2 = dir.join("zimufan_oshash_s2.bin");
+        let mut d = vec![0u8; 140 * 1024];
+        std::fs::write(&p1, &d).unwrap();
+        d.extend_from_slice(&[0u8; 20 * 1024]);
+        std::fs::write(&p2, &d).unwrap();
+
+        assert_ne!(
+            compute_oshash(p1.to_str().unwrap()).unwrap(),
+            compute_oshash(p2.to_str().unwrap()).unwrap()
+        );
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    #[test]
+    fn test_compute_video_hash_oshash_consistent() {
+        // video_hash 的 oshash 字段必须与标准 compute_oshash 结果一致
+        let tmp = std::env::temp_dir().join("zimufan_vhash_c.bin");
+        let data: Vec<u8> = (0..200 * 1024).map(|i| (i % 241) as u8).collect();
+        std::fs::write(&tmp, &data).unwrap();
+
+        let vh = compute_video_hash(tmp.to_str().unwrap()).unwrap();
+        assert_eq!(vh.oshash, compute_oshash(tmp.to_str().unwrap()).unwrap());
+        assert_eq!(vh.oshash.len(), 16);
+        assert_eq!(vh.midhash.len(), 16);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_compute_video_hash_mid_detects_middle_change() {
+        // 修改 33% 采样点处内容：oshash 不变、midhash 变 —— 补齐 OSHash 中段盲区
+        let dir = std::env::temp_dir();
+        let p1 = dir.join("zimufan_vhash_m1.bin");
+        let p2 = dir.join("zimufan_vhash_m2.bin");
+        let mut d1 = vec![0u8; 200 * 1024];
+        let d2 = d1.clone();
+        // 33% 处 = 67584，落在 p33 采样块内
+        d1[67584] = 0xAA;
+        std::fs::write(&p1, &d1).unwrap();
+        std::fs::write(&p2, &d2).unwrap();
+
+        let v1 = compute_video_hash(p1.to_str().unwrap()).unwrap();
+        let v2 = compute_video_hash(p2.to_str().unwrap()).unwrap();
+        assert_eq!(v1.oshash, v2.oshash);
+        assert_ne!(v1.midhash, v2.midhash);
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    #[test]
+    fn test_compute_video_hash_gap_still_blind() {
+        // 已知局限：33%-66% 之间的间隙（如 50% 处）仍未被采样，两个 hash 都不变
+        let dir = std::env::temp_dir();
+        let p1 = dir.join("zimufan_vhash_g1.bin");
+        let p2 = dir.join("zimufan_vhash_g2.bin");
+        // 200KB 文件：p33 块覆盖 [67584, 133120)，p66 块覆盖 [135168, 200704)
+        // 50% 处 = 102400 落在 p33 块内！改用 45% 与 60% 之间的间隙不安全，
+        // 直接计算间隙：p33 块结束 133120，p66 块开始 135168 → 间隙 [133120,135168)
+        let mut d1 = vec![0u8; 200 * 1024];
+        let d2 = d1.clone();
+        d1[134000] = 0xFF; // 间隙内
+        std::fs::write(&p1, &d1).unwrap();
+        std::fs::write(&p2, &d2).unwrap();
+
+        let v1 = compute_video_hash(p1.to_str().unwrap()).unwrap();
+        let v2 = compute_video_hash(p2.to_str().unwrap()).unwrap();
+        assert_eq!(v1, v2, "间隙内修改不应影响 hash（已知盲区，测试仅记录该行为）");
+        let _ = std::fs::remove_file(&p1);
+        let _ = std::fs::remove_file(&p2);
+    }
+
+    #[test]
+    fn test_compute_video_hash_too_small_rejected() {
+        let tmp = std::env::temp_dir().join("zimufan_vhash_small.bin");
+        std::fs::write(&tmp, vec![0u8; 500]).unwrap();
+        assert!(compute_video_hash(tmp.to_str().unwrap()).is_err());
         let _ = std::fs::remove_file(&tmp);
     }
 }

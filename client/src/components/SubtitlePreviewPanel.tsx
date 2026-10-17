@@ -17,7 +17,7 @@ import { error } from "../lib/logger";
 import type { SubtitleEntry } from "../lib/ipc-types";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
-import { uiState, withPlayerHidden, formatTimecode, looksLikeSoundEffect } from "../lib/utils";
+import { uiState, withPlayerHidden, formatTimecode, formatElapsed, looksLikeSoundEffect } from "../lib/utils";
 import { ExportDialog } from "./ExportDialog";
 import { RestoreOriginalDialog } from "./RestoreOriginalDialog";
 
@@ -58,7 +58,7 @@ function isNonEnglishSource(s: string): boolean {
   return maxRun < 3;
 }
 
-export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, currentPlayTime = 0 }: { extracting?: boolean; extractProgress?: number; currentPlayTime?: number }) {
+export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, extractEta = 0, currentPlayTime = 0, onReextract }: { extracting?: boolean; extractProgress?: number; extractEta?: number; currentPlayTime?: number; onReextract?: () => void }) {
   const { t } = useTranslation();
   const store = useSubtitleStore();
   const { file, bilingualDetect, isSplit } = store;
@@ -661,7 +661,10 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
                   style={{ width: `${Math.min(100, extractProgress)}%` }}
                 />
               </div>
-              <p className="text-xs mt-1 tabular-nums">{extractProgress.toFixed(0)}%</p>
+              <p className="text-xs mt-1 tabular-nums">
+                {extractProgress.toFixed(0)}%
+                {extractEta > 0 && ` · ${t("translate.statEta", { eta: formatElapsed(Math.ceil(extractEta), t) })}`}
+              </p>
             </>
           )}
         </div>
@@ -898,6 +901,19 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           <Eraser className="mr-1 h-3.5 w-3.5" />
           {t("subtitle.clearTranslations")}
         </Button>
+        {/* 重新提取字幕：跳过内存缓存，走磁盘缓存兜底 */}
+        {onReextract && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 px-2 text-xs"
+            onClick={onReextract}
+            disabled={extracting || !videoStore.probeResult || !videoStore.selectedSubtitleStream}
+          >
+            <RotateCcw className="mr-1 h-3.5 w-3.5" />
+            {t("subtitle.reextract")}
+          </Button>
+        )}
         {/* 预览模式选择 */}
         <select
           value={previewMode}

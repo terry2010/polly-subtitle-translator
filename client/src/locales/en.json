@@ -43,7 +43,10 @@
     "separator": ", ",
     "noMatch": "No matches",
     "copiedToast": "Copied",
-    "copyFailed": "Copy failed"
+    "copyFailed": "Copy failed",
+    "durSecs": "{{count}}s",
+    "durMinSecs": "{{m}}m {{s}}s",
+    "durHourMinSecs": "{{h}}h {{m}}m {{s}}s"
   },
   "video": {
     "openTitle": "Open Video File",
@@ -212,7 +215,8 @@
     "startTime": "Start",
     "endTime": "End",
     "clickReEdit": "Click to re-edit",
-    "inserted": "Inserted · {{start}} → {{end}}"
+    "inserted": "Inserted · {{start}} → {{end}}",
+    "reextract": "Re-extract"
   },
   "translate": {
     "title": "Translate",
@@ -274,7 +278,7 @@
     "nameExtractCancelled": "Name extraction cancelled",
     "nameExtractFailed": "Name extraction failed",
     "nameExtracting": "Extracting names...",
-    "statTime": "Time: {{secs}}s",
+    "statTime": "Time: {{time}}",
     "statChars": "Chars: {{n}}",
     "statCharCount": "{{n}} chars",
     "statSpeed": "{{speed}} chars/s",
@@ -777,6 +781,7 @@
       "extractFailed": "Subtitle extraction failed: {{detail}}",
       "extractCancelled": "Subtitle extraction cancelled",
       "extractTimeout": "Subtitle extraction timed out ({{timeout}}s), subtitle stream may be too large or ffmpeg hung",
+      "extractStalled": "Subtitle extraction stalled (no output for {{idle}}s), network may be down or ffmpeg hung",
       "extractEmptyStream": "Subtitle stream is empty or contains no text content",
       "noStreamsKept": "Keep at least one subtitle stream",
       "mergeFailed": "Subtitle merge failed: {{detail}}",

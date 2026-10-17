@@ -472,21 +472,75 @@ pub async fn probe_video(
     }
 }
 
-/// extract_subtitle：提取字幕流（带进度推送）
+/// 提取结果：实际输出路径 + 是否命中缓存
+#[derive(serde::Serialize)]
+pub struct ExtractSubtitleResult {
+    pub path: String,
+    pub from_cache: bool,
+}
+
+/// extract_subtitle：提取字幕流（带进度推送 + 磁盘缓存）
+/// 缓存路径：extract_cache/{oshash}.{midhash}.{stream}.{lang}.{ext}，命中直接返回
 #[tauri::command]
 pub async fn extract_subtitle(
     video_path: String,
     stream_index: i32,
-    output_path: String,
+    lang: String,
+    ext: String,
+    output_path: Option<String>,
+    force_extract: Option<bool>,
     ffmpeg_path: Option<String>,
     duration_sec: Option<f64>,
     app: tauri::AppHandle,
     db: State<'_, Database>,
-) -> Result<IpcResult<()>, ()> {
+) -> Result<IpcResult<ExtractSubtitleResult>, ()> {
     use tauri::Emitter;
-    let output_path_clone = output_path.clone();
     let app_handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        // output_path 为 None 时走缓存逻辑：计算缓存路径；hash 失败（小文件/IO 错误）回退系统临时目录
+        let cache_path = if output_path.is_none() {
+            ffmpeg::compute_video_hash(&video_path)
+                .ok()
+                .and_then(|vh| ffmpeg::extract_cache_dir().map(|d| (vh, d)))
+                .map(|(vh, d)| {
+                    d.join(format!(
+                        "{}.{}.{}.{}.{}",
+                        vh.oshash, vh.midhash, stream_index, lang, ext
+                    ))
+                })
+        } else {
+            None
+        };
+
+        let force = force_extract.unwrap_or(false);
+        if !force {
+            if let Some(p) = &cache_path {
+                if p.is_file() && p.metadata().map(|m| m.len()).unwrap_or(0) > 0 {
+                    tracing::info!("字幕提取命中磁盘缓存: {}", p.display());
+                    return Ok(ExtractSubtitleResult {
+                        path: p.to_string_lossy().into_owned(),
+                        from_cache: true,
+                    });
+                }
+            }
+        } else if let Some(p) = &cache_path {
+            // 强制重提取：先删旧缓存，新结果经 .part+rename 覆盖写回
+            let _ = std::fs::remove_file(p);
+        }
+
+        let output_path = output_path
+            .or_else(|| cache_path.map(|p| p.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| {
+                let base = std::path::Path::new(&video_path)
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "video".to_string());
+                std::env::temp_dir()
+                    .join(format!("{}.{}.{}", base, lang, ext))
+                    .to_string_lossy()
+                    .into_owned()
+            });
+
         let on_progress: Box<dyn Fn(f64)> = Box::new(move |pct: f64| {
             let _ = app_handle.emit("extract_progress", serde_json::json!({
                 "progress": (pct * 10.0).round() / 10.0, // 保留 1 位小数
@@ -500,13 +554,14 @@ pub async fn extract_subtitle(
             duration_sec,
             Some(&on_progress),
         )
+        .map(|_| ExtractSubtitleResult { path: output_path, from_cache: false })
     }).await;
     match result {
-        Ok(Ok(())) => {
-            let _ = db.add_recent_file(&output_path_clone, "subtitle");
+        Ok(Ok(res)) => {
+            let _ = db.add_recent_file(&res.path, "subtitle");
             let _ = db.add_history(&HistoryRecord {
                 video_path: None,
-                subtitle_path: Some(output_path_clone.clone()),
+                subtitle_path: Some(res.path.clone()),
                 source_lang: None,
                 target_lang: None,
                 provider: None,
@@ -514,7 +569,7 @@ pub async fn extract_subtitle(
                 status: "success".to_string(),
                 detail: Some(format!("stream_index: {}", stream_index)),
             });
-            Ok(IpcResult::from(Ok(())))
+            Ok(IpcResult::from(Ok(res)))
         }
         Ok(Err(e)) => Ok(IpcResult::from(Err(e))),
         Err(e) => Ok(IpcResult::from(Err(AppError::FfmpegExtractTaskFailed { detail: e.to_string() }))),

@@ -20,7 +20,7 @@ import { useAuthStore } from "../stores/authStore";
 import { useOfficialTranslateStore } from "../stores/officialTranslateStore";
 import { api, formatIpcError, isTimeoutError, isDailyLimitError, isInsufficientBalanceError } from "../lib/api";
 import { warn, error as logError, info as logInfo } from "../lib/logger";
-import { withPlayerHidden, formatEta as formatEtaUtil } from "../lib/utils";
+import { withPlayerHidden, formatEta as formatEtaUtil, formatElapsed } from "../lib/utils";
 import { SERVICES, encodeAiSelectValue, decodeAiSelectValue, isMaybeFreeModel, getModelPriceUrl } from "../lib/services";
 import { SubtitlePreviewPanel } from "../components/SubtitlePreviewPanel";
 import { SearchDialog } from "../components/SearchDialog";
@@ -154,10 +154,10 @@ function SearchableLangSelect({ value, onChange, options, placeholder }: Searcha
 }
 
 // 模块级状态：跨路由保持（MainView 卸载重挂载时不丢失）
-// autoExtractedRef：自动提取已执行的 stream index（避免从设置返回时重复提取字幕）
-const autoExtractedStreamIdx: { current: number | null } = { current: null };
-// extractCacheRef：字幕流提取缓存（streamIndex -> SubtitleFile），避免从设置返回时重新提取
-const extractCache: Map<number, any> = new Map();
+// autoExtractedRef：自动提取已执行的 key（videoPath#streamIndex，避免从设置返回时重复提取字幕）
+const autoExtractedStreamIdx: { current: string | null } = { current: null };
+// extractCacheRef：字幕流提取缓存（videoPath#streamIndex -> SubtitleFile），避免从设置返回时重新提取
+const extractCache: Map<string, any> = new Map();
 // currentPlayTime：播放位置（秒），跨路由保持（避免从设置返回时字幕列表停在第一条）
 const currentPlayTimeState: { value: number } = { value: 0 };
 
@@ -179,6 +179,9 @@ export default function MainView() {
   const glossaryDraft = useTranslateStore((s) => s.glossaryDraft);
   const [extracting, setExtracting] = useState(false);
   const [extractProgress, setExtractProgress] = useState(0);
+  const [extractEta, setExtractEta] = useState(0);
+  // ETA 滑动窗口样本：(时间戳秒, 进度%)，保留最近 30 秒用于估算速率
+  const extractSamplesRef = useRef<{ t: number; p: number }[]>([]);
   const [ffmpegDialogOpen, setFfmpegDialogOpen] = useState(false);
   const ffmpegDownloadedRef = useRef(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -488,12 +491,13 @@ export default function MainView() {
     setImportedSubtitles((prev) => prev.filter((s) => s.path !== path));
   }, []);
 
-  const handleExtractSubtitle = useCallback(async () => {
+  const handleExtractSubtitle = useCallback(async (force = false) => {
     if (!probeResult || !selectedSubtitleStream) return;
     // 重置取消标志（新的提取开始）
     extractCancelledRef.current = false;
-    // 检查缓存
-    const cached = extractCacheRef.current.get(selectedSubtitleStream.index);
+    // 检查缓存（key 含视频路径，防跨视频误命中）
+    const cacheKey = `${probeResult.video_path}#${selectedSubtitleStream.index}`;
+    const cached = extractCacheRef.current.get(cacheKey);
     if (cached) {
       // 如果 store 中已有该字幕文件（从设置返回等场景），保留当前 store 文件
       // （包含用户的翻译和原文编辑），不替换为缓存中的旧版本
@@ -567,25 +571,25 @@ export default function MainView() {
     }
     setExtracting(true);
     setExtractProgress(0);
+    setExtractEta(0);
+    extractSamplesRef.current = [];
     try {
       const baseName = probeResult.video_path.split(/[\\/]/).pop()!.replace(/\.[^.]+$/, "");
       const lang = selectedSubtitleStream.language ?? "sub";
-      // 写到系统临时目录，避免 Vite 监听项目目录变化触发页面刷新
-      const tempDir = await import("@tauri-apps/api/path").then(m => m.tempDir());
       // 原流为 ass/vtt 时保留原格式，避免样式信息丢失；其余默认 srt
       const codec = selectedSubtitleStream.codec_name?.toLowerCase() ?? "";
       const ext = codec === "ass" || codec === "ssa" ? "ass"
         : codec === "webvtt" || codec === "vtt" ? "vtt"
         : "srt";
-      const outputPath = `${tempDir}${baseName}.${lang}.${ext}`;
-      // 传入视频时长（秒）用于计算提取进度百分比
+      // 输出路径由后端根据视频 hash 决定（命中磁盘缓存则直接返回）
       const durationSec = probeResult.format?.duration ?? undefined;
-      await api.extractSubtitle(probeResult.video_path, selectedSubtitleStream.index, outputPath, undefined, durationSec);
+      const result = await api.extractSubtitle(probeResult.video_path, selectedSubtitleStream.index, lang, ext, undefined, force, undefined, durationSec);
       // 异步提取期间用户可能已关闭视频或切换了字幕流，检查取消标志
       if (extractCancelledRef.current) {
         warn("提取完成但已被取消，丢弃结果");
         return;
       }
+      const outputPath = result.path;
       await subtitleStore.loadSubtitle(outputPath);
       // 提取成功，清除该流的失败标记
       setFailedStreams((prev) => {
@@ -604,7 +608,7 @@ export default function MainView() {
       {
         const finalState = useSubtitleStore.getState();
         if (finalState.file) {
-          extractCacheRef.current.set(selectedSubtitleStream.index, finalState.file);
+          extractCacheRef.current.set(cacheKey, finalState.file);
         }
       }
     } catch (e: any) {
@@ -621,6 +625,8 @@ export default function MainView() {
       toast.error(msg);
     } finally {
       setExtracting(false);
+      setExtractEta(0);
+      extractSamplesRef.current = [];
     }
   }, [probeResult, selectedSubtitleStream, subtitleStore, t]);
 
@@ -630,15 +636,30 @@ export default function MainView() {
   // 监听字幕提取进度事件
   useEffect(() => {
     const unlisten = listen<{ progress: number }>("extract_progress", (event) => {
-      setExtractProgress(event.payload.progress);
+      const pct = event.payload.progress;
+      setExtractProgress(pct);
+      // 滑动窗口速率估算 ETA：窗口内进度增量 / 时间增量
+      const now = Date.now() / 1000;
+      const samples = extractSamplesRef.current;
+      samples.push({ t: now, p: pct });
+      const cutoff = now - 30;
+      while (samples.length > 1 && samples[0].t < cutoff) samples.shift();
+      const oldest = samples[0];
+      const span = now - oldest.t;
+      // 窗口至少 5 秒且进度有增长才更新，稀疏对白片段冻结时保留上次 ETA
+      if (span >= 5 && pct > oldest.p) {
+        const rate = (pct - oldest.p) / span;
+        if (rate > 0) setExtractEta((100 - pct) / rate);
+      }
     });
     return () => { unlisten.then((fn) => fn()); };
   }, []);
 
   useEffect(() => {
     if (!probeResult || !selectedSubtitleStream) return;
-    if (autoExtractedRef.current === selectedSubtitleStream.index) return;
-    autoExtractedRef.current = selectedSubtitleStream.index;
+    const streamKey = `${probeResult.video_path}#${selectedSubtitleStream.index}`;
+    if (autoExtractedRef.current === streamKey) return;
+    autoExtractedRef.current = streamKey;
     if (skipAutoExtractRef.current) {
       skipAutoExtractRef.current = false;
       return;
@@ -1436,8 +1457,9 @@ export default function MainView() {
                           selectSubtitleStream(stream);
                           setSelectedImportedPath(null);
                           // 如果该流已在缓存中，加载到字幕编辑器
-                          if (extractCacheRef.current.has(stream.index)) {
-                            const cachedFile = extractCacheRef.current.get(stream.index);
+                          const streamKey = `${probeResult.video_path}#${stream.index}`;
+                          if (extractCacheRef.current.has(streamKey)) {
+                            const cachedFile = extractCacheRef.current.get(streamKey);
                             subtitleStore.setFile(cachedFile);
                           }
                         }}
@@ -1499,7 +1521,17 @@ export default function MainView() {
 
           {/* 字幕对比预览区 */}
           <div className="flex-1 min-h-0 overflow-hidden">
-            <SubtitlePreviewPanel extracting={extracting} extractProgress={extractProgress} currentPlayTime={currentPlayTime} />
+            <SubtitlePreviewPanel
+              extracting={extracting}
+              extractProgress={extractProgress}
+              extractEta={extractEta}
+              currentPlayTime={currentPlayTime}
+              onReextract={() => {
+                if (!probeResult || !selectedSubtitleStream) return;
+                extractCacheRef.current.delete(`${probeResult.video_path}#${selectedSubtitleStream.index}`);
+                void handleExtractRef.current(true);
+              }}
+            />
           </div>
         </div>
 
@@ -1864,7 +1896,7 @@ export default function MainView() {
               {devModeEnabled && translateStore.lastTranslateTime > 0 && (
                 <div className="text-[10px] text-muted-foreground space-y-0.5 py-1 border-t border-border/50 pt-2">
                   <div>
-                    {t("translate.statTime", { secs: (translateStore.lastTranslateTime / 1000).toFixed(2) })}
+                    {t("translate.statTime", { time: formatElapsed(translateStore.lastTranslateTime / 1000, t) })}
                   </div>
                   <div>
                     {t("translate.statChars", { n: translateStore.lastTranslateChars.toLocaleString() })}

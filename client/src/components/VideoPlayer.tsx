@@ -392,16 +392,26 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
   }, []);
 
   // 播控操作
+  // togglePlay 必须 deps=[] 保持稳定：若依赖 playing，每次播放状态翻转都会让
+  // player-click/player-space/keydown 监听器解绑重绑，异步 unlisten 窗口期内
+  // 陈旧闭包的 listener 并存 → 一次点击触发"暂停+播放"双重 toggle。
+  // 用 playingRef 读最新状态；lastToggleRef 去抖兜底同次事件的重复触发。
+  const lastToggleRef = useRef(0);
   const togglePlay = useCallback(async () => {
-    log("[VideoPlayer] togglePlay 调用，当前 playing=", playing);
-    if (playing) {
+    const now = Date.now();
+    if (now - lastToggleRef.current < 200) return;
+    lastToggleRef.current = now;
+    log("[VideoPlayer] togglePlay 调用，当前 playing=", playingRef.current);
+    if (playingRef.current) {
       await api.playerPause();
+      playingRef.current = false;
       setPlaying(false);
     } else {
       await api.playerPlay();
+      playingRef.current = true;
       setPlaying(true);
     }
-  }, [playing]);
+  }, []);
 
   // 暂停视频（不切换，仅暂停）
   const pauseVideo = useCallback(async () => {

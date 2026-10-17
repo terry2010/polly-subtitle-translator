@@ -135,8 +135,8 @@ export const api = {
   isDirectory: (path: string) =>
     callIpc<boolean>("is_directory", { path }),
 
-  extractSubtitle: (videoPath: string, streamIndex: number, outputPath: string, ffmpegPath?: string, durationSec?: number) =>
-    callIpc<void>("extract_subtitle", { videoPath, streamIndex, outputPath, ffmpegPath: ffmpegPath ?? null, durationSec: durationSec ?? null }),
+  extractSubtitle: (videoPath: string, streamIndex: number, lang: string, ext: string, outputPath?: string, force?: boolean, ffmpegPath?: string, durationSec?: number) =>
+    callIpc<{ path: string; from_cache: boolean }>("extract_subtitle", { videoPath, streamIndex, lang, ext, outputPath: outputPath ?? null, forceExtract: force ?? null, ffmpegPath: ffmpegPath ?? null, durationSec: durationSec ?? null }),
 
   cancelExtractSubtitle: () =>
     callIpc<void>("cancel_extract_subtitle", {}),

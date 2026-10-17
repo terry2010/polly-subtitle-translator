@@ -1,5 +1,6 @@
-/src-tauri/target/
-/src-tauri/bin/
+/client/src-tauri/target/
+/client/src-tauri/bin/
+/client/src-tauri/gen/schemas/
 node_modules
 
 # IDE / 工具配置（个人本地）
@@ -8,11 +9,11 @@ node_modules
 /.agent_logs/
 
 # 构建产物
-/dist/
-/release/
+/client/dist/
+/client/release/
+/client/coverage/
 
 # 测试产物
-/coverage/
 *.tsbuildinfo
 
 # 测试用媒体文件
@@ -25,9 +26,9 @@ node_modules
 .DS_Store
 
 # E2E 测试缓存和输出（不入库）
-/src-tauri/tests/cache/
-/src-tauri/tests/output/
-/src-tauri/tests/state/
+/client/src-tauri/tests/cache/
+/client/src-tauri/tests/output/
+/client/src-tauri/tests/state/
 
 # 第三方代码（subfinder，仅用于参考，不随项目分发）
 docs/第三方代码/
@@ -43,12 +44,11 @@ source.txt
 translated.txt
 
 # 但保留 fixture（例外）
-!/src-tauri/tests/fixtures/*.ass
-!/src-tauri/tests/fixtures/*.vtt
+!/client/src-tauri/tests/fixtures/*.ass
+!/client/src-tauri/tests/fixtures/*.vtt
 
 # 保留精译服务测试字幕样例（例外）
-!/tests/test-subtitles/*.srt
+!/client/tests/test-subtitles/*.srt
 
 # Redis dump 文件不入库
 dump.rdb
-
