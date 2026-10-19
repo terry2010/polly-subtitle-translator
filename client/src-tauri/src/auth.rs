@@ -3246,16 +3246,44 @@ mod tests {
                         let body = body.clone();
                         let status_text = status_text.clone();
                         let captured = captured_clone.clone();
+                        // 在字节流中找子串（\r\n\r\n 分隔符）。
+                        fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+                            haystack.windows(needle.len()).position(|w| w == needle)
+                        }
                         tokio::spawn(async move {
                             use tokio::io::AsyncReadExt;
                             use tokio::io::AsyncWriteExt;
-                            // 读取请求（捕获请求体）
-                            let mut buf = vec![0u8; 4096];
-                            let n = stream.read(&mut buf).await.unwrap_or(0);
-                            let request_data = String::from_utf8_lossy(&buf[..n]).to_string();
+                            // 循环读取请求：并行负载下 TCP 分段，单次 read 可能只拿到部分
+                            // multipart body → 按 Content-Length 读满为止（上限防挂死）。
+                            let mut request_data = Vec::new();
+                            let mut tmp = [0u8; 8192];
+                            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                            loop {
+                                if let Some(pos) = find_subslice(&request_data, b"\r\n\r\n") {
+                                    let headers = String::from_utf8_lossy(&request_data[..pos]);
+                                    let want = headers
+                                        .lines()
+                                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                                        .unwrap_or(0);
+                                    if request_data.len() >= pos + 4 + want {
+                                        break;
+                                    }
+                                }
+                                if request_data.len() > 1_000_000 || std::time::Instant::now() > deadline {
+                                    break;
+                                }
+                                match tokio::time::timeout(
+                                    std::time::Duration::from_millis(500),
+                                    stream.read(&mut tmp),
+                                ).await {
+                                    Ok(Ok(0)) => break,
+                                    Ok(Ok(n)) => request_data.extend_from_slice(&tmp[..n]),
+                                    _ => break,
+                                }
+                            }
                             // 提取 body（\r\n\r\n 之后的部分）
-                            if let Some(idx) = request_data.find("\r\n\r\n") {
-                                let req_body = request_data[idx + 4..].to_string();
+                            if let Some(idx) = find_subslice(&request_data, b"\r\n\r\n") {
+                                let req_body = String::from_utf8_lossy(&request_data[idx + 4..]).to_string();
                                 captured.lock().unwrap().push(req_body);
                             }
                             // 写响应（状态行正确）
