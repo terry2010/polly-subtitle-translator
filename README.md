@@ -10,7 +10,7 @@
 
 [![Windows 10+](https://img.shields.io/badge/Windows-10+-0078D6)](https://www.microsoft.com/windows)
 [![macOS 11+](https://img.shields.io/badge/macOS-11+-000000)](https://www.apple.com/macos)
-[![Version](https://img.shields.io/badge/version-1.0.5-green)](https://github.com/terry2010/polly-subtitle-translator/releases)
+[![Version](https://img.shields.io/badge/version-1.0.8-green)](https://github.com/terry2010/polly-subtitle-translator/releases)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
 ## Table of Contents
@@ -54,9 +54,9 @@ Go to [Releases](https://github.com/terry2010/polly-subtitle-translator/releases
 
 | Platform | Installer |
 |---|---|
-| Windows 10+ | `AI-SubTrans_1.0.5_x64-setup.exe` |
-| macOS 11+ (Apple Silicon) | `AI-SubTrans_1.0.5_aarch64.dmg` |
-| macOS 11+ (Intel) | `AI-SubTrans_1.0.5_x64.dmg` |
+| Windows 10+ | `AI-SubTrans_1.0.8_x64-setup.exe` |
+| macOS 11+ (Apple Silicon) | `AI-SubTrans_1.0.8_aarch64.dmg` |
+| macOS 11+ (Intel) | `AI-SubTrans_1.0.8_x64.dmg` |
 
 Launch after installation — the app checks for updates automatically.
 
@@ -83,6 +83,12 @@ Launch after installation — the app checks for updates automatically.
 - Auto-lists all subtitle streams in the video, preferring English SDH / plain English
 - Automatically skips PGS/VOBSUB and other image-based subtitles to avoid garbled output
 - FFmpeg is auto-downloaded on first use — no manual setup required
+
+### No subtitles at all? Transcribe audio locally
+- Turn any audio track into subtitles on-device: pick an audio track in the player and click Transcribe
+- Two engines — macOS native speech recognition, or Qwen3-ASR (0.6B / 1.7B) in a managed Python sidecar (Windows supported)
+- Live progress in the subtitle editor: speed, processed duration, ETA; stopping keeps partial results
+- Generated subtitles join the stream list, flow into translate / export, and persist across restarts via the disk cache
 
 ### One-click translation
 - 12 traditional translators: Baidu, Bing, Google, DeepL, Youdao, Caiyun, Niutrans, Tencent, Volcano, Alibaba, Amazon

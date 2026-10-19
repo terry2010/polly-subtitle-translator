@@ -10,7 +10,7 @@
 
 [![Windows 10+](https://img.shields.io/badge/Windows-10+-0078D6)](https://www.microsoft.com/windows)
 [![macOS 11+](https://img.shields.io/badge/macOS-11+-000000)](https://www.apple.com/macos)
-[![Version](https://img.shields.io/badge/version-1.0.5-green)](https://github.com/terry2010/polly-subtitle-translator/releases)
+[![Version](https://img.shields.io/badge/version-1.0.8-green)](https://github.com/terry2010/polly-subtitle-translator/releases)
 [![License](https://img.shields.io/badge/License-Apache--2.0-blue)](./LICENSE)
 
 ## 目录
@@ -54,9 +54,9 @@
 
 | 平台 | 安装包 |
 |---|---|
-| Windows 10+ | `AI-SubTrans_1.0.5_x64-setup.exe` |
-| macOS 11+（Apple Silicon） | `AI-SubTrans_1.0.5_aarch64.dmg` |
-| macOS 11+（Intel） | `AI-SubTrans_1.0.5_x64.dmg` |
+| Windows 10+ | `AI-SubTrans_1.0.8_x64-setup.exe` |
+| macOS 11+（Apple Silicon） | `AI-SubTrans_1.0.8_aarch64.dmg` |
+| macOS 11+（Intel） | `AI-SubTrans_1.0.8_x64.dmg` |
 
 安装后启动即可，软件会自动检查更新。
 
@@ -82,6 +82,12 @@
 - 自动列出视频内所有字幕，优先选英文 SDH / 普通英文
 - 自动跳过 PGS/VOBSUB 等图形字幕，避免取出一堆乱码
 - 首次使用 FFmpeg 会自动下载，无需手动配置
+
+### 没有字幕？音频转字幕（本地识别）
+- 任意音轨离线转字幕：播放器里选音轨点「音频转字幕」即可
+- 双引擎：macOS 原生语音识别，或 Qwen3-ASR（0.6B / 1.7B 自选）托管 Python 环境（支持 Windows）
+- 编辑器内实时进度：识别速度、已处理时长、预计剩余；中途停止保留已识别部分
+- 生成字幕直接进入字幕流列表，可继续翻译/导出；结果写入磁盘缓存，重启应用自动恢复
 
 ### 一键翻译
 - 12 家传统翻译：百度、Bing、Google、DeepL、有道、彩云小译、小牛、腾讯、火山、阿里、Amazon
