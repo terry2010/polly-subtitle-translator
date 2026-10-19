@@ -536,7 +536,12 @@
     "officialApiValidUntil": "Valid until",
     "officialApiTokenBalance": "Pay-as-you-go credits",
     "viewPrice": "View pricing",
-    "viewBalance": "View free quota balance"
+    "viewBalance": "View free quota balance",
+    "qwen3Status": "Speech recognition environment",
+    "qwen3Ready": "Installed (audio tracks can be transcribed in the player)",
+    "qwen3NotReady": "Not installed — download the recognition environment",
+    "qwen3Cancel": "Cancel",
+    "qwen3Deleted": "Qwen3-ASR environment deleted"
   },
   "batch": {
     "status": {
@@ -916,6 +921,12 @@
     },
     "test": {
       "code": "Test error"
+    },
+    "asr": {
+      "cancelled": "Stopped",
+      "unavailable": "Engine unavailable: {{detail}}",
+      "transcribeFailed": "Transcription failed: {{detail}}",
+      "envInstallFailed": "Environment setup failed: {{detail}}"
     }
   },
   "auth": {
@@ -952,5 +963,36 @@
     "pauseFailed": "Pause failed",
     "resumeFailed": "Resume failed",
     "deleteFailed": "Delete failed"
+  },
+  "asr": {
+    "transcribeTrack": "Audio to subtitle",
+    "title": "Audio to Subtitle",
+    "desc": "Transcribe the selected audio track into subtitles offline, then load it into the editor.",
+    "engine": "Engine",
+    "engineNeedsSetup": "setup required",
+    "language": "Audio language",
+    "vad": "Speech-only (VAD pre-filter, skips music/silence)",
+    "envNotReady": "Qwen3-ASR needs a one-time runtime setup (standalone Python + models, ~2.4GB, inside the app directory).",
+    "installEnv": "Install runtime",
+    "start": "Start",
+    "stop": "Stop",
+    "done": "Subtitle generated and loaded",
+    "speed": "{{speed}}x",
+    "eta": "ETA {{eta}}",
+    "processed": "{{secs}}s processed",
+    "phaseExtract": "Extracting audio track…",
+    "phaseDetect": "Analyzing silences…",
+    "phaseChunk": "Splitting chunks…",
+    "phaseRecognize": "Recognizing speech…",
+    "phaseGapfill": "Recovering missed segments…",
+    "phaseMerge": "Merging cues…",
+    "phaseStopped": "Stopped (partial result saved)",
+    "phaseDone": "Done",
+    "donePartial": "Subtitle generated and loaded (stopped, partial)",
+    "installingEnv": "Installing recognition runtime…",
+    "envNeedDownload": "Qwen3-ASR environment is not downloaded yet. Go to Settings > Video Components to download a model.",
+    "envGoDownload": "Download",
+    "engineNative": "native",
+    "method": "Source"
   }
 }

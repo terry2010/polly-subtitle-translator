@@ -254,7 +254,7 @@ describe("SubtitleStreamEditorDialog - 导出", () => {
     const exportButtons = screen.getAllByLabelText("common.export");
     fireEvent.click(exportButtons[0]);
     await waitFor(() => {
-      expect(mockExtractSubtitle).toHaveBeenCalledWith("/test/video.mkv", 0, "/output/sub.srt");
+      expect(mockExtractSubtitle).toHaveBeenCalledWith("/test/video.mkv", 0, "eng", "srt", "/output/sub.srt");
     });
   });
 

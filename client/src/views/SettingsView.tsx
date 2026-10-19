@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { setWindowSizeInitialized } from "./MainView";
 import { ArrowLeft, Check, Loader2, Download, Trash2, ExternalLink, Settings as SettingsIcon, Languages, Film, Wrench, Info, RefreshCw, X, Star, Plus, Bug, Terminal, FolderOpen, FileText, Layers } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
@@ -106,6 +107,7 @@ export default function SettingsView() {
   const [activeTab, setActiveTab] = useState<SettingsTab>(
     searchParams.get("provider") ? "translate"
     : searchParams.get("tab") === "translate" ? "translate"
+    : searchParams.get("tab") === "player" ? "player"
     : searchParams.get("tab") === "advanced" ? "advanced"
     : "general"
   );
@@ -1780,7 +1782,119 @@ function PlayerSettings() {
           )}
         </CardContent>
       </Card>
+
+      {/* Qwen3-ASR 卡片 */}
+      <Qwen3Card />
     </div>
+  );
+}
+
+// === Qwen3-ASR 托管环境卡片：状态 + 自选模型下载（0.6B/1.7B）+ 进度 ===
+function Qwen3Card() {
+  const { t } = useTranslation();
+  const devMode = useDevModeStore((s) => s.devMode);
+  const [env, setEnv] = useState<{ python_ready: boolean; deps_ready: boolean; models: [string, boolean][]; ready: boolean } | null>(null);
+  const [model, setModel] = useState("Qwen3-ASR-0.6B");
+  const [installing, setInstalling] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const refresh = useCallback(() => api.asrEnvStatus().then(setEnv).catch(() => {}), []);
+  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    const un = listen<{ stage: string; progress: number; message: string }>("asr_env_progress", (e) => {
+      setInstalling(true);
+      setProgress(e.payload.progress);
+      setMsg(e.payload.message);
+      if (e.payload.stage === "done") { setInstalling(false); refresh(); }
+    });
+    return () => { un.then((f) => f()); };
+  }, [refresh]);
+
+  const startInstall = useCallback(async () => {
+    setError(null); setInstalling(true); setProgress(0); setMsg("");
+    try {
+      await api.installAsrEnv(undefined, model);
+      await refresh();
+    } catch (e) {
+      setError(formatIpcError(e));
+    } finally {
+      setInstalling(false);
+    }
+  }, [model, refresh]);
+
+  const cancelInstall = useCallback(() => api.cancelAsrEnvInstall().catch(() => {}), []);
+  const modelInstalled = (dir: string) => env?.models.some(([d, ok]) => d === dir && ok);
+  // 删除按钮对准下拉框当前选中模型（仅该模型已装时才可删，devMode 门控同 ffmpeg/libmpv）
+  const selectedInstalled = modelInstalled(model) === true;
+  const handleDelete = useCallback(async () => {
+    setDeleting(true); setError(null);
+    try {
+      await api.deleteAsrEnv(model);
+      await refresh();
+      toast.success(t("settings.qwen3Deleted"));
+    } catch (e) {
+      setError(formatIpcError(e));
+    } finally {
+      setDeleting(false);
+    }
+  }, [model, refresh, t]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Qwen3-ASR</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-medium">{t("settings.qwen3Status")}</p>
+            <p className="text-xs text-muted-foreground">
+              {env?.ready ? t("settings.qwen3Ready") : t("settings.qwen3NotReady")}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Select value={model} onValueChange={setModel} disabled={installing}>
+              <SelectTrigger className="w-44 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Qwen3-ASR-0.6B">0.6B{modelInstalled("Qwen3-ASR-0.6B") ? " ✓" : ""}</SelectItem>
+                <SelectItem value="Qwen3-ASR-1.7B">1.7B{modelInstalled("Qwen3-ASR-1.7B") ? " ✓" : ""}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button size="sm" onClick={startInstall} disabled={installing || (modelInstalled(model) === true && !!env?.ready)}>
+              {installing ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Download className="mr-1 h-4 w-4" />}
+              {t("settings.libmpvDownload")}
+            </Button>
+            {installing && (
+              <Button size="sm" variant="destructive" onClick={cancelInstall}>{t("settings.qwen3Cancel")}</Button>
+            )}
+            {devMode && selectedInstalled && !installing && (
+              <Button size="sm" variant="destructive" onClick={handleDelete} disabled={deleting}>
+                {deleting ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Trash2 className="mr-1 h-4 w-4" />}
+                {t("settings.libmpvDelete")}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {installing && (
+          <div className="space-y-2 border-t pt-3">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-muted-foreground truncate">{msg || t("asr.installingEnv")}</span>
+              <span className="font-mono tabular-nums text-muted-foreground">{progress}%</span>
+            </div>
+            <div className="h-2 bg-muted rounded-full overflow-hidden">
+              <div className="h-full bg-primary rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+            </div>
+          </div>
+        )}
+        {!installing && error && (
+          <div className="border-t pt-3"><p className="text-xs text-red-500 line-clamp-3">{error}</p></div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -6,7 +6,7 @@ import { open, save } from "@tauri-apps/plugin-dialog";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize, LogicalPosition } from "@tauri-apps/api/window";
-import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check, Plus, Home, ListTodo } from "lucide-react";
+import { Settings as SettingsIcon, Film, FileText, Loader2, Search, Download, Square, X, Upload, ChevronDown, Check, Plus, Home, ListTodo, AudioLines } from "lucide-react";
 import { VideoPlayer } from "../components/VideoPlayer";
 import { Button } from "../components/ui/button";
 import { Card, CardHeader, CardTitle, CardContent } from "../components/ui/card";
@@ -243,6 +243,17 @@ export default function MainView() {
   const [autoTranslateLoaded, setAutoTranslateLoaded] = useState(false);
   // 导入的外部字幕列表
   const [importedSubtitles, setImportedSubtitles] = useState<{ name: string; path: string }[]>([]);
+  // ASR 识别生成的字幕：渲染在字幕流列表顶部，选中态独立
+  const [asrSubtitles, setAsrSubtitles] = useState<{ name: string; path: string; method: string }[]>([]);
+  const [selectedAsrPath, setSelectedAsrPath] = useState<string | null>(null);
+  // ASR 转写任务状态（驱动字幕编辑器区的进度展示）；installing=true 表示正在装环境
+  const [asrTask, setAsrTask] = useState<{
+    installing: boolean;
+    progress: number;
+    label: string;
+    eta: number | null;
+    detail: string;
+  } | null>(null);
   // 字幕流提取缓存（模块级变量，避免从设置返回时丢失缓存导致重新提取）
   const extractCacheRef = { current: extractCache };
   // 自动提取已执行的 stream index（模块级变量，避免从设置返回时重复提取）
@@ -473,6 +484,8 @@ export default function MainView() {
     autoExtractedRef.current = null;
     setImportedSubtitles([]);
     setSelectedImportedPath(null);
+    setAsrSubtitles([]);
+    setSelectedAsrPath(null);
     setFailedStreams(new Set());
     // 重置提取状态，避免异步提取未完成时卡在"正在提取字幕中..."
     setExtracting(false);
@@ -482,9 +495,149 @@ export default function MainView() {
   const handleLoadImportedSubtitle = useCallback(async (path: string) => {
     await subtitleStore.loadSubtitle(path);
     setSelectedImportedPath(path);
-    // 取消字幕流高亮
+    // 取消字幕流/识别字幕高亮
     selectSubtitleStream(null);
+    setSelectedAsrPath(null);
   }, [subtitleStore, selectSubtitleStream]);
+
+  // ASR 进度事件 → 字幕编辑器区进度条（asr_progress=转写，asr_env_progress=环境安装）
+  useEffect(() => {
+    const ASR_PHASES: Record<string, string> = {
+      extract: "asr.phaseExtract", detect: "asr.phaseDetect", chunk: "asr.phaseChunk",
+      recognize: "asr.phaseRecognize", gapfill: "asr.phaseGapfill", merge: "asr.phaseMerge",
+      stopped: "asr.phaseStopped", done: "asr.phaseDone",
+    };
+    const unProgress = listen<{
+      phase: string; progress: number; processed_secs: number; total_secs: number;
+      speed: number; eta_secs: number | null; engine: string;
+    }>("asr_progress", (e) => {
+      const p = e.payload;
+      setAsrTask((prev) => prev && {
+        installing: false,
+        progress: p.progress,
+        label: t(ASR_PHASES[p.phase] ?? "asr.phaseRecognize"),
+        eta: p.eta_secs,
+        detail: p.speed > 0 ? `${p.speed.toFixed(1)}x · ${t("asr.processed", { secs: p.processed_secs.toFixed(0) })}` : "",
+      });
+    });
+    const unEnv = listen<{ stage: string; progress: number; message: string }>(
+      "asr_env_progress",
+      (e) => {
+        setAsrTask((prev) => prev && {
+          installing: true,
+          progress: e.payload.progress,
+          label: e.payload.message || t("asr.installingEnv"),
+          eta: null,
+          detail: "",
+        });
+      },
+    );
+    return () => {
+      unProgress.then((f) => f());
+      unEnv.then((f) => f());
+    };
+  }, [t]);
+
+  // 音频转字幕完成：加入流列表顶部 + 进提取缓存 + 自动加载
+  const handleAsrGenerated = useCallback(async (sub: { name: string; path: string; method: string }, stopped: boolean) => {
+    setAsrSubtitles((prev) => (prev.some((s) => s.path === sub.path) ? prev : [sub, ...prev]));
+    setSelectedAsrPath(sub.path);
+    setSelectedImportedPath(null);
+    selectSubtitleStream(null);
+    try {
+      await subtitleStore.loadSubtitle(sub.path);
+      // 解析结果进提取缓存，复选该条目时直接命中（key 约定同嵌入流：videoPath#<srt路径>）
+      const file = useSubtitleStore.getState().file;
+      const videoPath = useVideoStore.getState().probeResult?.video_path;
+      if (file && videoPath) {
+        extractCacheRef.current.set(`${videoPath}#${sub.path}`, file);
+      }
+      toast.success(t(stopped ? "asr.donePartial" : "asr.done"));
+    } catch (e) {
+      toast.error(`${t("asr.done")} — ${String(e)}`);
+    }
+  }, [subtitleStore, selectSubtitleStream, t]);
+
+  // ASR 引擎显示名：tag + 可选模型 → "原生" / "qwen3-0.6b"
+  const asrEngineLabel = useCallback(
+    (tag: string, model?: string | null) =>
+      tag === "mac"
+        ? t("asr.engineNative")
+        : `qwen3${model ? `-${model.replace(/^Qwen3-ASR-/i, "").toLowerCase()}` : ""}`,
+    [t]
+  );
+
+  // 打开视频时恢复该视频已转写过的 ASR 字幕（extract_cache 磁盘缓存，同内嵌流缓存体系）
+  const videoPathForAsr = probeResult?.video_path;
+  useEffect(() => {
+    if (!videoPathForAsr) return;
+    api.listAsrSubtitles(videoPathForAsr).then((list) => {
+      setAsrSubtitles(list.map((s) => {
+        const method = asrEngineLabel(s.tag, s.model);
+        return { name: `${method}-${s.lang || "und"}`, path: s.path, method };
+      }));
+    }).catch(() => {});
+  }, [videoPathForAsr, asrEngineLabel]);
+
+  // 点击识别字幕条目：命中缓存则直接加载，否则重读文件
+  const handleSelectAsrSubtitle = useCallback(async (sub: { name: string; path: string; method: string }) => {
+    setSelectedAsrPath(sub.path);
+    setSelectedImportedPath(null);
+    selectSubtitleStream(null);
+    const videoPath = useVideoStore.getState().probeResult?.video_path;
+    const cached = videoPath ? extractCacheRef.current.get(`${videoPath}#${sub.path}`) : undefined;
+    if (cached) subtitleStore.setFile(cached);
+    else await subtitleStore.loadSubtitle(sub.path);
+  }, [subtitleStore, selectSubtitleStream]);
+
+  // 启动音频转字幕：Qwen3 环境未就绪时提示去「设置-视频组件」下载（确认则自动跳转），就绪则直接转写
+  const handleStartTranscribe = useCallback(async (streamIndex: number, engine: string, language: string) => {
+    if (!probeResult || asrTask) return;
+    if (engine.startsWith("qwen3_asr")) {
+      try {
+        const status = await api.asrEnvStatus();
+        // engine 编码了具体模型（qwen3_asr:<目录名>）：环境就绪 + 该模型已装才可转写
+        const want = engine.split(":")[1];
+        const modelOk = !want || status.models.some(([d, ok]) => d === want && ok);
+        if (!status.ready || !modelOk) {
+          toast.info(t("asr.envNeedDownload"), {
+            duration: 10000,
+            action: { label: t("asr.envGoDownload"), onClick: () => navigate("/settings?tab=player") },
+          });
+          return;
+        }
+      } catch (e) {
+        toast.error(formatIpcError(e));
+        return;
+      }
+    }
+    setAsrTask({ installing: false, progress: 0, label: t("asr.phaseExtract"), eta: null, detail: "" });
+    try {
+      const r = await api.transcribeAudioTrack({
+        videoPath: probeResult.video_path,
+        streamIndex,
+        engine,
+        language,
+        useVad: true,
+      });
+      setAsrTask(null);
+      // 流条目标名 = <提取方式>-<音轨语言>，如 qwen3-0.6b-eng / 原生-eng
+      const engineLabel = asrEngineLabel(engine.startsWith("qwen3") ? "qwen3" : "mac", engine.split(":")[1] ?? null);
+      const name = `${engineLabel}-${(language || "und").toLowerCase()}`;
+      await handleAsrGenerated({ name, path: r.srt_path, method: engineLabel }, r.stopped);
+    } catch (e) {
+      setAsrTask(null);
+      const code = (e as { code?: string })?.code ?? "";
+      // 取消不算错误，静默；其余弹错误提示
+      if (!code.includes("cancelled")) toast.error(formatIpcError(e));
+    }
+  }, [probeResult, asrTask, handleAsrGenerated, asrEngineLabel, t, navigate]);
+
+  // 停止：安装中→取消安装，转写中→取消转写
+  const handleCancelAsr = useCallback(async () => {
+    if (asrTask?.installing) await api.cancelAsrEnvInstall().catch(() => {});
+    else await api.cancelTranscribe().catch(() => {});
+  }, [asrTask?.installing]);
 
   // 删除导入的字幕
   const handleRemoveImportedSubtitle = useCallback((path: string) => {
@@ -1431,6 +1584,9 @@ export default function MainView() {
                     onPositionUpdate={handlePositionUpdate}
                     onCloseVideo={() => { clearVideo(); subtitleStore.setFile(null); handleCloseVideo(); }}
                     onShowVideoInfo={handleShowVideoInfo}
+                    onSubtitleGenerated={handleAsrGenerated}
+                    onTranscribeAudio={handleStartTranscribe}
+                    asrRunning={!!asrTask}
                   />
                 </div>
                 {/* 内嵌字幕列表 */}
@@ -1445,9 +1601,22 @@ export default function MainView() {
                     </button>
                   </div>
                   <div className="overflow-auto p-1.5 space-y-1 flex-1">
-                    {probeResult.subtitle_streams.length === 0 && (
+                    {probeResult.subtitle_streams.length === 0 && asrSubtitles.length === 0 && (
                       <p className="text-xs text-muted-foreground px-1 py-2">{t("video.noSubtitle")}</p>
                     )}
+                    {/* ASR 识别生成的字幕排在流列表顶部 */}
+                    {asrSubtitles.map((sub) => (
+                      <button
+                        key={sub.path}
+                        onClick={() => void handleSelectAsrSubtitle(sub)}
+                        className={`w-full text-left rounded px-2 py-1.5 text-xs transition-colors flex items-center gap-2 ${
+                          selectedAsrPath === sub.path ? "bg-primary text-primary-foreground" : "hover:bg-accent"
+                        }`}
+                      >
+                        <AudioLines className={`h-3 w-3 flex-shrink-0 ${selectedAsrPath === sub.path ? "" : "text-muted-foreground"}`} />
+                        <span className="truncate">{sub.name}</span>
+                      </button>
+                    ))}
                     {probeResult.subtitle_streams.map((stream) => {
                       const failed = failedStreams.has(stream.index);
                       return (
@@ -1456,6 +1625,7 @@ export default function MainView() {
                         onClick={() => {
                           selectSubtitleStream(stream);
                           setSelectedImportedPath(null);
+                          setSelectedAsrPath(null);
                           // 如果该流已在缓存中，加载到字幕编辑器
                           const streamKey = `${probeResult.video_path}#${stream.index}`;
                           if (extractCacheRef.current.has(streamKey)) {
@@ -1522,9 +1692,13 @@ export default function MainView() {
           {/* 字幕对比预览区 */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <SubtitlePreviewPanel
-              extracting={extracting}
-              extractProgress={extractProgress}
-              extractEta={extractEta}
+              extracting={extracting || !!asrTask}
+              extractProgress={asrTask ? asrTask.progress : extractProgress}
+              extractEta={asrTask ? asrTask.eta ?? 0 : extractEta}
+              extractLabel={asrTask?.label}
+              extractDetail={asrTask?.detail}
+              onCancelExtract={asrTask ? () => void handleCancelAsr() : undefined}
+              extractMethod={selectedAsrPath ? asrSubtitles.find((s) => s.path === selectedAsrPath)?.method : undefined}
               currentPlayTime={currentPlayTime}
               onReextract={() => {
                 if (!probeResult || !selectedSubtitleStream) return;

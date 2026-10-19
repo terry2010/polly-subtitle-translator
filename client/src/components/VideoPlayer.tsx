@@ -23,6 +23,12 @@ interface VideoPlayerProps {
   onPositionUpdate?: (positionSec: number, durationSec: number, paused: boolean) => void;
   onCloseVideo?: () => void;
   onShowVideoInfo?: () => void;
+  /// 音频转字幕完成：生成了 SRT（stopped=部分结果）
+  onSubtitleGenerated?: (sub: { name: string; path: string; method: string }, stopped: boolean) => void;
+  /// 点击「音频转字幕」：直接启动转写（progress 由父组件在编辑器区展示）
+  onTranscribeAudio?: (streamIndex: number, engine: string, language: string) => void;
+  /// 转写/安装进行中 → 禁用按钮
+  asrRunning?: boolean;
 }
 
 // === SECTION 1 END ===
@@ -40,7 +46,7 @@ const AudioTrackSelect = memo(function AudioTrackSelect({
   onChange,
 }: AudioTrackSelectProps) {
   const { t } = useTranslation();
-  if (audioStreams.length <= 1) return null;
+  if (audioStreams.length === 0) return null;
   return (
     <select
       value={audioTrack}
@@ -60,6 +66,45 @@ const AudioTrackSelect = memo(function AudioTrackSelect({
           </option>
         );
       })}
+    </select>
+  );
+});
+
+// 识别引擎选择子组件：独立 memo，挂载时拉取引擎列表（mac_native 仅 macOS≥13 可用）。
+// 顶层过滤：组件不在列表里就不显示（如 Windows 下无 mac_native）。
+interface AsrEngineSelectProps {
+  value: string;
+  onChange: (id: string) => void;
+}
+const AsrEngineSelect = memo(function AsrEngineSelect({ value, onChange }: AsrEngineSelectProps) {
+  const { t } = useTranslation();
+  const [engines, setEngines] = useState<{ id: string; label: string; available: boolean; reason: string | null }[]>([]);
+  useEffect(() => {
+    api.listAsrEngines().then((list) => {
+      setEngines(list);
+      // 当前选中值不在列表（如初始空串）→ 默认落到第一个可用引擎
+      if (!list.some((e) => e.id === value)) {
+        const first = list.find((e) => e.available);
+        if (first) onChange(first.id);
+      }
+    }).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (engines.length === 0) return null;
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onFocus={() => { uiState.selectOpen = true; }}
+      onBlur={() => { uiState.selectOpen = false; }}
+      className="max-w-[150px] truncate rounded-md border border-border bg-background px-1.5 py-1 text-[11px] text-foreground outline-none transition-colors hover:bg-muted focus:border-primary"
+      title={t("asr.engine")}
+    >
+      {engines.map((e) => (
+        <option key={e.id} value={e.id} disabled={!e.available}>
+          {e.label}
+        </option>
+      ))}
     </select>
   );
 });
@@ -122,7 +167,7 @@ const SpeedSelect = memo(function SpeedSelect({
 /// 导出供测试重置
 export let _resetPlayerInitLock: () => void = () => {};
 
-export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onShowVideoInfo }: VideoPlayerProps) {
+export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onShowVideoInfo, onSubtitleGenerated, onTranscribeAudio, asrRunning }: VideoPlayerProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   // 防止并发 player_init 的锁（用 ref 确保组件重挂载时重置）
@@ -147,6 +192,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
   const [volume, setVolume] = useState(100);
   const [speed, setSpeed] = useState(1);
   const [audioTrack, setAudioTrack] = useState(1); // mpv aid，1-based 音频流序号
+  const [asrEngine, setAsrEngine] = useState(""); // 识别引擎（AsrEngineSelect 拉取列表后回填）
   const [loadingVideo, setLoadingVideo] = useState(false);
   // ref 镜像：卸载 cleanup 闭包需要最新值，避免捕获 stale state
   const positionRef = useRef(0);
@@ -905,6 +951,23 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
               audioTrack={audioTrack}
               onChange={handleAudioTrackChange}
             />
+            {/* 识别引擎选择 + 音频转字幕：有音轨即显示，转写当前选中音轨 */}
+            {probeResult.audio_streams.length >= 1 && (
+              <AsrEngineSelect value={asrEngine} onChange={setAsrEngine} />
+            )}
+            {probeResult.audio_streams.length >= 1 && (
+              <button
+                className="rounded-md border border-border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+                title={t("asr.transcribeTrack")}
+                disabled={asrRunning || !asrEngine}
+                onClick={() => {
+                  const stream = probeResult.audio_streams[audioTrack - 1] ?? probeResult.audio_streams[0];
+                  if (stream) onTranscribeAudio?.(stream.index, asrEngine, stream.language ?? "");
+                }}
+              >
+                {t("asr.transcribeTrack")}
+              </button>
+            )}
 
             <div className="flex-1" />
 
@@ -1108,6 +1171,7 @@ export function VideoPlayer({ probeResult, onPositionUpdate, onCloseVideo, onSho
           </button>
         </div>
       )}
+
     </div>
   );
 }

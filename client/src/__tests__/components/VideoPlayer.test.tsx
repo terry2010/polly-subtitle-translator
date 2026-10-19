@@ -46,6 +46,7 @@ vi.mock("../../lib/api", () => ({
     extractPlayerIcons: vi.fn(() => Promise.resolve([])),
     openWithPlayer: vi.fn(() => Promise.resolve()),
     openFolder: vi.fn(() => Promise.resolve()),
+    listAsrEngines: vi.fn(() => Promise.resolve([])),
   },
 }));
 

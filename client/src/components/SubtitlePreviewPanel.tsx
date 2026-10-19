@@ -2,7 +2,7 @@ import { useRef, useState, useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
-import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight, ChevronUp, ChevronDown, AlertTriangle, FileText, Pencil } from "lucide-react";
+import { Save, Plus, Trash2, Undo2, Redo2, Search, Clock, X, ArrowLeft, Download, Languages, Copy, Edit3, Check, RotateCcw, Eraser, Loader2, Play, SplitSquareHorizontal, ArrowLeftRight, ChevronUp, ChevronDown, AlertTriangle, FileText, Pencil, AudioLines } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Textarea } from "./ui/textarea";
@@ -58,7 +58,7 @@ function isNonEnglishSource(s: string): boolean {
   return maxRun < 3;
 }
 
-export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, extractEta = 0, currentPlayTime = 0, onReextract }: { extracting?: boolean; extractProgress?: number; extractEta?: number; currentPlayTime?: number; onReextract?: () => void }) {
+export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, extractEta = 0, extractLabel, extractDetail, onCancelExtract, currentPlayTime = 0, onReextract, extractMethod }: { extracting?: boolean; extractProgress?: number; extractEta?: number; extractLabel?: string; extractDetail?: string; onCancelExtract?: () => void; currentPlayTime?: number; onReextract?: () => void; extractMethod?: string }) {
   const { t } = useTranslation();
   const store = useSubtitleStore();
   const { file, bilingualDetect, isSplit } = store;
@@ -652,7 +652,7 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
       <div className="flex h-full items-center justify-center text-muted-foreground">
         <div className="text-center w-48">
           <Loader2 className="mx-auto h-8 w-8 animate-spin mb-3" />
-          <p className="text-sm mb-2">{t("subtitle.extracting")}</p>
+          <p className="text-sm mb-2">{extractLabel ?? t("subtitle.extracting")}</p>
           {extractProgress > 0 && (
             <>
               <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
@@ -663,9 +663,18 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
               </div>
               <p className="text-xs mt-1 tabular-nums">
                 {extractProgress.toFixed(0)}%
-                {extractEta > 0 && ` · ${t("translate.statEta", { eta: formatElapsed(Math.ceil(extractEta), t) })}`}
+                {extractEta != null && extractEta > 0 && ` · ${t("translate.statEta", { eta: formatElapsed(Math.ceil(extractEta), t) })}`}
+                {extractDetail && ` · ${extractDetail}`}
               </p>
             </>
+          )}
+          {onCancelExtract && (
+            <button
+              className="mt-3 rounded-md border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive hover:border-destructive/40 transition-colors"
+              onClick={onCancelExtract}
+            >
+              {t("asr.stop")}
+            </button>
           )}
         </div>
       </div>
@@ -901,8 +910,14 @@ export function SubtitlePreviewPanel({ extracting = false, extractProgress = 0, 
           <Eraser className="mr-1 h-3.5 w-3.5" />
           {t("subtitle.clearTranslations")}
         </Button>
-        {/* 重新提取字幕：跳过内存缓存，走磁盘缓存兜底 */}
-        {onReextract && (
+        {/* 重新提取字幕：跳过内存缓存，走磁盘缓存兜底。
+            ASR 生成的字幕不可"重新提取"（无对应嵌入流）→ 隐藏按钮，改显示提取方式 */}
+        {extractMethod ? (
+          <span className="h-7 px-2 text-xs text-muted-foreground inline-flex items-center gap-1">
+            <AudioLines className="h-3.5 w-3.5" />
+            {t("asr.method")}: {extractMethod}
+          </span>
+        ) : onReextract && (
           <Button
             size="sm"
             variant="ghost"

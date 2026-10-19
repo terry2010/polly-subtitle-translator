@@ -8,7 +8,7 @@ use crate::ffmpeg;
 use crate::subtitle;
 use crate::translate::{self, TranslateProvider, ProviderCredentials, ProxyConfig, TestConnectionResult};
 use tauri::{Emitter, Manager, State};
-use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
+use std::sync::{Arc, atomic::{AtomicBool, AtomicU64, Ordering}};
 
 /// 全局翻译取消令牌（代际计数器）
 /// 每次新翻译 fetch_add 获得唯一代际号，cancel 时 fetch_add 使旧代际失效
@@ -228,6 +228,15 @@ pub fn get_invoke_handlers() -> Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bo
         pause_translate_job,
         resume_translate_job,
         delete_translate_job,
+        // ASR 音频转字幕
+        list_asr_engines,
+        asr_env_status,
+        install_asr_env_cmd,
+        cancel_asr_env_install,
+        delete_asr_env_cmd,
+        list_asr_subtitles_cmd,
+        transcribe_audio_track_cmd,
+        cancel_transcribe,
     ])
 }
 
@@ -4075,6 +4084,252 @@ fn translate_error_to_ipc(e: auth::TranslateError) -> IpcError {
 
 // === SECTION 11 END ===
 
+// === SECTION: ASR 音频转字幕（asr 模块的 IPC 门面）===
+
+/// 转写取消标志：transcribe_audio_track_cmd 开始时清 false，cancel_transcribe 置 true。
+static TRANSCRIBE_CANCEL: AtomicBool = AtomicBool::new(false);
+/// 环境安装取消标志，同上。
+static ASR_ENV_CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// 引擎信息（前端选择器数据源）。
+#[derive(serde::Serialize)]
+pub struct AsrEngineInfo {
+    /// 引擎 id："mac_native" / "qwen3_asr:<模型目录名>"（对应 Backend::as_str + 可选模型编码）。
+    pub id: String,
+    /// 展示名。
+    pub label: String,
+    /// 当前平台是否可用。
+    pub available: bool,
+    /// 不可用原因（技术 detail，前端 i18n 化）。
+    pub reason: Option<String>,
+}
+
+/// 前端 engine 字符串 → Backend（"mac_native"/"mac"、"qwen3_asr"/"qwen3"/"qwen3_asr:<model>"）。
+fn parse_backend(s: &str) -> Result<crate::asr::engine::Backend, AppError> {
+    match s {
+        "mac_native" | "mac" => Ok(crate::asr::engine::Backend::MacNative),
+        "qwen3_asr" | "qwen3" => Ok(crate::asr::engine::Backend::Qwen3),
+        _ if s.starts_with("qwen3_asr:") => Ok(crate::asr::engine::Backend::Qwen3),
+        other => Err(AppError::AsrUnavailable { detail: format!("unknown engine: {other}") }),
+    }
+}
+
+/// list_asr_engines：列出当前平台可用的识别引擎。
+/// macOS：mac_native（≥13 才可用）+ qwen3_asr；Windows/Linux：仅 qwen3_asr。
+#[tauri::command]
+pub fn list_asr_engines() -> IpcResult<Vec<AsrEngineInfo>> {
+    let mut engines = Vec::new();
+    // mac_native 仅在编译进 macOS 的平台有意义；<13 时仍列出但禁用（引导用户知悉限制）。
+    if cfg!(target_os = "macos") {
+        let mac_reason = crate::asr::engine::native_speech_unavailable_reason();
+        engines.push(AsrEngineInfo {
+            id: "mac_native".to_string(),
+            label: "macOS 设备端识别".to_string(),
+            available: mac_reason.is_none(),
+            reason: mac_reason,
+        });
+    }
+    // 每个可选模型一个条目，id 编码模型目录名（transcribe 时解析为 model 参数）。
+    // 条目恒可选（available=true）——未装模型时选中后会在转写入口提示去设置页下载，
+    // reason 按模型逐个报告供前端展示。
+    for name in crate::asr::qwen3::QWEN3_MODEL_NAMES {
+        engines.push(AsrEngineInfo {
+            id: format!("qwen3_asr:{name}"),
+            label: format!("Qwen3-ASR {}", name.trim_start_matches("Qwen3-ASR-")),
+            available: true,
+            reason: crate::asr::qwen3::qwen3_unavailable_reason(Some(name)),
+        });
+    }
+    ipc_result(Ok(engines))
+}
+
+/// asr_env_status：查询 Qwen3 托管环境状态（python/deps/模型）。
+#[tauri::command]
+pub fn asr_env_status() -> IpcResult<crate::asr::env::AsrEnvStatus> {
+    ipc_result(Ok(crate::asr::env::env_status()))
+}
+
+/// install_asr_env_cmd：安装托管 Python+模型环境（异步，emit asr_env_progress）。
+/// 重入安全：重复调用会幂等跳过已完成步骤。
+#[tauri::command]
+pub async fn install_asr_env_cmd(
+    app: tauri::AppHandle,
+    proxy: Option<String>,
+    model: Option<String>,
+) -> Result<IpcResult<()>, ()> {
+    // 挡并发重入：两个安装任务会在同一 venv/models 目录上竞争。
+    static INSTALL_BUSY: AtomicBool = AtomicBool::new(false);
+    if INSTALL_BUSY.swap(true, Ordering::SeqCst) {
+        return Ok(IpcResult::from(Err(AppError::AsrUnavailable {
+            detail: "environment install already running".to_string(),
+        })));
+    }
+    ASR_ENV_CANCEL.store(false, Ordering::Relaxed);
+    let app_handle = app.clone();
+    let proxy_clone = proxy.clone();
+    let model_clone = model.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::asr::env::install_asr_env(
+            proxy_clone.as_deref(),
+            model_clone.as_deref(),
+            &app_handle,
+            &ASR_ENV_CANCEL,
+        )
+    })
+    .await;
+    INSTALL_BUSY.store(false, Ordering::SeqCst);
+    match result {
+        Ok(Ok(())) => Ok(IpcResult::from(Ok(()))),
+        Ok(Err(e)) => Ok(IpcResult::from(Err(e))),
+        Err(e) => Ok(IpcResult::from(Err(AppError::DownloadTaskFailed {
+            detail: e.to_string(),
+        }))),
+    }
+}
+
+/// cancel_asr_env_install：中断进行中的环境安装（半成品会被清理）。
+#[tauri::command]
+pub fn cancel_asr_env_install() -> IpcResult<()> {
+    ASR_ENV_CANCEL.store(true, Ordering::Relaxed);
+    ipc_result(Ok(()))
+}
+
+/// delete_asr_env_cmd：删除 Qwen3 托管环境；`model` 给定时只删该模型目录。
+#[tauri::command]
+pub fn delete_asr_env_cmd(model: Option<String>) -> IpcResult<()> {
+    ipc_result(crate::asr::env::delete_asr_env(model.as_deref()))
+}
+
+/// 一条已转写完成的 ASR 字幕（extract_cache 命中项）。
+#[derive(serde::Serialize)]
+pub struct AsrSubEntry {
+    pub path: String,
+    /// 引擎 tag："mac" / "qwen3"
+    pub tag: String,
+    /// 模型目录名（如 Qwen3-ASR-0.6B），mac 引擎为 None
+    pub model: Option<String>,
+    /// 音轨语言（normalize 后的 locale）
+    pub lang: String,
+}
+
+/// list_asr_subtitles_cmd：扫描 extract_cache 中该视频已转写过的 ASR 字幕，
+/// 供重开视频时恢复字幕流列表（文件名即元数据，见 cues::asr_cache_srt_path）。
+#[tauri::command]
+pub fn list_asr_subtitles_cmd(video_path: String) -> IpcResult<Vec<AsrSubEntry>> {
+    ipc_result((|| {
+        let (Ok(vh), Some(dir)) = (
+            ffmpeg::compute_video_hash(&video_path),
+            ffmpeg::extract_cache_dir(),
+        ) else {
+            return Ok(vec![]);
+        };
+        let prefix = format!("{}.{}.asr.", vh.oshash, vh.midhash);
+        let mut out = Vec::new();
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            return Ok(out);
+        };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let Some(rest) = name.strip_prefix(&prefix).and_then(|s| s.strip_suffix(".srt")) else {
+                continue;
+            };
+            // rest = {tag}.{model}.{lang}（model/lang 中 '.' 已在写入时替换为 '_'）
+            let mut it = rest.split('.');
+            let (Some(tag), Some(model), Some(lang)) = (it.next(), it.next(), it.next()) else {
+                continue;
+            };
+            if it.next().is_some() {
+                continue;
+            }
+            if !e.path().is_file() {
+                continue;
+            }
+            out.push(AsrSubEntry {
+                path: e.path().to_string_lossy().into_owned(),
+                tag: tag.to_string(),
+                model: (model != "none").then(|| model.replace('_', ".")),
+                lang: lang.to_string(),
+            });
+        }
+        Ok(out)
+    })())
+}
+
+/// transcribe_audio_track_cmd：把视频某条音轨转写为 SRT（异步，emit asr_progress）。
+///
+/// `engine` = "mac_native" | "qwen3_asr"；`language` 为音轨语言标签（任意别名，
+/// 内部归一化为 locale）；`stream_index` 是 ffprobe 全局流索引。
+/// 同时只允许一个转写任务（TRANSCRIBE_BUSY 挡重入）。
+#[tauri::command]
+pub async fn transcribe_audio_track_cmd(
+    app: tauri::AppHandle,
+    video_path: String,
+    stream_index: i64,
+    engine: String,
+    language: String,
+    use_vad: Option<bool>,
+    model: Option<String>,
+    device: Option<String>,
+) -> Result<IpcResult<crate::asr::pipeline::TranscribeOutcome>, ()> {
+    // 简单挡重入：同一时刻只允许一个转写任务。
+    static TRANSCRIBE_BUSY: AtomicBool = AtomicBool::new(false);
+    if TRANSCRIBE_BUSY.swap(true, Ordering::SeqCst) {
+        return Ok(IpcResult::from(Err(AppError::AsrUnavailable {
+            detail: "another transcription is running".to_string(),
+        })));
+    }
+    TRANSCRIBE_CANCEL.store(false, Ordering::Relaxed);
+
+    let backend = match parse_backend(&engine) {
+        Ok(b) => b,
+        Err(e) => {
+            TRANSCRIBE_BUSY.store(false, Ordering::SeqCst);
+            return Ok(IpcResult::from(Err(e)));
+        }
+    };
+    // engine 可编码模型选择（"qwen3_asr:<模型目录名>"）；显式 model 参数优先。
+    let model = model.or_else(|| {
+        engine
+            .split_once(':')
+            .map(|(_, m)| m.to_string())
+            .filter(|m| !m.is_empty())
+    });
+    // 切片 wav 输出目录：字幕缓存目录下按任务分目录。
+    let work_dir = crate::ffmpeg::extract_cache_dir()
+        .unwrap_or_else(|| std::env::temp_dir())
+        .join(format!("asr_{}", std::process::id()));
+    let req = crate::asr::pipeline::TranscribeRequest {
+        video_path: std::path::PathBuf::from(video_path),
+        stream_index,
+        backend,
+        language: crate::asr::engine::normalize_language(&language),
+        use_vad: use_vad.unwrap_or(true),
+        model,
+        device,
+        work_dir,
+    };
+    let app_handle = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::asr::pipeline::run_transcribe(&req, &app_handle, &TRANSCRIBE_CANCEL)
+    })
+    .await;
+    TRANSCRIBE_BUSY.store(false, Ordering::SeqCst);
+    match result {
+        Ok(Ok(outcome)) => Ok(IpcResult::from(Ok(outcome))),
+        Ok(Err(e)) => Ok(IpcResult::from(Err(e))),
+        Err(e) => Ok(IpcResult::from(Err(AppError::DownloadTaskFailed {
+            detail: e.to_string(),
+        }))),
+    }
+}
+
+/// cancel_transcribe：停止进行中的转写（已识别部分照常写出）。
+#[tauri::command]
+pub fn cancel_transcribe() -> IpcResult<()> {
+    TRANSCRIBE_CANCEL.store(true, Ordering::Relaxed);
+    ipc_result(Ok(()))
+}
+
 // === SECTION 8: 跨平台单元测试 ===
 
 #[cfg(test)]
@@ -4223,6 +4478,20 @@ mod tests {
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[&0].0, "corrected");
         assert_eq!(edits[&0].1, "original");
+    }
+
+    /// ASR：engine 字符串解析（transcribe_audio_track_cmd 的入参契约）。
+    #[test]
+    fn test_parse_backend_aliases_and_unknown() {
+        use crate::asr::engine::Backend;
+        assert_eq!(parse_backend("mac_native").unwrap(), Backend::MacNative);
+        assert_eq!(parse_backend("mac").unwrap(), Backend::MacNative);
+        assert_eq!(parse_backend("qwen3_asr").unwrap(), Backend::Qwen3);
+        assert_eq!(parse_backend("qwen3").unwrap(), Backend::Qwen3);
+        assert_eq!(parse_backend("qwen3_asr:Qwen3-ASR-1.7B").unwrap(), Backend::Qwen3);
+        let e = parse_backend("whisper").expect_err("unknown engine must fail");
+        let ipc = e.to_ipc_error();
+        assert_eq!(ipc.code, "asr.unavailable");
     }
 
     /// T23: delete_source_edit 后 get_source_edits 查不到

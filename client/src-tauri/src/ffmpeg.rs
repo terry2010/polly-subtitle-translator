@@ -25,6 +25,11 @@ fn ffmpeg_download_dir() -> Option<PathBuf> {
     APP_DATA_DIR.get().map(|d| d.join("ffmpeg"))
 }
 
+/// app_data_dir 只读访问（ASR 托管环境等其他模块共享同一根目录）。
+pub(crate) fn app_data_dir() -> Option<PathBuf> {
+    APP_DATA_DIR.get().cloned()
+}
+
 /// 获取字幕提取缓存目录：app_data_dir/extract_cache/，按需创建
 pub fn extract_cache_dir() -> Option<PathBuf> {
     let dir = APP_DATA_DIR.get()?.join("extract_cache");
@@ -33,14 +38,14 @@ pub fn extract_cache_dir() -> Option<PathBuf> {
 
 /// 在 Windows release 模式下隐藏子进程控制台窗口
 #[cfg(windows)]
-fn no_window(mut cmd: Command) -> Command {
+pub(crate) fn no_window(mut cmd: Command) -> Command {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x08000000;
     cmd.creation_flags(CREATE_NO_WINDOW);
     cmd
 }
 #[cfg(not(windows))]
-fn no_window(cmd: Command) -> Command { cmd }
+pub(crate) fn no_window(cmd: Command) -> Command { cmd }
 
 /// 下载完整性校验：计算文件 SHA256 并记录日志，同时检查 magic bytes 防止下载到 HTML 错误页面
 /// 返回 SHA256 十六进制字符串供调用方比对
@@ -1012,7 +1017,7 @@ fn is_extractable_text_subtitle(codec_name: &str) -> bool {
 /// 将路径中的反斜杠替换为正斜杠
 /// ffmpeg/ffprobe 在 Windows 上遇到路径中 ".mkv\" 这类模式时（文件名中含点+扩展名后跟目录分隔符）
 /// 会报 "Invalid argument"，用正斜杠可避免此问题
-fn normalize_path_for_ffmpeg(path: &str) -> String {
+pub(crate) fn normalize_path_for_ffmpeg(path: &str) -> String {
     path.replace('\\', "/")
 }
 

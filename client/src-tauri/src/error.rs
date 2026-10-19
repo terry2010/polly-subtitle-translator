@@ -86,6 +86,18 @@ pub enum AppError {
     #[error("Subtitle extraction cancelled")]
     FfmpegExtractCancelled,
 
+    #[error("ASR environment install failed: {detail}")]
+    AsrEnvInstallFailed { detail: String },
+
+    #[error("ASR operation cancelled")]
+    AsrCancelled,
+
+    #[error("ASR backend unavailable: {detail}")]
+    AsrUnavailable { detail: String },
+
+    #[error("ASR transcribe failed: {detail}")]
+    AsrTranscribeFailed { detail: String },
+
     #[error("Subtitle extraction timed out ({timeout}s)")]
     FfmpegExtractTimeout { timeout: u64 },
 
@@ -451,6 +463,15 @@ impl AppError {
                 .with_args(serde_json::json!({ "detail": detail })),
 
             FfmpegExtractCancelled => IpcError::new("ffmpeg.extractCancelled", Severity::Recoverable),
+
+            // === ASR ===
+            AsrEnvInstallFailed { detail } => IpcError::new("asr.envInstallFailed", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": detail })),
+            AsrCancelled => IpcError::new("asr.cancelled", Severity::Recoverable),
+            AsrUnavailable { detail } => IpcError::new("asr.unavailable", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": detail })),
+            AsrTranscribeFailed { detail } => IpcError::new("asr.transcribeFailed", Severity::Recoverable)
+                .with_args(serde_json::json!({ "detail": detail })),
 
             FfmpegExtractTimeout { timeout } => IpcError::new("ffmpeg.extractTimeout", Severity::Recoverable)
                 .with_args(serde_json::json!({ "timeout": timeout })),

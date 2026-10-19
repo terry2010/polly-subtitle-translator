@@ -609,4 +609,64 @@ export const api = {
   /// 删除官方翻译任务
   deleteTranslateJob: (jobId: string) =>
     callIpc<{ code: number; message: string }>("delete_translate_job", { jobId }),
+
+  // ===== ASR 音频转字幕 =====
+
+  /// 列出识别引擎（mac_native 仅 macOS≥13；qwen3_asr 跨平台，reason 报告环境缺失）
+  listAsrEngines: () =>
+    callIpc<{ id: string; label: string; available: boolean; reason: string | null }[]>(
+      "list_asr_engines"
+    ),
+
+  /// Qwen3 托管环境状态（python/deps/models/ready）
+  asrEnvStatus: () =>
+    callIpc<{
+      python_ready: boolean;
+      deps_ready: boolean;
+      models: [string, boolean][];
+      ready: boolean;
+    }>("asr_env_status"),
+
+  /// 安装托管 ASR 环境（异步任务，进度走 asr_env_progress 事件）
+  installAsrEnv: (proxy?: string, model?: string) =>
+    callIpc<void>("install_asr_env_cmd", { proxy: proxy ?? null, model: model ?? null }),
+
+  /// 取消环境安装
+  cancelAsrEnvInstall: () => callIpc<void>("cancel_asr_env_install"),
+
+  /// 删除 Qwen3 托管环境；传 model 时只删该模型目录（与下拉框选中项对应）
+  deleteAsrEnv: (model?: string) => callIpc<void>("delete_asr_env_cmd", { model: model ?? null }),
+
+  /// 列出该视频已转写过的 ASR 字幕（extract_cache 扫描，重开时恢复列表）
+  listAsrSubtitles: (videoPath: string) =>
+    callIpc<{ path: string; tag: string; model: string | null; lang: string }[]>(
+      "list_asr_subtitles_cmd",
+      { videoPath }
+    ),
+
+  /// 转写视频音轨为 SRT（异步任务，进度走 asr_progress 事件）
+  transcribeAudioTrack: (params: {
+    videoPath: string;
+    streamIndex: number;
+    engine: string;
+    language: string;
+    useVad?: boolean;
+    model?: string;
+    device?: string;
+  }) =>
+    callIpc<{ srt_path: string; cue_count: number; stopped: boolean; recognized_secs: number }>(
+      "transcribe_audio_track_cmd",
+      {
+        videoPath: params.videoPath,
+        streamIndex: params.streamIndex,
+        engine: params.engine,
+        language: params.language,
+        useVad: params.useVad ?? null,
+        model: params.model ?? null,
+        device: params.device ?? null,
+      }
+    ),
+
+  /// 停止转写（已识别部分照常落盘）
+  cancelTranscribe: () => callIpc<void>("cancel_transcribe"),
 };

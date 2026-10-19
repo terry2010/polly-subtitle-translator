@@ -536,7 +536,12 @@
     "officialApiValidUntil": "有效期至",
     "officialApiTokenBalance": "按量点数",
     "viewPrice": "查看价格",
-    "viewBalance": "查看免费额度余量"
+    "viewBalance": "查看免费额度余量",
+    "qwen3Status": "语音识别环境状态",
+    "qwen3Ready": "已安装（可在播放器里转写音轨）",
+    "qwen3NotReady": "未安装，请下载识别环境",
+    "qwen3Cancel": "取消",
+    "qwen3Deleted": "Qwen3-ASR 环境已删除"
   },
   "batch": {
     "status": {
@@ -916,6 +921,12 @@
     },
     "test": {
       "code": "测试错误"
+    },
+    "asr": {
+      "cancelled": "已停止",
+      "unavailable": "识别引擎不可用: {{detail}}",
+      "transcribeFailed": "转写失败: {{detail}}",
+      "envInstallFailed": "环境安装失败: {{detail}}"
     }
   },
   "auth": {
@@ -952,5 +963,36 @@
     "pauseFailed": "暂停失败",
     "resumeFailed": "恢复失败",
     "deleteFailed": "删除失败"
+  },
+  "asr": {
+    "transcribeTrack": "音频转字幕",
+    "title": "音频转字幕",
+    "desc": "把当前选中音轨的语音离线识别为字幕，生成后自动加载到编辑区。",
+    "engine": "识别引擎",
+    "engineNeedsSetup": "需要安装环境",
+    "language": "音频语言",
+    "vad": "仅识别人声（VAD 预筛，跳过音乐/静音段）",
+    "envNotReady": "Qwen3-ASR 需要一次性安装运行环境（独立 Python + 模型，约 2.4GB，存放在应用目录内，不污染系统）。",
+    "installEnv": "安装识别环境",
+    "start": "开始转写",
+    "stop": "停止",
+    "done": "字幕已生成并加载",
+    "speed": "{{speed}}x",
+    "eta": "约剩余 {{eta}}",
+    "processed": "已处理 {{secs}}s",
+    "phaseExtract": "正在提取音轨…",
+    "phaseDetect": "正在分析静音段…",
+    "phaseChunk": "正在切片…",
+    "phaseRecognize": "正在识别语音…",
+    "phaseGapfill": "正在回填漏识别段…",
+    "phaseMerge": "正在合并字幕…",
+    "phaseStopped": "已停止（保留已识别部分）",
+    "phaseDone": "完成",
+    "donePartial": "字幕已生成并加载（已停止，为部分内容）",
+    "installingEnv": "正在安装识别环境…",
+    "envNeedDownload": "Qwen3-ASR 识别环境尚未下载，请到「设置 → 视频组件」下载模型。",
+    "envGoDownload": "去下载",
+    "engineNative": "原生",
+    "method": "提取方式"
   }
 }

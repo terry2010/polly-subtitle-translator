@@ -274,9 +274,9 @@ export default function App() {
   const updateInfo = useUpdateStore((s) => s.updateInfo);
   const closeUpdateDialog = useUpdateStore((s) => s.closeDialog);
 
-  // 开发模式下右键单击 toast 复制内容到剪贴板
+  // 开发模式下单击 toast 复制内容到剪贴板（不影响 toast 自带的点击关闭）
   // sonner 的 toast 渲染在固定容器 [data-sonner-toaster] 中，
-  // 用全局捕获 contextmenu 事件，命中 toast 元素时复制其文本
+  // 用全局捕获 click 事件，命中 toast 元素时复制其文本
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (!useDevModeStore.getState().devMode) return;
@@ -284,17 +284,12 @@ export default function App() {
       // 向上查找最近的 toast 元素（sonner 的 toast 有 [data-sonner-toast] 属性）
       const toastEl = target.closest("[data-sonner-toast]") as HTMLElement | null;
       if (!toastEl) return;
-      e.preventDefault();
       const text = toastEl.innerText || toastEl.textContent || "";
       if (!text) return;
-      // 优先用 navigator.clipboard API，失败时回退到 execCommand('copy')
-      // Tauri WebView2 中 navigator.clipboard 可能因安全策略不可用
-      const copyToClipboard = (str: string): Promise<boolean> => {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          return navigator.clipboard.writeText(str).then(() => true).catch(() => false);
-        }
-        return Promise.resolve(false);
-      };
+      const feedback = (ok: boolean) =>
+        toast[ok ? "success" : "error"](i18n.t(ok ? "common.copiedToast" : "common.copyFailed"), { duration: 1500 });
+      // execCommand('copy') 同步路径优先：WKWebView 中 navigator.clipboard.writeText
+      // 可能静默不 resolve（无用户激活/权限策略），既复制不了也不给反馈。
       const fallbackCopy = (str: string): boolean => {
         try {
           const textarea = document.createElement("textarea");
@@ -312,18 +307,18 @@ export default function App() {
           return false;
         }
       };
-      copyToClipboard(text).then((ok) => {
-        if (ok) {
-          toast.success(i18n.t("common.copiedToast"), { duration: 1500 });
-        } else if (fallbackCopy(text)) {
-          toast.success(i18n.t("common.copiedToast"), { duration: 1500 });
-        } else {
-          toast.error(i18n.t("common.copyFailed"), { duration: 1500 });
-        }
-      });
+      if (fallbackCopy(text)) {
+        feedback(true);
+        return;
+      }
+      // execCommand 不可用再走 clipboard API，1s 超时兜底防挂起
+      const p = navigator.clipboard?.writeText
+        ? navigator.clipboard.writeText(text).then(() => true).catch(() => false)
+        : Promise.resolve(false);
+      Promise.race([p, new Promise<boolean>((r) => setTimeout(() => r(false), 1000))]).then(feedback);
     };
-    document.addEventListener("contextmenu", handler, true);
-    return () => document.removeEventListener("contextmenu", handler, true);
+    document.addEventListener("click", handler, true);
+    return () => document.removeEventListener("click", handler, true);
   }, []);
 
   return (

@@ -13,6 +13,7 @@ pub mod context_menu;
 pub mod player;
 pub mod batch;
 pub mod auth;
+pub mod asr;
 
 use tauri::{Manager, Listener};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};

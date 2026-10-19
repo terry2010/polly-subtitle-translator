@@ -60,6 +60,9 @@ url = "2"
 semver = "1"
 notify = "8"
 walkdir = "2"
+# ASR 托管环境解压 python-build-standalone .tar.gz（全平台都是 tar.gz 格式）
+flate2 = "1"
+tar = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.55"
@@ -85,8 +88,10 @@ png = "0.17"
 [target.'cfg(target_os = "macos")'.dependencies]
 libloading = "0.8"
 objc = "0.2"
-flate2 = "1"
-tar = "0.4"
+# Mac 原生语音识别（Apple Speech.framework）：仅 macOS 构建。
+# 构建期需 swift 工具链（speech crate 的 build.rs 会 swift build 桥接）；
+# 运行期 macOS 13+ 自带 Swift 运行时（build.rs 补 -rpath /usr/lib/swift）。
+speech = "0.9"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

@@ -141,8 +141,8 @@ describe("services - getServiceById / getServicesByCategory", () => {
     expect(traditional.length + ai.length).toBe(SERVICES.length);
   });
 
-  it("SERVICES 包含 27 个服务", () => {
-    expect(SERVICES.length).toBe(27);
+  it("SERVICES 包含 28 个服务", () => {
+    expect(SERVICES.length).toBe(28);
   });
 });
 
